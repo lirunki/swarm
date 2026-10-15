@@ -381,6 +381,26 @@ class ToolInputCompactor:
                 "created_at": now().isoformat(),
             }
             if replacement is None:
+                # A repeated no-op must not erase the archive needed to undo the last change.
+                previous = getattr(agent, "tool_input_compaction", None)
+                if (
+                    isinstance(previous, dict)
+                    and previous.get("archive")
+                    and previous.get("source") == str(path)
+                    and previous.get("replacement_sha256") == digest(data)
+                    and previous.get("status") != "reverted"
+                ):
+                    for key in (
+                        "id",
+                        "directory",
+                        "archive",
+                        "source_sha256",
+                        "replacement_sha256",
+                        "created_at",
+                    ):
+                        if key in previous:
+                            report[key] = previous[key]
+                    report["last_checked_at"] = now().isoformat()
                 self.save(agent_id, report)
                 return report
             replacement = (
@@ -431,6 +451,82 @@ class ToolInputCompactor:
                     raise
             return report
 
+    def revert(self, agent_id: str) -> dict:
+        """Restore an unchanged compacted snapshot, never discard newer history."""
+        with self.controller.lock:
+            agent = self.store.get(agent_id)
+            path = self.guard.eligible(agent)
+            saved = getattr(agent, "tool_input_compaction", None)
+            if not isinstance(saved, dict):
+                raise ValueError("No tool-input compaction is available to revert")
+            report = dict(saved)
+            if report.get("status") == "reverted":
+                return report
+            if not (
+                report.get("status") in {"completed", "unchanged"}
+                or (report.get("status") == "failed" and report.get("operation") == "revert")
+            ):
+                raise ValueError("No completed tool-input compaction is available to revert")
+            job_id = report.get("id", "")
+            if not re.fullmatch(r"[0-9a-f]{32}", job_id):
+                raise ValueError("Invalid tool-input compaction archive ID")
+            directory = archive_directory(self.store.home, job_id)
+            archive = directory / "original.jsonl"
+            if (
+                report.get("directory") != str(directory)
+                or report.get("archive") != str(archive)
+                or report.get("source") != str(path)
+            ):
+                raise ValueError("Compaction archive does not belong to this session path")
+            current = read_source(path)
+            if digest(current) != report.get("replacement_sha256"):
+                raise RuntimeError(
+                    "Session changed since tool-input compaction. Revert refused "
+                    "to preserve newer history; the original archive is still available."
+                )
+            original = read_source(archive)
+            if digest(original) != report.get("source_sha256"):
+                raise ValueError("Original archive checksum mismatch; nothing was restored")
+            header, _, _, _ = session_context(original)
+            current_header, _, _, _ = session_context(current)
+            if header["id"] != current_header["id"] or (
+                agent.session_id and agent.session_id != header["id"]
+            ):
+                raise ValueError("Archived session identity does not match the agent")
+            # Keep both versions, including exact BOM/CRLF/Unicode spelling, before replacing.
+            backup = directory / f"compacted-before-revert-{uuid4().hex}.jsonl"
+            atomic_write(backup, current)
+            report.update(
+                status="running",
+                operation="revert",
+                error=None,
+                compacted_backup=str(backup),
+                revert_started_at=now().isoformat(),
+            )
+            self.store.update(agent.id, {"auto_resume": False, "wake_at": None, "pid": None})
+            self.save(agent.id, report)
+            try:
+                if self.controller.processes.alive(agent):
+                    raise RuntimeError("Agent restarted during revert")
+                self.guard.check_external(agent)
+                if digest(read_source(path)) != report["replacement_sha256"]:
+                    raise RuntimeError("Session changed during revert; refusing to overwrite")
+                atomic_write(path, original)
+                report.update(status="reverted", reverted_at=now().isoformat())
+                self.save(agent.id, report)
+            except Exception as exc:
+                try:
+                    restored = digest(read_source(path)) == report["source_sha256"]
+                except (OSError, ValueError):
+                    restored = False
+                report.update(status="reverted" if restored else "failed", error=str(exc))
+                if restored:
+                    report["reverted_at"] = now().isoformat()
+                self.save(agent.id, report)
+                if not restored:
+                    raise
+            return report
+
     def recover(self) -> None:
         with self.controller.lock:
             for agent in self.store.scan():
@@ -439,13 +535,18 @@ class ToolInputCompactor:
                     continue
                 job = dict(job)
                 try:
-                    replaced = digest(read_source(Path(job["source"]))) == job["replacement_sha256"]
+                    reverting = job.get("operation") == "revert"
+                    expected = job["source_sha256" if reverting else "replacement_sha256"]
+                    replaced = digest(read_source(Path(job["source"]))) == expected
                     job.update(
-                        status="completed" if replaced else "failed",
+                        status=("reverted" if reverting else "completed") if replaced else "failed",
                         error=None
                         if replaced
-                        else "Interrupted before replacement; original retained",
+                        else "Interrupted before replacement; inspect the "
+                        "session and retained backups before retrying.",
                     )
+                    if reverting and replaced:
+                        job["reverted_at"] = now().isoformat()
                 except (OSError, ValueError, KeyError) as exc:
                     job.update(status="failed", error=str(exc))
                 self.store.update(agent.id, {"auto_resume": False, "wake_at": None})

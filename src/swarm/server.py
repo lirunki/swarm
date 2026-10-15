@@ -165,6 +165,13 @@ def create_app(
         await broadcast()
         return result
 
+    @app.post("/api/agents/{agent_id}/revert-tool-input-compaction")
+    async def revert_tool_input_compaction(agent_id: UUID):
+        result = await asyncio.to_thread(tool_input_compactor.revert, str(agent_id))
+        await asyncio.to_thread(controller.refresh)
+        await broadcast()
+        return result
+
     @app.post("/api/agents/{agent_id}/wake")
     async def wake(agent_id: UUID, request: WakeRequest):
         agent = await asyncio.to_thread(controller.wake, str(agent_id), request.message)

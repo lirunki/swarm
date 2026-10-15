@@ -117,12 +117,15 @@
       <section class="tool-input-compact-section" aria-labelledby="tool-input-compact-heading">
         <div class="tool-input-compact-head"><div><h3 id="tool-input-compact-heading">Tool input compaction</h3><p id="tool-input-compact-availability" class="hint"></p></div><button id="compact-tool-inputs" type="button">Compact tool inputs</button></div>
         <p class="hint tool-input-compact-description">Shorten completed tool-call inputs without model calls. Tool outputs are preserved.</p>
+        <button id="revert-tool-input-compaction" type="button" disabled>Revert tool-input compaction</button>
+        <p id="tool-input-revert-hint" class="hint">Restore the archived original only if no new history has been added since compaction.</p>
         <div id="tool-input-compact-status" class="meta-compact-status" aria-live="polite" hidden>
           <p><strong id="tool-input-compact-state"></strong></p>
           <p id="tool-input-compact-result" hidden><span id="tool-input-compact-count"></span> completed call inputs compacted · estimated <span id="tool-input-compact-savings"></span> tokens saved</p>
           <p id="tool-input-compact-error" class="meta-compact-error" hidden></p>
           <p id="tool-input-compact-archive-row" hidden>Original archive: <code id="tool-input-compact-archive"></code></p>
           <p id="tool-input-compact-directory-row" hidden>Result directory: <code id="tool-input-compact-directory"></code></p>
+          <p id="tool-input-revert-backup-row" hidden>Compacted backup: <code id="tool-input-revert-backup"></code></p>
         </div>
       </section>
       <p id="forget-explanation" class="hint forget-explanation">Forget stops any remaining Swarm-owned process and removes the card. Saved session history stays in its current location.</p>

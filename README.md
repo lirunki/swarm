@@ -197,10 +197,32 @@ Artifacts are kept under `$SWARM_HOME/tool-input-compactions/<job>/`:
 `toolrun_*.json` input files. Lookup IDs map to the original entry ID and tool-call
 position in the sidecar index; the original archive is never annotated or edited.
 Treat these files as private session data and retain them as long as their
-references remain useful. To undo, stop all writers, back up the current tracked
-file, and copy `original.jsonl` back to that path.
+references remain useful.
 
-The operation requires a stopped managed Pi agent. It checks for other session
+### Revert tool-input compaction
+
+Use **Stop → Edit → Revert tool-input compaction** to restore the exact original
+archive, including its full inputs and other branches. Swarm verifies the archive
+checksum, session identity and tracked path, saves the compacted session as a
+`compacted-before-revert-<id>.jsonl` backup alongside the archive, then atomically
+restores the original bytes. The agent remains stopped with auto-resume disabled;
+Wake it explicitly afterward. This makes no model calls, and the original
+context-size problem may return.
+
+**Revert refuses if the session has changed since compaction**, including new
+conversation turns or another kind of compaction. It does not discard newer work
+or attempt to merge it into the archive. Both versions remain available for
+manual inspection. A repeated no-op Compact tool inputs action retains the undo
+metadata, and retrying an already completed revert does not rewrite the session.
+Server restart reconciles interrupted restores by hash without repeating them.
+Edit displays the restored status and compacted-backup path.
+
+API: `POST /api/agents/<id>/revert-tool-input-compaction` returns the report with
+HTTP 200, or refuses changed/live sessions with HTTP 409. Invalid or corrupted
+archives are rejected without replacing the session. Revert uses only Swarm's
+recorded archive; callers cannot supply a file path.
+
+Both operations require a stopped managed Pi agent. Compaction checks for other session
 owners, active processes, and source changes before atomic replacement. The
 tracked session ID/path stay unchanged and auto-resume remains disabled after a
 successful compaction. Failed or no-op operations do not replace the source.

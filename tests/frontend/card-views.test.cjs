@@ -215,7 +215,9 @@ function toolInputDialog({confirmResult = true, reject = false} = {}) {
   });
   const start = source.indexOf('async function compactToolInputs()');
   const end = source.indexOf('\nasync function forgetAgent()', start);
-  vm.runInContext(source.slice(start, end), context);
+  const predicateStart = source.indexOf('function canRevertToolInputs(');
+  const predicateEnd = source.indexOf('\nfunction renderCard(', predicateStart);
+  vm.runInContext(source.slice(predicateStart, predicateEnd) + '\n' + source.slice(start, end), context);
   return {context, calls, agent: a, errors};
 }
 
@@ -242,6 +244,65 @@ test('tool input compaction errors remain text and release the in-flight lock', 
   assert.equal(t.errors.childNodes[0] instanceof Text, true);
   assert.equal(t.context.toolInputCompactingId, null);
   assert.equal(t.agent.tool_input_compaction, undefined);
+});
+
+function withRevertArchive(t) {
+  t.agent.tool_input_compaction = {status: 'completed', archive: '/archive/original.jsonl', source_sha256: 'original', replacement_sha256: 'compacted'};
+  return t;
+}
+
+test('revert availability requires retained archive metadata and allows no-op repeats', () => {
+  const t = withRevertArchive(toolInputDialog());
+  assert.equal(t.context.canRevertToolInputs(t.agent), true);
+  t.agent.tool_input_compaction.status = 'unchanged';
+  assert.equal(t.context.canRevertToolInputs(t.agent), true);
+  t.agent.tool_input_compaction.status = 'reverted';
+  assert.equal(t.context.canRevertToolInputs(t.agent), false);
+  t.agent.tool_input_compaction.status = 'failed'; t.agent.tool_input_compaction.operation = 'revert';
+  assert.equal(t.context.canRevertToolInputs(t.agent), true);
+  delete t.agent.tool_input_compaction.archive;
+  assert.equal(t.context.canRevertToolInputs(t.agent), false);
+  const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
+  assert.match(html, /id="revert-tool-input-compaction"[^>]*disabled>Revert tool-input compaction/);
+  assert.match(source, /revert-tool-input-compaction'\)\.disabled = !eligible \|\| blocked \|\| !canRevertToolInputs\(a\)/);
+  assert.match(source, /tool-input-revert-backup'\)\.textContent = toolJob\.compacted_backup \|\| ''/);
+});
+
+test('confirmed revert uses dedicated endpoint and retains restored status', async () => {
+  const t = withRevertArchive(toolInputDialog());
+  t.context.api = async (url, method, body) => {
+    t.calls.push(['api', url, method, body]);
+    assert.equal(t.context.toolInputCompactingId, t.agent.id);
+    return {...t.agent.tool_input_compaction, status: 'reverted', compacted_backup: '/archive/compacted.jsonl'};
+  };
+  await t.context.revertToolInputs();
+  const confirmation = t.calls.find(call => call[0] === 'confirm')[1];
+  for (const phrase of ['backed up first', 'newer history', 'No model calls', 'stays stopped']) assert.ok(confirmation.includes(phrase), phrase);
+  const request = t.calls.find(call => call[0] === 'api');
+  assert.equal(request[1], '/api/agents/agent-1/revert-tool-input-compaction');
+  assert.equal(request[2], 'POST'); assert.equal(Object.keys(request[3]).length, 0);
+  assert.equal(t.agent.tool_input_compaction.status, 'reverted');
+  assert.equal(t.context.toolInputCompactingId, null);
+});
+
+test('cancelled, live, busy and unavailable reverts make no API calls', async () => {
+  const cases = [withRevertArchive(toolInputDialog({confirmResult: false})), withRevertArchive(toolInputDialog()), withRevertArchive(toolInputDialog()), toolInputDialog()];
+  cases[1].agent.alive = true;
+  cases[2].agent.meta_compaction = {status: 'running'};
+  for (const t of cases) {
+    await t.context.revertToolInputs();
+    assert.equal(t.calls.filter(call => call[0] === 'api').length, 0);
+  }
+});
+
+test('revert errors are plain text and release compaction interlock', async () => {
+  const t = withRevertArchive(toolInputDialog({reject: true}));
+  await t.context.revertToolInputs();
+  assert.equal(t.errors.textContent, '<server failure>');
+  assert.equal(t.errors.childNodes[0] instanceof Text, true);
+  assert.equal(t.agent.tool_input_compaction.status, 'completed');
+  assert.equal(t.context.toolInputCompactingId, null);
 });
 
 test('manual renderer choice survives new state snapshots and fake reload', () => {

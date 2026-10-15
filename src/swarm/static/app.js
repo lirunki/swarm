@@ -67,6 +67,11 @@ const toolInputCompactionRunning = a => a?.tool_input_compaction?.status === 'ru
 const compactionRunning = a => metaCompactionRunning(a) || toolInputCompactionRunning(a);
 const compactionRequestInFlight = a => !!a && (metaCompactingId === a.id || toolInputCompactingId === a.id);
 const compactionBlocked = a => compactionRunning(a) || compactionRequestInFlight(a);
+function canRevertToolInputs(a) {
+  const job = a?.tool_input_compaction;
+  return !!(job?.archive && job.source_sha256 && job.replacement_sha256 &&
+    (['completed', 'unchanged'].includes(job.status) || (job.status === 'failed' && job.operation === 'revert')));
+}
 function renderCard(a) {
   const card = node('article', 'agent-card'); card.dataset.agentId = a.id;
   card.classList.toggle('has-process', !!a.alive);
@@ -275,22 +280,28 @@ function updateEditAvailability() {
   let toolAvailability = 'Available while this managed Pi agent is stopped.';
   if (!a) toolAvailability = 'This agent is no longer registered.';
   else if (running || starting) toolAvailability = 'Meta-compaction is running. Wait for it to finish.';
-  else if (toolRunning || toolStarting) toolAvailability = 'Compacting completed tool inputs. It will remain stopped when complete.';
+  else if (toolRunning || toolStarting) toolAvailability = 'Updating the saved tool-input session. It will remain stopped when complete.';
   else if (!a.managed || a.backend !== 'pi') toolAvailability = 'Only managed Pi agents can compact tool inputs.';
   else if (!a.session_file) toolAvailability = 'A persisted Pi session is required.';
   else if (a.alive) toolAvailability = 'Stop this agent before compacting tool inputs.';
   $('#tool-input-compact-availability').textContent = toolAvailability;
   $('#compact-tool-inputs').disabled = !eligible || blocked;
+  $('#revert-tool-input-compaction').disabled = !eligible || blocked || !canRevertToolInputs(a);
+  $('#tool-input-revert-hint').textContent = toolJob?.status === 'reverted'
+    ? 'Original session restored. Both the original archive and compacted backup are retained.'
+    : !canRevertToolInputs(a) ? 'No tool-input compaction is available to revert.'
+    : 'Restore the original archive only if the session has not changed since compaction. Stop the agent first.';
   const toolStatus = $('#tool-input-compact-status'); toolStatus.hidden = !toolJob;
   if (toolJob) {
     $('#tool-input-compact-state').textContent = toolJob.status || 'unknown';
-    const hasResult = toolJob.status === 'completed' || toolJob.status === 'unchanged' || toolJob.calls_compacted != null || toolJob.estimated_tokens_saved != null;
+    const hasResult = toolJob.status !== 'reverted' && (toolJob.status === 'completed' || toolJob.status === 'unchanged' || toolJob.calls_compacted != null || toolJob.estimated_tokens_saved != null);
     $('#tool-input-compact-result').hidden = !hasResult;
     $('#tool-input-compact-count').textContent = String(toolJob.calls_compacted ?? 0);
     $('#tool-input-compact-savings').textContent = String(toolJob.estimated_tokens_saved ?? 0);
     $('#tool-input-compact-error').hidden = !toolJob.error; $('#tool-input-compact-error').textContent = toolJob.error || '';
     $('#tool-input-compact-archive-row').hidden = !toolJob.archive; $('#tool-input-compact-archive').textContent = toolJob.archive || '';
     $('#tool-input-compact-directory-row').hidden = !toolJob.directory; $('#tool-input-compact-directory').textContent = toolJob.directory || '';
+    $('#tool-input-revert-backup-row').hidden = !toolJob.compacted_backup; $('#tool-input-revert-backup').textContent = toolJob.compacted_backup || '';
   }
 }
 async function startMetaCompaction() {
@@ -327,6 +338,19 @@ async function compactToolInputs() {
   } catch (error) { if (editId === id) $('.form-error', form).textContent = error.message; else toast(error.message, true); }
   finally { if (toolInputCompactingId === id) toolInputCompactingId = null; if ($('#edit-dialog').open) updateEditAvailability(); }
 }
+async function revertToolInputs() {
+  const id = editId, a = agentById(id), form = $('#edit-form');
+  if (!a || metaCompactingId || toolInputCompactingId || compactionRunning(a) || !canRevertToolInputs(a) || !a.managed || a.backend !== 'pi' || !a.session_file || a.alive) { updateEditAvailability(); return; }
+  if (!confirm(`Revert tool-input compaction for ${a.name}?\n\nThis restores the exact original session from:\n${a.tool_input_compaction.archive}\n\nThe compacted version is backed up first. Revert is refused if newer history or other changes exist, so they will not be discarded. The original large inputs and context-size problem may return. No model calls are made. Stop any external Pi using this session too.\n\nThe agent stays stopped until you explicitly Wake it.`)) return;
+  $('.form-error', form).textContent = ''; toolInputCompactingId = id; updateEditAvailability();
+  try {
+    const report = await api(`/api/agents/${id}/revert-tool-input-compaction`, 'POST', {});
+    const current = agentById(id); if (current) current.tool_input_compaction = report;
+    toast(report.status === 'reverted' ? 'Original session restored. Compacted backup retained.' : (report.error || 'Revert failed.'), report.status !== 'reverted');
+    render(); await refresh();
+  } catch (error) { if (editId === id) $('.form-error', form).textContent = error.message; else toast(error.message, true); }
+  finally { if (toolInputCompactingId === id) toolInputCompactingId = null; if ($('#edit-dialog').open) updateEditAvailability(); }
+}
 async function forgetAgent() {
   const id = editId, a = agentById(id);
   if (!a || forgettingAgent) return;
@@ -349,6 +373,7 @@ async function forgetAgent() {
 }
 $('#forget-agent').addEventListener('click', forgetAgent);
 $('#compact-tool-inputs').addEventListener('click', compactToolInputs);
+$('#revert-tool-input-compaction').addEventListener('click', revertToolInputs);
 $('#meta-compact-toggle').addEventListener('click', () => {
   const controls = $('#meta-compact-controls'); controls.hidden = !controls.hidden;
   $('#meta-compact-toggle').textContent = controls.hidden ? 'Meta-compact…' : 'Hide options';

@@ -329,3 +329,147 @@ def test_lookup_rejects_tampering_and_escaping_paths(app_agent, tmp_path):
     (other_store.home / "tool-input-compactions").symlink_to(outside, target_is_directory=True)
     with pytest.raises(ValueError, match="symlink"):
         retrieve(other_store, toolrun_id)
+
+
+@pytest.mark.parametrize("repeat_noop", [False, True])
+def test_revert_restores_exact_original_and_keeps_compacted_backup(app_agent, repeat_noop):
+    app, agent, path, _, _ = app_agent
+    original = path.read_bytes()
+    with TestClient(app) as client:
+        root = f"/api/agents/{agent.id}"
+        compact = client.post(root + "/compact-tool-inputs", json={}).json()
+        compacted = path.read_bytes()
+        assert compacted != original
+        if repeat_noop:
+            noop = client.post(root + "/compact-tool-inputs", json={}).json()
+            assert noop["status"] == "unchanged"
+            for field in ("id", "archive", "directory", "source_sha256", "replacement_sha256"):
+                assert noop[field] == compact[field]
+        result = client.post(root + "/revert-tool-input-compaction", json={})
+        assert result.status_code == 200, result.text
+        report = result.json()
+        assert report["status"] == "reverted"
+        assert path.read_bytes() == original  # Includes BOM and CRLF.
+        assert Path(report["archive"]).read_bytes() == original
+        assert Path(report["compacted_backup"]).read_bytes() == compacted
+        updated = app.state.controller.store.get(agent.id)
+        assert updated.session_file == agent.session_file and updated.session_id == agent.session_id
+        assert updated.notes == agent.notes and updated.goal == agent.goal
+        assert not updated.auto_resume and updated.pid is None and updated.wake_at is None
+        assert (
+            client.get("/api/state").json()["agents"][0]["tool_input_compaction"]["status"]
+            == "reverted"
+        )
+        again = client.post(root + "/revert-tool-input-compaction", json={}).json()
+        assert again["compacted_backup"] == report["compacted_backup"]
+        assert path.read_bytes() == original
+        index = json.loads((Path(report["directory"]) / "index.json").read_text())
+        toolrun_id = next(iter(index["calls"]))
+        assert (
+            json.loads(retrieve(app.state.controller.store, toolrun_id, 0, 64000)["input"]) == ARGS
+        )
+
+
+@pytest.mark.parametrize(
+    "change", ["new-history", "archive-tamper", "archive-missing", "wrong-path"]
+)
+def test_revert_refuses_changed_history_or_invalid_archive(app_agent, change):
+    app, agent, path, _, _ = app_agent
+    with TestClient(app) as client:
+        root = f"/api/agents/{agent.id}"
+        report = client.post(root + "/compact-tool-inputs", json={}).json()
+        if change == "new-history":
+            path.write_bytes(path.read_bytes() + b"\n")
+        elif change == "archive-tamper":
+            Path(report["archive"]).write_bytes(b"tampered")
+        elif change == "archive-missing":
+            Path(report["archive"]).unlink()
+        else:
+            report["archive"] = "/unrelated/session.jsonl"
+            app.state.controller.store.update(agent.id, {"tool_input_compaction": report})
+        before = path.read_bytes()
+        result = client.post(root + "/revert-tool-input-compaction", json={})
+        assert result.status_code == (409 if change == "new-history" else 400), result.text
+        assert path.read_bytes() == before
+        if change == "new-history":
+            assert "preserve newer history" in result.json()["detail"]
+        assert not list(Path(report["directory"]).glob("compacted-before-revert-*"))
+
+
+def test_revert_guards_and_missing_archive(app_agent, monkeypatch):
+    app, agent, path, _, _ = app_agent
+    with TestClient(app) as client:
+        root = f"/api/agents/{agent.id}"
+        url = root + "/revert-tool-input-compaction"
+        assert client.post(url, json={}).status_code == 400
+        client.post(root + "/compact-tool-inputs", json={})
+        before = path.read_bytes()
+        assert (
+            client.post(url, json={}, headers={"Origin": "https://evil.example"}).status_code == 403
+        )
+        monkeypatch.setattr(app.state.controller.processes, "alive", lambda a: True)
+        assert client.post(url, json={}).status_code == 409
+        monkeypatch.setattr(app.state.controller.processes, "alive", lambda a: False)
+        app.state.controller.store.update(agent.id, {"meta_compaction": {"status": "running"}})
+        assert client.post(url, json={}).status_code == 409
+        app.state.controller.store.update(agent.id, {"meta_compaction": {"status": "completed"}})
+        monkeypatch.setattr("swarm.sessions.running_pi_folders", lambda: [agent.folder])
+        assert client.post(url, json={}).status_code == 409
+        assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("failure", ["backup", "replace", "changed-source", "external"])
+def test_revert_failure_preserves_both_versions(app_agent, monkeypatch, failure):
+    import swarm.tool_inputs as module
+
+    app, agent, path, _, _ = app_agent
+    original = path.read_bytes()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        root = f"/api/agents/{agent.id}"
+        compact = client.post(root + "/compact-tool-inputs", json={}).json()
+        compacted = path.read_bytes()
+        real_write = module.atomic_write
+
+        def write(target, content):
+            if failure == "backup" and target.name.startswith("compacted-before-revert-"):
+                raise OSError("Backup failed")
+            if failure == "replace" and target == path:
+                raise OSError("Replace failed")
+            real_write(target, content)
+            if target.name.startswith("compacted-before-revert-"):
+                if failure == "changed-source":
+                    path.write_bytes(compacted + b"\n")
+                elif failure == "external":
+                    monkeypatch.setattr("swarm.sessions.running_pi_folders", lambda: [agent.folder])
+
+        monkeypatch.setattr(module, "atomic_write", write)
+        response = client.post(root + "/revert-tool-input-compaction", json={})
+        assert response.status_code in (409, 500)
+        assert path.read_bytes() == compacted + (b"\n" if failure == "changed-source" else b"")
+        assert Path(compact["archive"]).read_bytes() == original
+        report = app.state.controller.store.get(agent.id).tool_input_compaction
+        assert report["status"] != "running"
+        if failure != "backup":
+            assert Path(report["compacted_backup"]).read_bytes() == compacted
+        if failure == "replace":
+            monkeypatch.setattr(module, "atomic_write", real_write)
+            retry = client.post(root + "/revert-tool-input-compaction", json={})
+            assert retry.status_code == 200 and path.read_bytes() == original
+
+
+@pytest.mark.parametrize("replaced", [False, True])
+def test_revert_restart_reconciles_commit_without_rewriting(app_agent, replaced):
+    app, agent, path, _, _ = app_agent
+    original = path.read_bytes()
+    with TestClient(app) as client:
+        report = client.post(f"/api/agents/{agent.id}/compact-tool-inputs", json={}).json()
+    compacted = path.read_bytes()
+    report.update(status="running", operation="revert")
+    app.state.tool_input_compactor.save(agent.id, report)
+    if replaced:
+        path.write_bytes(original)
+    with TestClient(app):
+        current = app.state.controller.store.get(agent.id)
+        assert current.tool_input_compaction["status"] == ("reverted" if replaced else "failed")
+        assert path.read_bytes() == (original if replaced else compacted)
+        assert not current.auto_resume

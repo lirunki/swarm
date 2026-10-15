@@ -20,12 +20,12 @@ from .paths import local_path
 MAX_RECORD_BYTES = 1024 * 1024
 
 
-def atomic_write(path: Path, content: str) -> None:
+def atomic_write(path: Path, content: str | bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            stream.write(content)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content.encode("utf-8") if isinstance(content, str) else content)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(name, path)
