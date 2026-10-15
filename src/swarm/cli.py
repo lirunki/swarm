@@ -41,7 +41,12 @@ def parser() -> argparse.ArgumentParser:
     )
     commands = root.add_subparsers(dest="command")
     serve = commands.add_parser("serve", help="start the graphical dashboard")
-    serve.add_argument("--host", choices=["127.0.0.1", "localhost", "::1"], default="127.0.0.1")
+    serve.add_argument(
+        "--host",
+        choices=["127.0.0.1", "localhost", "::1", "0.0.0.0"],
+        default="127.0.0.1",
+        help="bind address (default: 127.0.0.1; 0.0.0.0 exposes unauthenticated network access)",
+    )
     serve.add_argument("--port", type=int, default=8787)
     serve.add_argument("--pi", default=os.environ.get("SWARM_PI", "pi"), help="pi executable path")
     serve.add_argument(
@@ -148,12 +153,25 @@ def main(argv: list[str] | None = None) -> None:
 
             from .server import create_app
 
-            host = "[::1]" if args.host == "::1" else args.host
-            url = f"http://{host}:{args.port}"
+            network = args.host == "0.0.0.0"
+            browser_host = (
+                "127.0.0.1" if network else ("[::1]" if args.host == "::1" else args.host)
+            )
+            url = f"http://{browser_host}:{args.port}"
             print(
                 f"Swarm: {url}\nRegistry: {store.home}\nClosing the dashboard does not stop agents.",
                 flush=True,
             )
+            if network:
+                print(f"Listening on 0.0.0.0:{args.port} (all IPv4 interfaces).", flush=True)
+                print(
+                    "WARNING: Swarm has no authentication and network mode allows any Host header. "
+                    "Anyone who can reach this port "
+                    "can access private data and control agents with your permissions. "
+                    "Use only a trusted network with firewall restrictions; never expose it publicly.",
+                    file=sys.stderr,
+                    flush=True,
+                )
             if args.open:
                 timer = threading.Timer(1.0, lambda: webbrowser.open(url))
                 timer.daemon = True
@@ -165,6 +183,7 @@ def main(argv: list[str] | None = None) -> None:
                     recover=not args.no_recover,
                     session_roots=args.pi_sessions_dir,
                     grok_session_roots=args.grok_sessions_dir,
+                    allowed_hosts=["*"] if network else None,
                 ),
                 host=args.host,
                 port=args.port,

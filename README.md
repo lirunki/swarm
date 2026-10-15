@@ -36,10 +36,29 @@ swarm serve --pi /absolute/path/to/pi
 swarm serve --no-recover   # inspect records without launching saved agents at startup
 ```
 
-Only loopback bindings are allowed. Run **one controller per registry**, with
-one Uvicorn worker (the CLI enforces the latter). Do not expose it through a
-public reverse proxy. It is a local-user application, not a multi-user server,
-a sandbox, or an authentication boundary against other local processes.
+Binding defaults to **127.0.0.1** (local access only). To explicitly listen on
+all IPv4 interfaces for access from another machine:
+
+```bash
+swarm serve --host 0.0.0.0
+swarm serve --host 0.0.0.0 --port 8788 --open
+```
+
+Remote clients use `http://<server-ip>:<port>`; `--open` still opens the local
+`127.0.0.1` URL. In this opt-in network mode, Host headers are unrestricted so
+LAN IP addresses/hostnames work; browser same-origin checks remain enabled.
+Loopback mode retains its strict Host checks. Network mode also removes the
+default Host-based DNS-rebinding protection; same-origin checks are not authentication.
+
+**Network mode has no authentication. Anyone who can reach the port can read
+private data and control agents with your user account's permissions.** Use it
+only on a trusted private network with restrictive firewall rules. Do not expose
+it to the public internet or through a public reverse proxy. Swarm does not
+configure your firewall automatically.
+
+Run **one controller per registry**, with one Uvicorn worker (the CLI enforces
+the latter). It is a single-user application, not a multi-user server, a sandbox,
+or an authentication boundary against other local processes.
 
 ## Windows without WSL (experimental)
 
