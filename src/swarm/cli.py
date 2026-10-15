@@ -105,6 +105,20 @@ def parser() -> argparse.ArgumentParser:
     )
     report.add_argument("--pid", type=int)
 
+    product = commands.add_parser(
+        "product", help="advertise the latest result on this agent's card"
+    )
+    product.add_argument(
+        "--id",
+        default=os.environ.get("SWARM_AGENT_ID"),
+        help="agent ID (defaults to SWARM_AGENT_ID)",
+    )
+    product.add_argument("--label", default="", help="short link label")
+    source = product.add_mutually_exclusive_group(required=True)
+    source.add_argument("--url", help="external HTTP(S) product link")
+    source.add_argument("--file", help="local result file to snapshot for download")
+    source.add_argument("--clear", action="store_true", help="remove the current product")
+
     spawn = commands.add_parser("spawn", help="create or reuse a direct child agent")
     spawn.add_argument("--request-id", required=True, help="stable idempotency slug (max 80)")
     spawn.add_argument("--name", required=True)
@@ -245,6 +259,18 @@ def main(argv: list[str] | None = None) -> None:
     if args.command is None:
         args = root.parse_args([*argv, "serve"])
     try:
+        if args.command == "product":
+            if not args.id:
+                raise ValueError("--id or SWARM_AGENT_ID is required to advertise a product")
+            if args.clear and args.label:
+                raise ValueError("--label cannot be used with --clear")
+            payload = None if args.clear else {"label": args.label}
+            if args.url:
+                payload["url"] = args.url
+            elif args.file:
+                payload["path"] = str(local_path(args.file))
+            print(json.dumps(AgentClient(args.api_url).product(args.id, payload), indent=2))
+            return
         if args.command in {"spawn", "agent"}:
             print(json.dumps(run_agent_command(args), indent=2))
             return

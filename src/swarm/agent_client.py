@@ -120,6 +120,14 @@ class AgentClient:
             raise AgentClientError("API returned JSON that is not an object")
         return decoded
 
+    def product(self, agent_id: str, payload: dict[str, Any] | None) -> dict[str, Any]:
+        return self.request(
+            "DELETE" if payload is None else "POST",
+            f"/api/agents/{quote(agent_id, safe='')}/product",
+            body=payload,
+            operation="publish product",
+        )
+
     @staticmethod
     def _children(parent_id: str) -> str:
         return f"/api/agents/{quote(parent_id, safe='')}/children"

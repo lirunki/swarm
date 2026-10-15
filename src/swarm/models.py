@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Literal
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -45,6 +47,47 @@ class ImportSource(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class Product(BaseModel):
+    """The single currently advertised result; file bytes live in controller-owned storage."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: UUID = Field(default_factory=uuid4)
+    kind: Literal["link", "file"]
+    label: str = Field(min_length=1, max_length=120)
+    url: str | None = Field(default=None, max_length=8192)
+    filename: str | None = Field(default=None, max_length=255)
+    size: int | None = Field(default=None, ge=0)
+    sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    created_at: datetime = Field(default_factory=now)
+
+    @model_validator(mode="after")
+    def validate_product(self) -> Product:
+        if not self.label.strip() or self.created_at.tzinfo is None:
+            raise ValueError("product needs a nonblank label and timezone-aware timestamp")
+        if self.kind == "link":
+            url = self.url or ""
+            if any(ord(c) < 33 or ord(c) in (92, 127) for c in url):
+                raise ValueError("product URL must not contain whitespace or control characters")
+            parsed = urlsplit(url)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+            ):
+                raise ValueError("product URL must be an HTTP(S) link without credentials")
+            _ = parsed.port  # Validate malformed ports too.
+            if any(v is not None for v in (self.filename, self.size, self.sha256)):
+                raise ValueError("link products cannot contain file metadata")
+        elif self.url is not None or not self.filename or self.size is None or not self.sha256:
+            raise ValueError("file products require filename, size and checksum, not a URL")
+        elif self.filename in {".", ".."} or any(
+            ord(c) < 32 or ord(c) in (47, 92, 127) for c in self.filename
+        ):
+            raise ValueError("product filename must be a plain filename")
+        return self
+
+
 class Agent(BaseModel):
     model_config = ConfigDict(extra="allow")  # future adapters may add metadata
     version: int = 1
@@ -66,6 +109,7 @@ class Agent(BaseModel):
     session_id: str | None = None
     session_file: str | None = None
     import_source: ImportSource | None = None
+    product: Product | None = None
     managed: bool = False  # merely observing a file must NEVER execute a process
     auto_resume: bool = True
     wake_at: datetime | None = None

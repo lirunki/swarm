@@ -56,6 +56,18 @@ def fixture_state():
                 "updated_at": "2026-01-01T00:00:00Z",
             }
         )
+    agents[0]["product"] = {
+        "id": "product-0",
+        "kind": "link",
+        "label": "PR #42",
+        "url": "https://example.com/pr/42",
+    }
+    agents[7]["product"] = {
+        "id": "product-7",
+        "kind": "file",
+        "label": "A downloadable report with a long label",
+        "filename": "report.zip",
+    }
     agents[5]["name"] = "Needle child"
     agents[7]["name"] = "Long unbroken name " + "X" * 95
     agents[8]["name"] = '<img src=x onerror="window.unsafe=true">'
@@ -102,6 +114,20 @@ def test_dense_org_chart_layout_and_interactions(static_url, tmp_path, width):
             playwright.expect(page.locator(".agent-card.is-compact")).to_have_count(18)
             assert not page.locator(".goal:visible").count()
             assert not page.locator(".agent-card img").count()
+            playwright.expect(page.locator(".product-link:visible")).to_have_count(2)
+            assert (
+                page.locator('[data-agent-id="a0"] .product-link').get_attribute("href")
+                == "https://example.com/pr/42"
+            )
+            assert (
+                page.locator('[data-agent-id="a7"] .product-link').get_attribute("download")
+                == "report.zip"
+            )
+            for id in ("a0", "a7"):
+                tile = page.locator(f'[data-agent-id="{id}"]').bounding_box()
+                link = page.locator(f'[data-agent-id="{id}"] .product-link').bounding_box()
+                assert link["y"] + link["height"] <= tile["y"] + tile["height"]
+                assert link["x"] + link["width"] <= tile["x"] + tile["width"]
             assert (
                 page.locator('[data-agent-id="a0"] h3').evaluate("e => getComputedStyle(e).color")
                 == "rgb(255, 123, 123)"

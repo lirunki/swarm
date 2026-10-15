@@ -93,7 +93,7 @@ function renderer() {
   const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
   const storage = memoryStorage(), calls = [];
   const context = vm.createContext({
-    document: {createElement: tag => new Element(tag), createTextNode: value => new Text(value)},
+    document: {createElement: tag => new Element(tag), createTextNode: value => new Text(value)}, URL,
     state: {home, agents: []}, cardViews: new CardViews(() => storage), SwarmCardViews: {applyCardView},
     agentById: id => context.state.agents.find(a => a.id === id),
     metaCompactingId: null, toolInputCompactingId: null,
@@ -432,4 +432,36 @@ test('org chart integration loads before app and keeps nested-toggle focus', () 
   assert.match(source, /SwarmOrgChart.buildForest\(state.agents, new Set\(visible.map/);
   assert.match(source, /chart.querySelectorAll\('.agent-card'\)/);
   assert.match(source, /cardViews.setAllCompact\(state.home, state.agents, true\)/);
+});
+
+
+test('latest product is usable on compact and expanded cards without HTML interpretation', () => {
+  const {render} = renderer();
+  const a = fullAgent('idle', false);
+  a.product = {id: 'product-one', kind: 'link', label: 'PR <script>not code</script>', url: 'https://example.com/pr/12'};
+  const card = render(a), link = find(card, 'product-link');
+  assert.equal(card.classList.contains('is-compact'), true);
+  assert.equal(card.classList.contains('has-product'), true);
+  assert.equal(link.href, 'https://example.com/pr/12');
+  assert.equal(link.target, '_blank'); assert.equal(link.rel, 'noopener noreferrer');
+  assert.match(visibleText(card), /PR <script>not code<\/script>/);
+  assert.equal(walk(card).filter(el => el.tagName === 'SCRIPT').length, 0);
+  find(card, 'card-toggle').click();
+  assert.ok(visibleText(card).includes(a.product.label));
+  a.product = {id: 'product-two', kind: 'file', label: 'Download report', filename: 'report.zip'};
+  const updated = render(a), download = find(updated, 'product-link');
+  assert.equal(download.href, '/api/agents/agent-1/products/product-two/download');
+  assert.equal(download.download, 'report.zip');
+  assert.equal(walk(updated).filter(el => el.classList.contains('product-link')).length, 1);
+  assert.ok(!visibleText(updated).includes('PR <script>'));
+  a.product = null;
+  assert.equal(find(render(a), 'product-link'), undefined);
+});
+
+test('unsafe product URLs never become card links', () => {
+  const {render} = renderer();
+  for (const url of ['javascript:alert(1)', 'data:text/html,evil', 'file:///tmp/private', '/relative', 'https://user:secret@example.com']) {
+    const a = {...fullAgent('idle', false), product: {kind: 'link', label: 'Unsafe', url}};
+    assert.equal(find(render(a), 'product-link'), undefined, url);
+  }
 });

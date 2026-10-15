@@ -98,6 +98,28 @@ function canRevertToolInputs(a) {
   return !!(job?.archive && job.source_sha256 && job.replacement_sha256 &&
     (['completed', 'unchanged'].includes(job.status) || (job.status === 'failed' && job.operation === 'revert')));
 }
+function productLink(a) {
+  const product = a.product;
+  if (!product || !['link', 'file'].includes(product.kind)) return null;
+  const label = typeof product.label === 'string' && product.label.trim() ? product.label : 'Product';
+  const link = node('a', 'product-link', `${product.kind === 'file' ? '↓' : '↗'} ${label}`);
+  if (product.kind === 'link') {
+    try {
+      const url = new URL(product.url);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
+      link.href = url.href;
+    } catch { return null; }
+    link.target = '_blank'; link.rel = 'noopener noreferrer';
+    link.title = `Open latest product: ${label}`;
+  } else {
+    if (typeof product.id !== 'string' || !product.id) return null;
+    link.href = `/api/agents/${encodeURIComponent(a.id)}/products/${encodeURIComponent(product.id)}/download`;
+    link.download = product.filename || 'product';
+    link.title = `Download latest product: ${label}`;
+  }
+  link.setAttribute('aria-label', link.title);
+  return link;
+}
 function renderCard(a) {
   const card = node('article', 'agent-card'); card.dataset.agentId = a.id;
   const activityHint = a.activity || 'No activity reported yet';
@@ -119,6 +141,8 @@ function renderCard(a) {
   header.append(avatar, identity, statusBadge, toggle);
   const goal = node('p', 'goal', a.goal); goal.title = a.goal;
   summary.append(header);
+  const product = productLink(a);
+  if (product) { summary.append(product); card.classList.toggle('has-product', true); }
   const activity = node('div', 'activity'); activity.style.borderColor = `var(--${a.status})`;
   activity.id = `card-activity-${a.id}`;
   toggle.setAttribute('aria-describedby', activity.id);

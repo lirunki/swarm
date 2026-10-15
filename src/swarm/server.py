@@ -10,13 +10,14 @@ import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from uuid import UUID
 
 from anyio import CancelScope
 from fastapi import BackgroundTasks, FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .controller import Controller
@@ -26,6 +27,7 @@ from .meta_compact import MetaCompactor, MetaCompactRequest, require_not_busy
 from .models import AgentPatch, CreateAgent, WakeRequest
 from .orchestration import ChildMessage, ChildStop, Orchestrator, OwnershipError, SpawnRequest
 from .processes import Processes
+from .products import ProductRequest, Products
 from .sessions import AdoptRequest, Sessions
 from .store import Store
 from .terminal import bridge
@@ -69,6 +71,7 @@ def create_app(
     processes = Processes(store, pi, api_url)
     controller = Controller(store, processes)
     orchestration = Orchestrator(controller)
+    products = Products(controller)
     meta_compactor = MetaCompactor(controller, pi)
     tool_input_compactor = ToolInputCompactor(meta_compactor)
     sessions = Sessions(store, session_roots)
@@ -95,6 +98,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         with store.controller_lock():
+            await asyncio.to_thread(products.collect)
             await asyncio.to_thread(orchestration.recover)
             await asyncio.to_thread(tool_input_compactor.recover)
             await asyncio.to_thread(meta_compactor.recover)
@@ -114,6 +118,7 @@ def create_app(
     app = FastAPI(title="Swarm", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.controller = controller
     app.state.orchestration = orchestration
+    app.state.products = products
     app.state.meta_compactor = meta_compactor
     app.state.tool_input_compactor = tool_input_compactor
     app.state.sessions = sessions
@@ -194,6 +199,45 @@ def create_app(
         result = await asyncio.to_thread(update)
         await broadcast()
         return result
+
+    @app.post("/api/agents/{agent_id}/product")
+    async def publish_product(agent_id: UUID, request: ProductRequest):
+        result = await asyncio.to_thread(products.publish, str(agent_id), request)
+        await broadcast()
+        return result
+
+    @app.delete("/api/agents/{agent_id}/product")
+    async def clear_product(agent_id: UUID):
+        result = await asyncio.to_thread(products.clear, str(agent_id))
+        await broadcast()
+        return result
+
+    @app.get("/api/agents/{agent_id}/products/{product_id}/download")
+    async def download_product(agent_id: UUID, product_id: UUID):
+        product, stream = await asyncio.to_thread(products.download, str(agent_id), str(product_id))
+
+        def content():
+            try:
+                while block := stream.read(65536):
+                    yield block
+            finally:
+                stream.close()
+
+        def finish_download():
+            stream.close()
+            products.collect()  # Retry cleanup of a superseded snapshot held open by this download.
+
+        return StreamingResponse(
+            content(),
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": "attachment; filename*=UTF-8''"
+                + quote(product.filename, safe=""),
+                "Content-Length": str(product.size),
+                "Cache-Control": "no-store",
+            },
+            background=BackgroundTask(finish_download),
+        )
 
     @app.post("/api/agents/{parent_id}/children", status_code=201)
     async def spawn_child(parent_id: UUID, request: SpawnRequest):
@@ -278,6 +322,7 @@ def create_app(
     @app.delete("/api/agents/{agent_id}")
     async def forget(agent_id: UUID):
         agent = await asyncio.to_thread(controller.forget, str(agent_id))
+        await asyncio.to_thread(products.collect)
         await broadcast()
         return {"id": str(agent.id), "forgotten": True, "session_file": agent.session_file}
 

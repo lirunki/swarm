@@ -90,7 +90,8 @@ conservatively blocks while any native Pi has an unknown working folder.
   source folder's branch. Prefer a separate worktree per coding agent to prevent concurrent
   Git edits.
 - **Compact org chart:** agents appear as 128×128 square tiles containing only
-  their name, status and expand arrow. Hover over the tile/name to see current
+  their name, status and expand arrow, plus their latest product link when one is
+  advertised. Hover over the tile/name to see current
   activity; a red name means a live process, independent of goal status. Cards
   default to compact even when status changes; saved manual expansion choices
   still take precedence. **Collapse all** restores the dense view in one click.
@@ -134,6 +135,53 @@ conservatively blocks while any native Pi has an unknown working folder.
 Agents have your user account's filesystem, Git, network and provider access.
 Choose goals and folders accordingly. Pi project trust prompts are left intact;
 if pi is waiting at startup for trust/login/model selection, open its Terminal.
+
+## Advertise agent products
+
+Agents can publish their latest deliverable as a link on both compact and expanded
+cards. **One product is retained per agent:** every successful advertisement
+replaces the previous one, even across work cycles. Status/checkpoint updates do
+not clear it. Product publication does not change process liveness or goal status.
+
+```bash
+swarm product --label 'PR #42' --url 'https://github.com/example/repo/pull/42'
+swarm product --label 'Pipeline run' --url 'https://ci.example/runs/123'
+swarm product --label 'Download report' --file /path/to/report.zip
+swarm product --clear
+```
+
+The command uses `SWARM_AGENT_ID`; operators can specify `product --id AGENT_ID`.
+Like child orchestration, it calls the running loopback controller using
+`SWARM_API_URL` or global `--api-url`. CLI relative file paths are resolved from
+the caller's working directory. Direct API relative paths use the agent's folder.
+
+External links accept HTTP(S) only, disallow embedded credentials, and are never
+fetched server-side. They open in a new tab without opener/referrer access.
+For local products, Swarm snapshots a regular server-local file up to **128 MiB**
+into private `$SWARM_HOME/products/<agent-id>/<product-id>/payload` storage. The
+original file is never modified or deleted; later edits/removal do not affect the
+download. Downloads are forced attachments with `nosniff`/no-cache headers and
+verify the stored checksum. They use agent/product IDs, never arbitrary download
+paths. Directories and devices cannot be published; package multiple files into
+an archive first. Only publish intended deliverables, not secrets/private configs.
+
+Superseded or cleared snapshot copies are removed; old download URLs return 404.
+Interrupted/unreferenced snapshots are cleaned on startup. If an open download or
+filesystem permission prevents cleanup, it is logged and retried during a later
+cleanup. An already-started download can finish. Original producer files are kept,
+and removing an agent only cleans its Swarm-owned product copies.
+
+API:
+- `POST /api/agents/<id>/product` with `{"label":"PR","url":"https://…"}` or
+  `{"label":"Report","path":"/server/path/report.zip"}` (exactly one source).
+- `DELETE /api/agents/<id>/product` clears the current advertisement.
+- `GET /api/agents/<id>/products/<product-id>/download` downloads only the current
+  file product. Link products do not have a download endpoint.
+
+The `agent.product` object is persisted in the agent record and included in live
+state and child-status responses. This shares Swarm's trusted local-user boundary;
+product publication is not a remote upload service or a separate authorization
+system. The Swarm skill includes these instructions for agents.
 
 ## Orchestrate child agents from the CLI
 

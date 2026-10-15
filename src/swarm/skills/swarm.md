@@ -87,6 +87,37 @@ updated; do not claim that the dashboard shows `waiting`.
   --activity 'Goal complete' --notes 'Implemented, tested, and documented. PR 42 merged.'
 ```
 
+## Advertise the latest product you produced
+
+Publish a deliverable on your own agent card through the controller. You may
+advertise repeatedly during or across cycles; **each successful advertisement
+replaces the previous one**. There is one latest product per agent, not a history.
+Ordinary status/checkpoint reports do not clear it.
+
+```bash
+"$SWARM_PYTHON" -m swarm product --label 'PR #42' --url 'https://github.com/example/repo/pull/42'
+"$SWARM_PYTHON" -m swarm product --label 'Pipeline run' --url 'https://ci.example/runs/123'
+"$SWARM_PYTHON" -m swarm product --label 'Download report' --file /absolute/path/report.zip
+"$SWARM_PYTHON" -m swarm product --clear
+```
+
+The agent ID defaults to `SWARM_AGENT_ID`. A local operator can pass `product --id
+AGENT_ID`. These commands use `SWARM_API_URL` (or global `--api-url`) and need the
+controller running. They do not change your goal/status or start/stop a process.
+
+External links must use HTTP(S), without embedded username/password credentials.
+They are not fetched by the controller. Local files must already exist on the
+server, must be regular files, and are limited to 128 MiB; archive directories
+into a file yourself if needed. The controller snapshots the file so later edits
+or removal of your original do not change the published download. Replacing or
+clearing the product removes the old advertised snapshot, **never your original**.
+Old download URLs stop working. Do not manually populate file-product metadata.
+
+Publish only intended deliverables, never credentials, private configuration or
+unrelated files. Card viewers can download the advertised content. Prefer concise
+labels; the product remains directly accessible on a collapsed tile. A parent can
+inspect a child's product in `swarm agent status CHILD_ID`.
+
 ## Orchestrating direct children
 
 A managed agent may create and control only its **direct children** through the local
