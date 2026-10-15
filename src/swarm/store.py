@@ -118,6 +118,20 @@ class Store:
             atomic_write(self.path(agent_id), encode(updated))
         return updated
 
+    def remove(self, agent_id: str | UUID) -> Agent:
+        """Remove only the dashboard record; session/source files are never touched."""
+        with self.lock(agent_id):
+            agent = self.get(agent_id)
+            self.path(agent_id).unlink()
+            directory = os.open(self.agents_dir, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        self.cache.pop(str(agent.id), None)
+        self.errors.pop(f"{agent.id}.md", None)
+        return agent
+
     def scan(self) -> list[Agent]:
         """Keep last-good records during a bad/partial external edit; report the error."""
         found: set[str] = set()

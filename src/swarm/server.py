@@ -152,6 +152,12 @@ def create_app(
         await broadcast()
         return agent.model_dump(mode="json") | {"alive": False}
 
+    @app.delete("/api/agents/{agent_id}")
+    async def forget(agent_id: UUID):
+        agent = await asyncio.to_thread(controller.forget, str(agent_id))
+        await broadcast()
+        return {"id": str(agent.id), "forgotten": True, "session_file": agent.session_file}
+
     @app.get("/api/pi/sessions")
     def list_sessions():
         with controller.lock:

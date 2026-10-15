@@ -156,6 +156,25 @@ class Controller:
             self.refresh()
             return agent
 
+    def forget(self, agent_id: str) -> Agent:
+        """Stop an inactive owned worker and unregister it, preserving all history."""
+        with self.lock:
+            agent = self.store.get(agent_id)
+            alive = self.processes.alive(agent)
+            if alive and agent.status == Status.running:
+                raise RuntimeError("Agent is actively running. Stop it before forgetting it.")
+            if agent.managed:
+                # Persist intent first: failed termination or a reboot must not resume work.
+                agent = self.store.update(agent.id, {"auto_resume": False, "wake_at": None})
+                if alive:
+                    self.processes.stop(agent)
+                if self.processes.alive(agent):
+                    raise RuntimeError("Could not stop the agent; its dashboard record was kept.")
+            # Never terminate a PID from a record; externally observed processes are not owned.
+            removed = self.store.remove(agent.id)
+            self.refresh()
+            return removed
+
     def tick(self) -> bool:
         with self.lock:
             agents = self.store.scan()

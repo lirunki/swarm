@@ -8,7 +8,9 @@ let state = {agents: [], errors: {}, health: {}, home: ''};
 let filter = 'all', activeTab = 'dashboard', restored = false, stateSocket, reconnectDelay = 1000;
 let selectedSession = null, sessionData = [], wakeId = null, editId = null;
 let selectedGrokSession = null, grokSessionData = [], grokLoadSequence = 0;
+let forgettingAgent = false;
 const terminals = new Map();
+const cardViews = new SwarmCardViews.CardViews();
 let toastTimer;
 function toast(message, error = false) {
   const el = $('#toast'); el.textContent = message; el.className = `toast${error ? ' error' : ''}`; el.hidden = false;
@@ -61,22 +63,32 @@ function metadata(list, label, value) {
   const dt = node('dt', '', label), dd = node('dd', '', String(value)); dd.title = String(value); list.append(dt, dd);
 }
 function renderCard(a) {
-  const card = node('article', 'agent-card');
-  const inside = node('div', 'card-inner'), header = node('div', 'card-head');
-  const identity = node('div', 'card-identity');
-  identity.append(node('h3', '', a.name), node('div', 'card-subtitle', `${a.backend}${a.import_source ? ` ← ${a.import_source.backend}` : ''} · ${a.id.slice(0, 8)}${a.managed ? '' : ' · observed'}`));
-  header.append(node('div', 'avatar', a.name.slice(0, 1).toUpperCase()), identity, badge(a.status));
+  const card = node('article', 'agent-card'); card.dataset.agentId = a.id;
+  const inside = node('div', 'card-inner'), summary = node('header', 'card-summary'), header = node('div', 'card-head');
+  const identity = node('div', 'card-identity'), avatar = node('div', 'avatar', a.name.slice(0, 1).toUpperCase());
+  const subtitle = node('div', 'card-subtitle', `${a.backend}${a.import_source ? ` ← ${a.import_source.backend}` : ''} · ${a.id.slice(0, 8)}${a.managed ? '' : ' · observed'}`);
+  const name = node('h3', '', a.name); name.title = a.name;
+  identity.append(name, subtitle);
+  const details = node('div', 'card-details'); details.id = `card-details-${a.id}`;
+  const toggle = button('', 'card-toggle', () => {
+    const compact = !cardViews.isCompact(state.home, a);
+    cardViews.setCompact(state.home, a.id, compact);
+    SwarmCardViews.applyCardView({card, details, foot, avatar, subtitle, toggle}, compact, a.name);
+  });
+  toggle.setAttribute('aria-controls', `${details.id} card-actions-${a.id}`);
+  header.append(avatar, identity, badge(a.status), toggle);
   const goal = node('p', 'goal', a.goal); goal.title = a.goal;
+  summary.append(header, goal);
   const activity = node('div', 'activity'); activity.style.borderColor = `var(--${a.status})`;
   activity.append(node('span', 'activity-label', 'CURRENT ACTIVITY'), document.createTextNode(a.activity || 'No activity reported yet'));
-  inside.append(header, goal, activity);
+  details.append(activity);
   if (a.activities?.length) {
     const list = node('ul', 'activity-list');
     for (const item of a.activities) {
       const row = node('li'); row.append(node('span', item.status === 'done' ? 'running' : '', item.status === 'done' ? '✓' : item.status === 'running' ? '›' : '○'), document.createTextNode(item.title)); list.append(row);
-    } inside.append(list);
+    } details.append(list);
   }
-  if (a.wait_reason) inside.append(node('p', 'wait-reason', a.wait_reason));
+  if (a.wait_reason) details.append(node('p', 'wait-reason', a.wait_reason));
   const meta = node('dl', 'metadata');
   metadata(meta, 'Folder', a.folder); metadata(meta, 'Repository', a.repository); metadata(meta, 'Worktree', a.worktree);
   metadata(meta, 'Branch', a.branch); metadata(meta, 'Session', a.session_id || 'Not persisted yet');
@@ -87,10 +99,10 @@ function renderCard(a) {
     metadata(meta, 'Imported', `${a.import_source.backend} · ${a.import_source.session_id}`);
     metadata(meta, 'Source', a.import_source.session_file);
   }
-  inside.append(meta);
-  if (a.notes) { const details = node('details', 'notes'); details.append(node('summary', '', 'Checkpoint'), node('pre', '', a.notes)); inside.append(details); }
-  if (a.last_error) inside.append(node('div', 'card-error', a.last_error));
-  const foot = node('div', 'card-foot');
+  details.append(meta);
+  if (a.notes) { const notes = node('details', 'notes'); notes.append(node('summary', '', 'Checkpoint'), node('pre', '', a.notes)); details.append(notes); }
+  if (a.last_error) details.append(node('div', 'card-error', a.last_error));
+  const foot = node('div', 'card-foot'); foot.id = `card-actions-${a.id}`;
   const runtime = node('span', `runtime${a.alive ? ' online' : ''}`, `${a.alive ? '● Online' : '○ Offline'} · ${since(a.updated_at)}`); runtime.title = a.updated_at;
   const actions = node('div', 'actions');
   actions.append(button('Terminal ↗', 'small', () => openTerminal(a.id)), button('Edit', 'small', () => editAgent(a.id)));
@@ -98,7 +110,9 @@ function renderCard(a) {
     actions.append(button('Wake', 'small', () => wakeAgent(a.id)));
     if (a.alive || a.auto_resume) actions.append(button('Stop', 'small danger', () => stopAgent(a.id)));
   }
-  foot.append(runtime, actions); card.append(inside, foot); return card;
+  foot.append(runtime, actions); inside.append(summary, details); card.append(inside, foot);
+  SwarmCardViews.applyCardView({card, details, foot, avatar, subtitle, toggle}, cardViews.isCompact(state.home, a), a.name);
+  return card;
 }
 function render() {
   $('#home-path').textContent = state.home ? `${state.home}/agents` : '~/.swarm/agents';
@@ -115,13 +129,19 @@ function render() {
   }
   const query = $('#search').value.trim().toLowerCase();
   const visible = state.agents.filter(a => (filter === 'all' || a.status === filter) && [a.name, a.goal, a.activity, a.folder, a.branch].join(' ').toLowerCase().includes(query));
+  const focusedToggle = document.activeElement?.classList.contains('card-toggle') ? document.activeElement.closest('.agent-card')?.dataset.agentId : null;
   $('#agents').replaceChildren(...visible.map(renderCard));
+  if (focusedToggle) {
+    const replacement = [...$('#agents').children].find(card => card.dataset.agentId === focusedToggle);
+    if (replacement) $('.card-toggle', replacement)?.focus({preventScroll: true});
+  }
   const empty = $('#empty'); empty.hidden = visible.length > 0;
   $('h2', empty).textContent = state.agents.length ? 'No agents match this view.' : 'A little quiet in the swarm.';
   $('#empty-create').hidden = state.agents.length > 0;
   const errors = Object.entries(state.errors || {}); $('#registry-errors').hidden = !errors.length;
   $('#error-list').replaceChildren(...errors.map(([file, message]) => node('pre', '', `${file}: ${message}`)));
   for (const terminal of terminals.values()) syncTerminal(terminal);
+  if ($('#edit-dialog').open) updateForgetAvailability();
 }
 function activate(id) {
   activeTab = id && terminals.has(id) ? id : 'dashboard';
@@ -201,8 +221,38 @@ function closeTerminal(id) {
 function showDialog(id) { const dlg = $(id); $('.form-error', dlg).textContent = ''; dlg.showModal(); }
 function editAgent(id) {
   const a = agentById(id); if (!a) return; editId = id;
-  const form = $('#edit-form'); form.elements.name.value = a.name; form.elements.goal.value = a.goal; form.elements.status.value = a.status; form.elements.auto_resume.checked = a.auto_resume; showDialog('#edit-dialog');
+  const form = $('#edit-form'); form.elements.name.value = a.name; form.elements.goal.value = a.goal; form.elements.status.value = a.status; form.elements.auto_resume.checked = a.auto_resume;
+  updateForgetAvailability(); showDialog('#edit-dialog');
 }
+function updateForgetAvailability() {
+  const a = agentById(editId);
+  const active = a?.alive && a.status === 'running';
+  $('#forget-agent').disabled = forgettingAgent || !a || active;
+  $('#forget-explanation').textContent = !a ? 'This agent is no longer registered.' : active
+    ? 'This agent is actively running. Stop it before forgetting it.'
+    : 'Forget stops any remaining Swarm-owned process and removes the card. Saved session history stays in its current location.';
+}
+async function forgetAgent() {
+  const id = editId, a = agentById(id);
+  if (!a || forgettingAgent) return;
+  if (a.alive && a.status === 'running') { updateForgetAvailability(); return; }
+  const history = a.session_file ? `Saved session history will be kept at:\n${a.session_file}` : 'Any saved session history will be kept.';
+  if (!confirm(`Forget ${a.name}? This stops any remaining Swarm-owned process and removes the dashboard card.\n\n${history}`)) return;
+  const form = $('#edit-form'); $('.form-error', form).textContent = '';
+  forgettingAgent = true; updateForgetAvailability(); $('[type=submit]', form).disabled = true;
+  try {
+    await api(`/api/agents/${id}`, 'DELETE');
+    cardViews.forget(state.home, id); closeTerminal(id);
+    if (editId === id) $('#edit-dialog').close();
+    applyState({...state, agents: state.agents.filter(agent => agent.id !== id)});
+    toast('Agent forgotten. Saved session history was kept.'); await refresh();
+  } catch (error) {
+    if (editId === id) $('.form-error', form).textContent = error.message;
+    else toast(error.message, true);
+  }
+  finally { forgettingAgent = false; updateForgetAvailability(); $('[type=submit]', form).disabled = false; }
+}
+$('#forget-agent').addEventListener('click', forgetAgent);
 function wakeAgent(id) {
   wakeId = id; $('#wake-form').reset(); $('#wake-title').textContent = `Wake ${agentById(id)?.name || 'agent'}`; showDialog('#wake-dialog');
 }

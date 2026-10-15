@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/static/app.css">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
+  <script defer src="/static/card-views.js"></script>
   <script defer src="/static/app.js"></script>
 </head>
 <body>
@@ -97,8 +98,9 @@
       <label>Status<select name="status"><option value="running">Running</option><option value="waiting">Waiting for input</option><option value="dormant">Dormant</option><option value="idle">Idle — turn completed</option><option value="done">Done — goal accomplished</option></select></label>
       <label class="checkbox"><input type="checkbox" name="auto_resume">Restore automatically when Swarm starts</label>
       <p class="hint">Changing a status only updates the record; it does not start, pause, or stop the process. Use Wake or Stop for process control.</p>
+      <p id="forget-explanation" class="hint forget-explanation">Forget stops any remaining Swarm-owned process and removes the card. Saved session history stays in its current location.</p>
       <p class="form-error" role="alert"></p>
-      <footer class="dialog-footer"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Save changes</button></footer>
+      <footer class="dialog-footer"><button id="forget-agent" type="button" class="danger forget-agent">Forget agent</button><button type="button" data-close>Cancel</button><button type="submit" class="primary">Save changes</button></footer>
     </form>
   </dialog>
   <div id="toast" class="toast" role="status" hidden></div>

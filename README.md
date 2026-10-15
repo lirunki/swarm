@@ -50,6 +50,13 @@ a sandbox, or an authentication boundary against other local processes.
   Select **Create a new Git worktree** to run `git worktree add -b <branch>` in
   an existing **local repository**. Swarm never switches an existing folder's branch.
   Prefer a separate worktree per coding agent to prevent concurrent Git edits.
+- **Compact / expand cards** with the chevron in each card header. Compact cards
+  show only name, goal and status. Done, idle, dormant and offline agents compact
+  automatically; live running and waiting-for-input agents start expanded.
+  Manual choices take precedence and are remembered per agent, registry and browser,
+  across live updates/reloads. If browser storage is unavailable, choices still work
+  for the current page. This is display-only: model context/history and processes
+  are unaffected. Expand a card to use its normal actions and inspect details.
 - **Terminal** attaches to the real pi TUI using xterm.js and a tmux PTY client.
   Tabs retain scrollback while open, and open tabs are remembered locally.
 - **Closing a terminal tab, the browser, or Swarm does not stop agents.**
@@ -60,6 +67,16 @@ a sandbox, or an authentication boundary against other local processes.
 - **Stop** terminates that agent's tmux session and disables automatic restore;
   history and goal are retained. **Edit** changes registry metadata only —
   setting a status alone does not suspend/start the process.
+- **Edit → Forget agent** removes an inactive agent from the dashboard. A live
+  worker with status `running` must be stopped first; an offline worker with a stale
+  running status can be forgotten. Idle/waiting/dormant/done agents may still have a
+  live pi TUI: Forget terminates that Swarm-owned process before removing the record.
+  A confirmation is required. If termination fails, the record is retained and
+  auto-resume/timers are disabled. Externally observed PIDs are never terminated.
+  Saved pi sessions (including adopted/imported histories), source Grok files,
+  working folders, worktrees and branches stay untouched. You can adopt the retained
+  pi session again later; for Grok imports, adopt the converted pi history rather
+  than overwriting it with a new conversion.
 
 Agents have your user account's filesystem, Git, network and provider access.
 Choose goals and folders accordingly. Pi project trust prompts are left intact;
@@ -194,7 +211,9 @@ Changes and snapshots are written using temporary files, fsync, and atomic
 rename. Reports merge under locks. Invalid/partial edits are shown as warnings;
 a live controller retains the last-good record rather than losing the row.
 Deleted files remove rows; snapshots never silently resurrect deleted records.
-Do not delete a live agent's file to stop it — use Stop first.
+Do not delete a live agent's file to stop it — use Stop first. Use **Forget agent**
+for safe dashboard removal; forgotten records are also removed from the snapshot
+and are not resurrected by recovery.
 
 **Restart Swarm after a reboot** (or configure your OS to do so):
 
@@ -305,6 +324,8 @@ checks, or an external service can call Wake. Endpoints:
 - `GET /api/state`, `WS /ws/state`: full live dashboard state.
 - `POST /api/agents`: create/start; `PATCH /api/agents/{id}`: update metadata.
 - `POST /api/agents/{id}/wake` and `/stop`: explicit process control.
+- `DELETE /api/agents/{id}`: forget an inactive agent, terminating any remaining
+  owned process and preserving all saved session files (409 if actively running).
 - `GET /api/pi/sessions`, `POST /api/agents/adopt`: discover/adopt inactive sessions.
 - `GET /api/grok/sessions`, `POST /api/agents/import/grok`: discover, convert, and adopt Grok Build history.
 - `WS /ws/terminal/{id}`: attach-only terminal (binary output, JSON input/resize).
@@ -318,12 +339,20 @@ pytest -q
 ruff check src tests
 ruff format --check src tests
 node --check src/swarm/static/app.js
+node --check src/swarm/static/card-views.js
+node --test tests/frontend/*.test.cjs
 ```
+
+When Node is installed, pytest also runs the dependency-free frontend tests for
+card rendering/disclosure, automatic defaults, persisted overrides, storage failures,
+Edit/Forget confirmation and server-race error handling. These use a minimal DOM
+contract and are not a substitute for a real browser layout/keyboard check.
 
 Tests cover record safety/concurrency, snapshots, recovery rules, one-shot timers,
 adoption/import safeguards, Grok source preservation and conversion, worktree
 isolation, live file updates, API access checks,
-and **real tmux terminal input/detach/server-restart survival** with a fake pi
+inactive-agent forgetting with history preservation, and **real tmux terminal
+input/detach/server-restart survival** with a fake pi
 (no provider credentials or paid model calls). Real pi/provider interactions and
 OS-specific boot/login behavior still need testing in your own environment.
 

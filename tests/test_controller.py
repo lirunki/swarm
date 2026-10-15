@@ -182,3 +182,56 @@ def test_timer_launch_failure_does_not_retry_forever(ctrl, monkeypatch):
     ctrl.tick()
     assert len(calls) == 1
     assert "pi unavailable" in ctrl.store.get(timer.id).last_error
+
+
+@pytest.mark.parametrize("status", ["idle", "waiting", "dormant", "done"])
+def test_forget_inactive_owned_agent_stops_process_but_keeps_history(ctrl, tmp_path, status):
+    session = tmp_path / "saved-pi.jsonl"
+    session.write_text("saved conversation\n")
+    agent = add(ctrl, status, session_file=str(session), wake_at=now() + timedelta(hours=1))
+    ctrl.processes.running.add(str(agent.id))
+    ctrl.refresh()
+    removed = ctrl.forget(str(agent.id))
+    assert removed.id == agent.id
+    assert not ctrl.processes.alive(agent)
+    assert not ctrl.store.path(agent.id).exists()
+    assert session.read_text() == "saved conversation\n"
+    assert not ctrl.state["agents"]
+    assert not json.loads((ctrl.store.home / "state.json").read_text())["agents"]
+    ctrl.recover()
+    assert not ctrl.processes.launches
+
+
+def test_forget_running_agent_is_guarded_against_stale_client_state(ctrl):
+    agent = add(ctrl, "running")
+    ctrl.processes.running.add(str(agent.id))
+    with pytest.raises(RuntimeError, match="actively running"):
+        ctrl.forget(str(agent.id))
+    assert ctrl.processes.alive(agent)
+    assert ctrl.store.get(agent.id).auto_resume
+
+
+def test_forget_offline_stale_running_agent_is_allowed(ctrl):
+    agent = add(ctrl, "running")
+    ctrl.forget(str(agent.id))
+    assert ctrl.store.scan() == []
+
+
+def test_forget_failed_stop_keeps_record_and_disables_future_wakes(ctrl, monkeypatch):
+    agent = add(ctrl, "dormant", wake_at=now() + timedelta(hours=1))
+    ctrl.processes.running.add(str(agent.id))
+    monkeypatch.setattr(ctrl.processes, "stop", lambda agent: None)
+    with pytest.raises(RuntimeError, match="record was kept"):
+        ctrl.forget(str(agent.id))
+    retained = ctrl.store.get(agent.id)
+    assert not retained.auto_resume and retained.wake_at is None
+    assert ctrl.processes.alive(agent)
+
+
+def test_forget_external_observation_never_kills_reported_pid(ctrl, monkeypatch):
+    agent = ctrl.store.create(Agent(name="Observed", goal="Observe", folder="/tmp", pid=1))
+    monkeypatch.setattr(
+        ctrl.processes, "stop", lambda agent: pytest.fail("must not kill an unowned PID")
+    )
+    ctrl.forget(str(agent.id))
+    assert ctrl.store.scan() == []

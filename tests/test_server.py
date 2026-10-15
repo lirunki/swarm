@@ -160,3 +160,56 @@ for line in sys.stdin:
             assert not recovered.state.controller.store.get(agent_id).auto_resume
     finally:
         proc.run("kill-server", check=False)
+
+
+@pytest.mark.skipif(not shutil.which("tmux"), reason="tmux is required")
+def test_forget_terminates_inactive_pi_and_preserves_its_session(tmp_path):
+    fake = tmp_path / "fake-pi"
+    fake.write_text(f"""#!{sys.executable}
+import json, os, sys, uuid
+from pathlib import Path
+path = Path(sys.argv[sys.argv.index('--session') + 1])
+path.write_text(json.dumps({{'type': 'session', 'version': 3, 'id': str(uuid.uuid4()), 'cwd': os.getcwd()}}) + '\\n')
+for line in sys.stdin:
+    pass
+""")
+    fake.chmod(0o700)
+    app = make_app(tmp_path, pi=str(fake))
+    controller = app.state.controller
+    processes = controller.processes
+    try:
+        with TestClient(app) as client:
+            result = client.post(
+                "/api/agents",
+                json={"name": "Forget me", "goal": "Test forgetting", "folder": str(tmp_path)},
+            )
+            assert result.status_code == 201, result.text
+            record = result.json()
+            assert not record["last_error"]
+            agent = controller.store.get(record["id"])
+            path = controller.store.sessions_dir / f"{agent.id}.jsonl"
+            for _ in range(100):
+                if path.exists() and path.stat().st_size:
+                    break
+                time.sleep(0.01)
+            original = path.read_bytes()
+            assert client.delete(f"/api/agents/{agent.id}").status_code == 409
+            assert processes.alive(agent)
+            assert (
+                client.patch(f"/api/agents/{agent.id}", json={"status": "idle"}).status_code == 200
+            )
+            with client.websocket_connect("/ws/state") as ws:
+                ws.receive_json()
+                deleted = client.delete(f"/api/agents/{agent.id}")
+                assert deleted.status_code == 200, deleted.text
+                assert deleted.json()["forgotten"]
+                assert ws.receive_json()["agents"] == []
+            assert not processes.alive(agent)
+            assert not controller.store.path(agent.id).exists()
+            assert path.read_bytes() == original
+            assert client.get("/api/state").json()["agents"] == []
+            assert client.delete(f"/api/agents/{agent.id}").status_code == 404
+        controller.recover()
+        assert not processes.alive(agent)
+    finally:
+        processes.run("kill-server", check=False)

@@ -12,3 +12,6 @@ dialog{width:min(520px,calc(100vw - 32px));max-height:90dvh;overflow:auto;backgr
 /* Foreign session imports reuse the existing picker and dialog components. */
 .page-head>.actions{flex-wrap:wrap;justify-content:flex-end}.import-roots{margin:10px 0 0;font-size:10px;overflow-wrap:anywhere}.import-preview{margin-top:12px;padding:10px 12px;border:1px solid var(--line);background:#10151c;border-radius:8px;font-size:12px;overflow-wrap:anywhere}.import-preview p+p{margin-top:7px}
 @media(max-width:650px){.page-head>.actions{justify-content:flex-start}}
+
+/* Cards keep their own height so compact neighbors are not stretched by full cards. */
+.agent-grid{align-items:start}.card-summary,.card-details{display:flex;flex-direction:column;gap:15px;min-width:0}.card-head>.badge{flex-shrink:0}.card-toggle{flex-shrink:0;min-width:32px;min-height:32px;padding:2px 7px;background:transparent;color:var(--muted);font-size:19px;line-height:1}.card-toggle:hover{color:var(--accent)}.agent-card.is-compact .card-inner{padding:14px 16px;gap:0}.agent-card.is-compact .card-summary{gap:8px}.agent-card.is-compact .goal{min-height:0;font-size:12px;-webkit-line-clamp:2}.dialog-footer .forget-agent{margin-right:auto}.forget-explanation{margin-top:12px}
