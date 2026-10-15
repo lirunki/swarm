@@ -105,7 +105,13 @@ swarm adopt ~/.pi/agent/sessions/--project--/session.jsonl \
 
 Discovery uses `PI_CODING_AGENT_SESSION_DIR`, or
 `$PI_CODING_AGENT_DIR/sessions` (default `~/.pi/agent/sessions`), plus Swarm's
-own session directory. For other/custom pi session directories:
+own session directory. When Swarm runs inside WSL, it also checks the current
+user's Windows Pi sessions under `/mnt/c/Users/<user>/.pi/agent/sessions`
+(and `USERPROFILE` when available), mapping Windows workspace paths back into
+`/mnt/<drive>/...` automatically. Because pi's provider-side connection state is
+not portable across Windows/WSL, adopting one of those Windows-authored sessions
+creates a local portable copy under Swarm before wake/resume. For other/custom
+pi session directories:
 
 ```bash
 swarm --pi-sessions-dir /path/to/pi/sessions serve

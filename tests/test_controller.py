@@ -1,6 +1,7 @@
 import json
 import subprocess
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -126,6 +127,52 @@ def test_no_silent_replacement_of_missing_pi_history(ctrl, tmp_path):
     )
     with pytest.raises(RuntimeError, match="missing"):
         PiAdapter("/bin/echo").command(agent, resume_prompt(agent))
+
+
+def test_wake_converts_windows_pi_session_to_portable_copy(ctrl, tmp_path, monkeypatch):
+    import swarm.sessions as module
+
+    monkeypatch.setattr(module, "is_wsl", lambda: True)
+    mount = tmp_path / "mnt"
+    monkeypatch.setattr(module, "WSL_MOUNT_ROOT", mount)
+    windows_home = mount / "c" / "Users" / Path.home().name
+    sessions_root = windows_home / ".pi" / "agent" / "sessions"
+    sessions_root.mkdir(parents=True)
+    project = windows_home / "work"
+    project.mkdir()
+    session = sessions_root / "windows.jsonl"
+    session.write_text(
+        "\n".join(
+            json.dumps(entry)
+            for entry in [
+                {
+                    "type": "session",
+                    "version": 3,
+                    "id": "actual-id",
+                    "cwd": fr"C:\\Users\\{Path.home().name}\\work",
+                },
+                {
+                    "type": "message",
+                    "message": {"role": "user", "content": "Resume safely"},
+                },
+            ]
+        )
+        + "\n"
+    )
+    agent = add(
+        ctrl,
+        "idle",
+        folder=str(project),
+        session_file=str(session),
+        session_id="actual-id",
+    )
+
+    ctrl.wake(str(agent.id), "Resume where you were")
+    updated = ctrl.store.get(agent.id)
+    assert updated.import_source and updated.import_source.backend == "pi"
+    assert updated.import_source.session_file == str(session.resolve())
+    assert Path(updated.session_file).is_relative_to(ctrl.store.sessions_dir)
+    assert ctrl.processes.launches[-1][0].session_file == updated.session_file
 
 
 def test_real_git_worktree_metadata_and_branch_isolation(ctrl, tmp_path):

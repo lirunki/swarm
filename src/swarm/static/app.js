@@ -298,7 +298,7 @@ function renderSessions() {
     const details = node('div'); details.append(node('span', 'session-name', s.name), node('span', 'session-info', s.folder), node('span', 'session-info', `${s.session_id} · ${since(s.updated_at)}`));
     if (s.blocked_reason) details.append(node('span', 'session-reason', s.blocked_reason)); row.append(radio, details); list.append(row);
   }
-  if (!visible.length) list.append(node('p', 'session-message', 'No saved sessions found. Pi saves persistent sessions under ~/.pi/agent/sessions by default.'));
+  if (!visible.length) list.append(node('p', 'session-message', 'No saved sessions found. Pi saves persistent sessions under ~/.pi/agent/sessions by default; on WSL, Swarm also checks /mnt/c/Users/<user>/.pi/agent/sessions.'));
 }
 $('#adopt-form').addEventListener('submit', event => {
   event.preventDefault(); const form = event.currentTarget;

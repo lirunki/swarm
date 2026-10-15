@@ -88,6 +88,9 @@ class Controller:
 
     def _launch(self, agent: Agent, prompt: str | None) -> None:
         try:
+            from .sessions import Sessions
+
+            agent = Sessions(self.store).ensure_agent_portable(agent)
             pid = self.processes.launch(agent, prompt)
             self.store.update(agent.id, {"pid": pid, "last_error": None})
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
