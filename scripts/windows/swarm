@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Swarm POSIX launcher (static). Portable across Cygwin and Git Bash (MSYS).
+#
+# Forwards "$@" verbatim to the Swarm CLI. When run inside Cygwin it execs the
+# sibling swarm-runtime.sh directly. When run inside Git Bash / MSYS it re-execs
+# the *dedicated Cygwin bash.exe* from the install dir (never the MSYS bash),
+# because the Swarm venv python is a Cygwin binary that cannot run under MSYS.
+#
+# This file is copied verbatim into the install dir by the installer, so paths
+# below are resolved relative to its own location at runtime.
+set -euo pipefail
+
+__dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Stop Git Bash / MSYS from rewriting POSIX-looking paths and flag args in
+# argv. Without these, an argument like "/cygdrive/c/..." or "--open" can be
+# mangled before it reaches Cygwin bash.
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL='*'
+
+# Some Git for Windows Bash builds also set OSTYPE=cygwin. The runtime's
+# uname distinguishes MSYS from real Cygwin; OSTYPE alone does not.
+_is_cygwin=0
+case "$(uname -o 2>/dev/null)" in
+    Cygwin) _is_cygwin=1 ;;
+esac
+
+if [ "$_is_cygwin" = "1" ]; then
+    # Already in Cygwin: exec the runtime in this shell (paths are native POSIX).
+    exec "$__dir/swarm-runtime.sh" "$@"
+fi
+
+# --- Git Bash / MSYS: bridge through the dedicated Cygwin bash.exe ---
+_cygwin_bash="$__dir/cygwin/bin/bash.exe"
+_cygwin_cygpath="$__dir/cygwin/bin/cygpath.exe"
+if [ ! -x "$_cygwin_bash" ]; then
+    echo "swarm: dedicated Cygwin bash not found at $_cygwin_bash" >&2
+    echo "swarm: this POSIX launcher must be run from the install dir after" >&2
+    echo "swarm: setup-windows.cmd / setup-windows.sh has completed." >&2
+    echo "swarm: (running under Git Bash; Cygwin is required to run Swarm.)" >&2
+    exit 3
+fi
+
+# Convert the runtime script path to a Cygwin POSIX path so Cygwin bash and the
+# script's own BASH_SOURCE/dirname/pwd resolution both see native POSIX paths.
+# Git Bash's cygpath gives a Windows path; Cygwin's cygpath -u gives POSIX.
+_runtime_msys="$__dir/swarm-runtime.sh"
+_runtime_posix="$_runtime_msys"   # fallback if neither cygpath is available
+if command -v cygpath >/dev/null 2>&1; then
+    _runtime_win="$(cygpath -w "$_runtime_msys")"
+    if [ -x "$_cygwin_cygpath" ]; then
+        _runtime_posix="$("$_cygwin_cygpath" -u "$_runtime_win")"
+    else
+        _runtime_posix="$_runtime_win"
+    fi
+elif [ -x "$_cygwin_cygpath" ]; then
+    _runtime_posix="$("$_cygwin_cygpath" -u "$_runtime_msys")"
+fi
+
+# The runtime sets HOME/PATH explicitly. Do not load profiles: they can change
+# cwd, print into JSON output, or modify the user's unrelated shell settings.
+# "$@" is forwarded as a real argv array; MSYS_NO_PATHCONV keeps it intact.
+exec "$_cygwin_bash" --noprofile --norc "$_runtime_posix" "$@"

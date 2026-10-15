@@ -16,6 +16,8 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..models import Agent, ImportSource
+from ..paths import cygwin
+from ..paths import local_path as runtime_path
 from ..sessions import AdoptRequest, Sessions
 from ..store import Store, atomic_write
 from .pi_history import PiHistory
@@ -35,6 +37,8 @@ class GrokImportRequest(BaseModel):
 
 def local_path(value: str | Path) -> Path:
     """Map Windows drive paths on WSL; never resolve C:\\... as a POSIX relative path."""
+    if cygwin():
+        return runtime_path(value)
     raw = str(value)
     if raw.startswith("\\\\?\\"):
         raw = raw[4:]

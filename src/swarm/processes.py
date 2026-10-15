@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 
 from .adapters import SKILL, Adapter, PiAdapter
 from .models import Agent
+from .paths import local_path
 from .store import Store
 
 
@@ -60,7 +61,7 @@ class Processes:
     def launch(self, agent: Agent, prompt: str | None) -> int | None:
         if self.alive(agent):
             return self.pid(agent)
-        if not Path(agent.folder).is_dir():
+        if not local_path(agent.folder).is_dir():
             raise ValueError(f"working folder is missing: {agent.folder}")
         if not agent.managed:
             raise ValueError("observed agents must be explicitly adopted before launching")
@@ -83,7 +84,29 @@ class Processes:
         inherited = {
             key: val
             for key, val in os.environ.items()
-            if key in {"PATH", "HOME", "SHELL", "PYTHONPATH", "PI_CODING_AGENT_DIR"}
+            if key
+            in {
+                "PATH",
+                "HOME",
+                "SHELL",
+                "PYTHONPATH",
+                "PI_CODING_AGENT_DIR",
+                "PI_CODING_AGENT_SESSION_DIR",
+                "USERPROFILE",
+                "SYSTEMROOT",
+                "SystemRoot",
+                "COMSPEC",
+                "ComSpec",
+                "APPDATA",
+                "LOCALAPPDATA",
+                "TEMP",
+                "TMP",
+                "CYGWIN",
+                "BROWSER",
+                "SWARM_WINDOWS_NODE",
+                "SWARM_WINDOWS_PI_ENTRY",
+                "SWARM_VENV_PYTHON",
+            }
             or key.endswith("_API_KEY")
             or key.startswith(("AZURE_", "AWS_", "GOOGLE_"))
         }
@@ -100,7 +123,7 @@ class Processes:
             "-s",
             target,
             "-c",
-            agent.folder,
+            str(local_path(agent.folder)),
             "-x",
             "120",
             "-y",
@@ -115,7 +138,15 @@ class Processes:
             self.run("set-option", "-t", target, "mouse", "on")
             self.run("set-option", "-t", target, "extended-keys", "on", check=False)
             self.run("set-option", "-t", target, "extended-keys-format", "csi-u", check=False)
-            self.run("respawn-pane", "-k", "-t", target + ":0.0", "-c", agent.folder, shell)
+            self.run(
+                "respawn-pane",
+                "-k",
+                "-t",
+                target + ":0.0",
+                "-c",
+                str(local_path(agent.folder)),
+                shell,
+            )
         except Exception:
             self.run("kill-session", "-t", target, check=False)
             raise

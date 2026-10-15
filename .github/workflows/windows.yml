@@ -1,0 +1,47 @@
+name: Experimental Windows tmux runtime
+
+# The first Cygwin/Rust build is substantial. Keep this opt-in until the
+# experimental setup has accumulated real-world Windows/Pi coverage.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify installer contracts
+        shell: powershell
+        run: ./tests/windows/test-installer.ps1
+      - name: Install and verify no-WSL runtime
+        shell: powershell
+        run: |
+          # Spaces deliberately exercise the Cygwin/Windows launch boundary.
+          $root = Join-Path $env:LOCALAPPDATA 'Swarm Windows CI'
+          ./scripts/windows/install.ps1 -InstallDir $root -SkipSettings
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify actual Git Bash/cmd launchers and isolated settings
+        shell: powershell
+        run: ./tests/windows/test-runtime.ps1 -InstallDir (Join-Path $env:LOCALAPPDATA 'Swarm Windows CI')
+      - name: Run suite with Cygwin Python
+        shell: powershell
+        run: |
+          $root = Join-Path $env:LOCALAPPDATA 'Swarm Windows CI'
+          $cygpath = Join-Path $root 'cygwin/bin/cygpath.exe'
+          $bash = Join-Path $root 'cygwin/bin/bash.exe'
+          $runner = & $cygpath -u (Join-Path $PWD 'tests/windows/run-tests.sh')
+          $runtimeHome = & $cygpath -u $root
+          $repo = & $cygpath -u $PWD.Path
+          & $bash $runner $runtimeHome $repo
+          exit $LASTEXITCODE
+      - name: Preserve setup logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-setup-logs
+          path: ~/AppData/Local/Swarm Windows CI/logs/
+          if-no-files-found: ignore

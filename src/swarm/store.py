@@ -15,6 +15,7 @@ from uuid import UUID
 import yaml
 
 from .models import Agent, now
+from .paths import local_path
 
 MAX_RECORD_BYTES = 1024 * 1024
 
@@ -66,7 +67,7 @@ def decode(text: str) -> Agent:
 
 class Store:
     def __init__(self, home: Path):
-        self.home = home.expanduser().resolve()
+        self.home = local_path(home)
         self.agents_dir = self.home / "agents"
         self.sessions_dir = self.home / "sessions"
         self.locks_dir = self.home / "locks"

@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Swarm Windows installer config.json",
+  "description": "Human-readable record of resolved install paths, written by the Swarm Windows installer into the install directory. swarm-launch.ps1 reads bashExe and runtimeScriptCygwin; swarm-runtime.sh sources sibling env.sh (the authoritative env source). This schema documents the shape for the Swarm runtime and downstream tooling.",
+  "type": "object",
+  "required": [
+    "installDir", "cygwinRoot", "bashExe", "bashExeCygwin",
+    "nodeExe", "nodeExeCygwin", "piEntry", "piEntryCygwin",
+    "venvPython", "venvPythonCygwin", "venvBinCygwin",
+    "runtimeScript", "runtimeScriptCygwin", "homeCygwin", "env"
+  ],
+  "properties": {
+    "installDir":        { "type": "string", "description": "Windows path of the install root (default %LOCALAPPDATA%\\Swarm)." },
+    "cygwinRoot":        { "type": "string", "description": "Windows path of the user-local Cygwin root." },
+    "nodeDir":           { "type": "string" },
+    "piDir":             { "type": "string", "description": "Windows path holding node_modules\\@earendil-works\\pi-coding-agent." },
+    "venvDir":           { "type": "string", "description": "Dedicated Cygwin Python venv (separate from repo .venv)." },
+    "repoDir":           { "type": "string", "description": "Swarm repo root containing pyproject.toml." },
+    "bashExe":           { "type": "string", "description": "Windows path to Cygwin bash.exe. Also written to Pi settings.json shellPath (forward-slash form)." },
+    "bashExeCygwin":     { "type": "string", "description": "Cygwin POSIX path to bash.exe." },
+    "nodeExe":           { "type": "string", "description": "Windows path to private node.exe." },
+    "nodeExeCygwin":     { "type": "string", "description": "Cygwin POSIX path to node.exe; exported as SWARM_WINDOWS_NODE." },
+    "piEntry":           { "type": "string", "description": "Windows path to @earendil-works/pi-coding-agent/dist/cli.js." },
+    "piEntryCygwin":     { "type": "string", "description": "Cygwin POSIX path to dist/cli.js; exported as SWARM_WINDOWS_PI_ENTRY." },
+    "venvPython":        { "type": "string", "description": "Windows path to venv/bin/python." },
+    "venvPythonCygwin":  { "type": "string", "description": "Cygwin POSIX path to venv/bin/python; exported as SWARM_VENV_PYTHON (used by pi shim and runtime)." },
+    "venvBinCygwin":     { "type": "string", "description": "Cygwin POSIX path to venv/bin; prepended to PATH." },
+    "installDirCygwin":  { "type": "string" },
+    "repoDirCygwin":     { "type": "string" },
+    "runtimeScript":     { "type": "string", "description": "Windows path to static swarm-runtime.sh (copied into install dir)." },
+    "runtimeScriptCygwin": { "type": "string", "description": "Cygwin POSIX path to swarm-runtime.sh; passed to bash.exe by swarm-launch.ps1." },
+    "homeCygwin":        { "type": "string", "description": "Cygwin POSIX path to USERPROFILE; exported as HOME so ~/.pi config/auth are reused." },
+    "env": {
+      "type": "object",
+      "description": "Authoritative environment variables also written to env.sh (sourced by swarm-runtime.sh). These are the environment values swarm.windows_pi relies on.",
+      "required": ["SWARM_WINDOWS_NODE", "SWARM_WINDOWS_PI_ENTRY", "HOME", "BROWSER", "SWARM_VENV_PYTHON"],
+      "properties": {
+        "SWARM_WINDOWS_NODE":     { "type": "string", "description": "Cygwin POSIX path to node.exe." },
+        "SWARM_WINDOWS_PI_ENTRY": { "type": "string", "description": "Cygwin POSIX path to pi-coding-agent/dist/cli.js." },
+        "HOME":                   { "type": "string", "description": "USERPROFILE as a Cygwin POSIX path." },
+        "BROWSER":                { "type": "string", "description": "Shell-quoted browser-open.sh command with a %s URL placeholder (opens Windows default browser)." },
+        "SWARM_VENV_PYTHON":      { "type": "string", "description": "Cygwin POSIX path to the dedicated venv python." }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}

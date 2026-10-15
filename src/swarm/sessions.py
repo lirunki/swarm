@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .controller import git_metadata
 from .models import Agent, ImportSource, Status
+from .paths import cygwin, local_path
 from .store import Store
 
 
@@ -23,12 +24,49 @@ class AdoptRequest(BaseModel):
     goal: str = ""
 
 
+def windows_pi_folders() -> list[str | None]:
+    """Fail closed when a native Pi process might have an open session.
+
+    Windows CIM exposes command lines, not reliable current working directories.
+    Until we can prove its cwd, any native Pi blocks external-session adoption.
+    Do not use Cygwin's PID namespace to identify or terminate Windows processes.
+    """
+    command = r"""
+$ErrorActionPreference = 'Stop'
+$processes = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe' OR Name = 'pi.exe'" |
+    Where-Object { $_.Name -eq 'pi.exe' -or -not $_.CommandLine -or
+        $_.CommandLine -match 'pi-coding-agent|[\\/]pi[\\/](dist[\\/])?cli\.js|^\s*"?pi(\.exe)?"?\s*$' })
+ConvertTo-Json -Compress -InputObject @($processes | ForEach-Object { $_.ProcessId })
+"""
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=True,
+            # This short-lived query needs no module cache. In a redirected
+            # profile Windows can otherwise create Microsoft/ in the project.
+            env=os.environ | {"PSModuleAnalysisCachePath": "NUL"},
+        )
+        pids = json.loads(result.stdout.lstrip("\ufeff"))
+        if not isinstance(pids, list) or any(not isinstance(pid, int) for pid in pids):
+            raise ValueError("unexpected process discovery response")
+        return [None for _ in pids]
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise RuntimeError(
+            "Cannot inspect Windows pi processes; adoption is disabled until PowerShell/CIM works"
+        ) from exc
+
+
 def running_pi_folders() -> list[str | None]:
     """Pi may replace its process title with 'pi', losing --session arguments.
 
     Conservatively refuse all sessions in that cwd. If cwd cannot be determined,
     refuse all adoption while that pi process exists rather than risk dual writers.
     """
+    if cygwin():
+        return windows_pi_folders()
     try:
         result = subprocess.run(
             ["ps", "-u", str(os.getuid()), "-o", "pid=,comm=,args="],
@@ -73,12 +111,12 @@ def running_pi_folders() -> list[str | None]:
 class Sessions:
     def __init__(self, store: Store, roots: list[Path] | None = None):
         self.store = store
-        config = Path(os.environ.get("PI_CODING_AGENT_DIR", "~/.pi/agent")).expanduser()
+        config = local_path(os.environ.get("PI_CODING_AGENT_DIR", "~/.pi/agent"))
         default = Path(os.environ.get("PI_CODING_AGENT_SESSION_DIR", str(config / "sessions")))
-        self.roots = [p.expanduser().resolve() for p in (roots or [default, store.sessions_dir])]
+        self.roots = [local_path(p) for p in (roots or [default, store.sessions_dir])]
 
     def metadata(self, path: Path) -> dict:
-        path = path.expanduser().resolve(strict=True)
+        path = local_path(path).resolve(strict=True)
         if path.suffix != ".jsonl" or not any(path.is_relative_to(root) for root in self.roots):
             raise ValueError(
                 "session must be a .jsonl file inside a configured pi session directory"
@@ -90,7 +128,7 @@ class Sessions:
             if not isinstance(header.get("cwd"), str) or not header["cwd"]:
                 raise ValueError("session header must include its working folder")
             session_id = str(UUID(str(header["id"])))
-            folder = str(Path(header["cwd"]).expanduser().resolve())
+            folder = str(local_path(header["cwd"]))
             head = stream.read(65536)
             # Read a bounded tail for the latest /name without loading a huge session.
         with path.open("rb") as stream:
@@ -128,10 +166,7 @@ class Sessions:
     def blocked(meta: dict, agents: list[Agent], running: list[str | None]) -> str | None:
         if any(
             a.session_id == meta["session_id"]
-            or (
-                a.session_file
-                and str(Path(a.session_file).expanduser().resolve()) == meta["session_file"]
-            )
+            or (a.session_file and str(local_path(a.session_file)) == meta["session_file"])
             for a in agents
         ):
             return "Already registered with Swarm"

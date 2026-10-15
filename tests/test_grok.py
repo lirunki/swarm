@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from swarm.cli import main
 from swarm.importers.grok import GrokImportRequest, GrokSessions, local_path
 from swarm.models import Status
+from swarm.paths import agent_path
 from swarm.server import create_app
 from swarm.sessions import AdoptRequest, Sessions
 from swarm.store import Store
@@ -105,7 +106,7 @@ def test_convert_then_adopt_offline_preserves_raw_records_and_context(grok, monk
     assert agent.import_source.backend == "grok" and agent.import_source.sha256
     assert all(p.read_bytes() == data for p, data in original.items())
     converted = entries(agent)
-    assert converted[0]["version"] == 3 and converted[0]["cwd"] == str(folder)
+    assert converted[0]["version"] == 3 and converted[0]["cwd"] == agent_path(folder)
     assert agent.session_id != agent.import_source.session_id
     archived = [
         e["data"]["record"] for e in converted if e.get("customType") == "swarm.import.grok.record"
@@ -169,7 +170,7 @@ def test_missing_or_moved_workspace_can_be_overridden(grok, tmp_path):
         GrokImportRequest(session_file=str(path), folder=str(new), name="New name", goal="New goal")
     )
     assert agent.folder == str(new) and agent.name == "New name" and agent.goal == "New goal"
-    assert entries(agent)[0]["cwd"] == str(new)
+    assert entries(agent)[0]["cwd"] == agent_path(new)
 
 
 def test_windows_mapping_and_default_discovery(grok, tmp_path, monkeypatch):

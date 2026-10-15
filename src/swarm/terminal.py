@@ -8,7 +8,9 @@ import json
 import os
 import struct
 import termios
+import tty
 
+from anyio import CancelScope
 from fastapi import WebSocket, WebSocketDisconnect
 
 from .models import Agent
@@ -44,13 +46,17 @@ async def ready(fd: int, write: bool = False) -> None:
 
 async def bridge(ws: WebSocket, processes: Processes, agent: Agent, cols: int, rows: int) -> None:
     master, slave = os.openpty()
-    resize(slave, cols, rows)
-    os.set_blocking(master, False)
     env = dict(os.environ, TERM="xterm-256color")
     env.pop("TMUX", None)
     proc = None
     tasks = []
     try:
+        # Browser input can arrive before tmux finishes configuring its client.
+        # Disable echo/CR-to-LF translation immediately so those first bytes
+        # are not altered by the PTY line discipline (notably with ConPTY).
+        tty.setraw(slave)
+        resize(slave, cols, rows)
+        os.set_blocking(master, False)
         proc = await asyncio.create_subprocess_exec(
             *processes.attach_argv(agent),
             stdin=slave,
@@ -62,6 +68,8 @@ async def bridge(ws: WebSocket, processes: Processes, agent: Agent, cols: int, r
         os.close(slave)
         slave = -1
 
+        output_ready = asyncio.Event()
+
         async def output() -> None:
             while True:
                 await ready(master)
@@ -71,9 +79,14 @@ async def bridge(ws: WebSocket, processes: Processes, agent: Agent, cols: int, r
                     return
                 if not data:
                     return
+                output_ready.set()
                 await ws.send_bytes(data)
 
         async def input_() -> None:
+            # tmux may flush terminal input during attachment setup. Retain
+            # early browser frames until its first display output proves the
+            # client has initialized, rather than dropping fast keystrokes.
+            await output_ready.wait()
             while True:
                 message = json.loads(await ws.receive_text())
                 if message.get("type") == "resize":
@@ -100,23 +113,27 @@ async def bridge(ws: WebSocket, processes: Processes, agent: Agent, cols: int, r
     except (WebSocketDisconnect, OSError, ValueError, KeyError, TypeError):
         pass
     finally:
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        if slave >= 0:
-            os.close(slave)
-        os.close(master)
-        # Detach/terminate only the attachment client. The tmux server owns the agent.
-        if proc and proc.returncode is None:
+        # ASGI hosts may cancel the connection's AnyIO scope on disconnect.
+        # Finish releasing the PTY and reaping its tmux client even then; an
+        # interrupted gather can otherwise leak a child past event-loop shutdown.
+        with CancelScope(shield=True):
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            if slave >= 0:
+                os.close(slave)
+            os.close(master)
+            # Terminate only the attachment client. The tmux server owns the agent.
+            if proc and proc.returncode is None:
+                try:
+                    proc.terminate()
+                    await asyncio.wait_for(proc.wait(), 2)
+                except (TimeoutError, ProcessLookupError):
+                    if proc.returncode is None:
+                        proc.kill()
+                        await proc.wait()
             try:
-                proc.terminate()
-                await asyncio.wait_for(proc.wait(), 2)
-            except (TimeoutError, ProcessLookupError):
-                if proc.returncode is None:
-                    proc.kill()
-                    await proc.wait()
-        try:
-            await ws.close()
-        except (WebSocketDisconnect, RuntimeError):
-            pass
+                await ws.close()
+            except (WebSocketDisconnect, RuntimeError):
+                pass

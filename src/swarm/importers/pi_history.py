@@ -6,6 +6,7 @@ import json
 from uuid import uuid4
 
 from ..models import now
+from ..paths import agent_path
 
 
 class PiHistory:
@@ -17,7 +18,7 @@ class PiHistory:
                 "type": "session",
                 "version": 3,
                 "id": session_id,
-                "cwd": folder,
+                "cwd": agent_path(folder),
                 "timestamp": self.timestamp,
             }
         ]

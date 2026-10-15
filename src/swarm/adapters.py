@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .models import Agent
+from .paths import agent_path, local_path
 
 SKILL = Path(__file__).parent / "skills" / "swarm.md"
 
@@ -28,18 +29,19 @@ class PiAdapter:
             raise RuntimeError(f"pi executable not found: {self.executable}")
         if not agent.session_file:
             raise ValueError("managed pi agents require an exact session_file")
-        if agent.session_id and not Path(agent.session_file).is_file():
+        if agent.session_id and not local_path(agent.session_file).is_file():
             raise RuntimeError(
                 "saved pi session is missing; refusing to silently start a new session"
             )
+        skill = agent_path(SKILL)
         args = [
             self.executable,
             "--session",
-            agent.session_file,
+            agent_path(agent.session_file),
             "--skill",
-            str(SKILL),
+            skill,
             "--append-system-prompt",
-            f"You are a Swarm-managed agent. Read {SKILL} before working. "
+            f"You are a Swarm-managed agent. Read {skill} before working. "
             "Use its file-based reporting protocol to maintain your goal, activities, "
             "checkpoint and status at every transition, including before ending a turn. "
             "SWARM_AGENT_ID and SWARM_HOME identify your existing record. "
@@ -56,7 +58,7 @@ def session_header(path: str | None) -> str | None:
     if not path:
         return None
     try:
-        with Path(path).open(encoding="utf-8") as stream:
+        with local_path(path).open(encoding="utf-8") as stream:
             header = json.loads(stream.readline(65536))
         if header.get("type") == "session":
             return str(header["id"])

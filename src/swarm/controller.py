@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .adapters import resume_prompt, session_header
 from .models import Agent, CreateAgent, Status, now
+from .paths import local_path
 from .processes import Processes
 from .store import Store
 
@@ -47,9 +48,9 @@ class Controller:
 
     def create(self, request: CreateAgent) -> Agent:
         with self.lock:
-            folder = Path(request.folder).expanduser().resolve()
+            folder = local_path(request.folder)
             if request.create_worktree:
-                repo = Path(request.repository).expanduser().resolve()
+                repo = local_path(request.repository)
                 if not repo.is_dir():
                     raise ValueError("repository must be an existing local repository folder")
                 git(repo, "check-ref-format", "--branch", request.branch)

@@ -5,8 +5,9 @@ researchers, and PR trackers; see what each is doing; attach to their actual
 terminals without tying process lifetime to a browser tab.
 
 **First backend: [pi coding agent](https://pi.dev).** Linux / WSL and macOS
-(POSIX terminals + tmux). Native Windows is not supported; run it inside WSL
-and open the dashboard in your Windows browser.
+(POSIX terminals + tmux). **Experimental Windows without WSL** uses an automated,
+user-local Cygwin/tmux runtime; start it from regular Git Bash as described below.
+Stock Windows Python is not the controller runtime.
 
 ## Run
 
@@ -39,6 +40,37 @@ Only loopback bindings are allowed. Run **one controller per registry**, with
 one Uvicorn worker (the CLI enforces the latter). Do not expose it through a
 public reverse proxy. It is a local-user application, not a multi-user server,
 a sandbox, or an authentication boundary against other local processes.
+
+## Windows without WSL (experimental)
+
+From regular Git Bash in this checkout:
+
+```bash
+bash ./swarm-windows.sh
+```
+
+Or double-click `swarm-windows.cmd`. First run installs private Cygwin/Python/tmux,
+Node and Pi, builds dependencies, validates the terminal/lifecycle, then opens
+the dashboard. Later runs reuse the installation. No administrator rights or
+manual tmux setup are required; the first build can take several minutes and
+requires network access and disk space for the compiler toolchain.
+
+**Pi shell configuration:** setup backs up the existing Windows Pi settings and
+sets global `shellPath` to the private Cygwin Bash. This also affects standalone
+Pi after restart. Other settings, credentials, history and project-trust choices
+are preserved. Provider login/model selection may still require interaction.
+There are no machine PATH changes, Git Bash modifications or Windows services.
+
+```bash
+bash ./swarm-windows.sh doctor
+bash ./setup-windows.sh -Update
+```
+
+See [`scripts/windows/README.md`](scripts/windows/README.md) for setup details,
+custom locations, logs, network/offline-cache limitations and verification status.
+Use local drive paths, not UNC shares. This route is experimental; real
+Pi/provider configurations still need Windows testing. Windows session adoption
+conservatively blocks while any native Pi has an unknown working folder.
 
 ## Dashboard
 

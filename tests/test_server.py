@@ -1,5 +1,6 @@
 import json
 import re
+import shlex
 import shutil
 import sys
 import time
@@ -10,7 +11,19 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from swarm.models import Agent
+from swarm.paths import agent_path
 from swarm.server import create_app
+
+
+def make_fake_pi(tmp_path, source):
+    # A venv path may contain spaces. POSIX shebangs cannot quote interpreter
+    # paths, so launch the Python fixture through a small, quoted shell wrapper.
+    script = tmp_path / "fake-pi.py"
+    script.write_text(source)
+    fake = tmp_path / "fake-pi"
+    fake.write_text("#!/bin/sh\nexec " + shlex.join([sys.executable, str(script)]) + ' "$@"\n')
+    fake.chmod(0o700)
+    return fake
 
 
 def make_app(tmp_path, **kwargs):
@@ -44,6 +57,13 @@ def test_state_static_security_and_validation(tmp_path):
                 pass
         with client.websocket_connect("/ws/state") as ws:
             assert ws.receive_json()["agents"] == []
+
+
+def test_repeated_state_websocket_close_finishes_child_cleanup(tmp_path):
+    with TestClient(make_app(tmp_path)) as client:
+        for _ in range(20):
+            with client.websocket_connect("/ws/state") as ws:
+                assert ws.receive_json()["agents"] == []
 
 
 def test_file_changes_push_over_websocket_and_bad_records_reported(tmp_path):
@@ -87,20 +107,22 @@ def test_adopt_endpoint_stays_offline_and_immutable_fields_are_protected(tmp_pat
 @pytest.mark.skipif(not shutil.which("tmux"), reason="tmux is required")
 def test_real_terminal_detach_and_server_restart_preserve_agent(tmp_path):
     # A real interactive process, but no model calls or user credentials involved.
-    fake = tmp_path / "fake-pi"
-    fake.write_text(f"""#!{sys.executable}
+    fake = make_fake_pi(
+        tmp_path,
+        """
 import json, os, sys, uuid
 from pathlib import Path
-path = Path(sys.argv[sys.argv.index("--session") + 1])
+from swarm.paths import local_path
+path = local_path(sys.argv[sys.argv.index("--session") + 1])
 with (Path(os.environ["SWARM_HOME"]) / "launch-log.jsonl").open("a") as log:
     log.write(json.dumps(sys.argv) + "\\n")
 if not path.exists():
-    path.write_text(json.dumps({{"type":"session", "version":3, "id":str(uuid.uuid4()), "cwd":os.getcwd()}}) + "\\n")
+    path.write_text(json.dumps({"type":"session", "version":3, "id":str(uuid.uuid4()), "cwd":os.getcwd()}) + "\\n")
 print("TERMINAL-READY", flush=True)
 for line in sys.stdin:
     print("REPLY:" + line.rstrip(), flush=True)
-""")
-    fake.chmod(0o700)
+""",
+    )
     home = tmp_path / "swarm"
     app = create_app(home, pi=str(fake), recover=False, allowed_hosts=["testserver"])
     proc = app.state.controller.processes
@@ -153,7 +175,7 @@ for line in sys.stdin:
             assert len(launches) == 2
             args = json.loads(launches[-1])
             assert "Resume where you were" in args[-1]
-            assert args[args.index("--session") + 1] == agent.session_file
+            assert args[args.index("--session") + 1] == agent_path(agent.session_file)
             assert client.get("/api/state").json()["agents"][0]["session_id"] == saved_session_id
             assert client.post(f"/api/agents/{agent_id}/stop").status_code == 200
             assert not proc.alive(agent)
@@ -164,16 +186,18 @@ for line in sys.stdin:
 
 @pytest.mark.skipif(not shutil.which("tmux"), reason="tmux is required")
 def test_forget_terminates_inactive_pi_and_preserves_its_session(tmp_path):
-    fake = tmp_path / "fake-pi"
-    fake.write_text(f"""#!{sys.executable}
+    fake = make_fake_pi(
+        tmp_path,
+        """
 import json, os, sys, uuid
 from pathlib import Path
-path = Path(sys.argv[sys.argv.index('--session') + 1])
-path.write_text(json.dumps({{'type': 'session', 'version': 3, 'id': str(uuid.uuid4()), 'cwd': os.getcwd()}}) + '\\n')
+from swarm.paths import local_path
+path = local_path(sys.argv[sys.argv.index('--session') + 1])
+path.write_text(json.dumps({'type': 'session', 'version': 3, 'id': str(uuid.uuid4()), 'cwd': os.getcwd()}) + '\\n')
 for line in sys.stdin:
     pass
-""")
-    fake.chmod(0o700)
+""",
+    )
     app = make_app(tmp_path, pi=str(fake))
     controller = app.state.controller
     processes = controller.processes

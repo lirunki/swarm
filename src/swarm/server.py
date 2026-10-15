@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import UUID
 
+from anyio import CancelScope
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -222,9 +223,12 @@ def create_app(
             pass
         finally:
             listeners.discard(queue)
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            # Preserve the host's original cancellation while joining child
+            # tasks, rather than leaking a new CancelledError from gather.
+            with CancelScope(shield=True):
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     @app.websocket("/ws/terminal/{agent_id}")
     async def terminal(ws: WebSocket, agent_id: UUID, cols: int = 120, rows: int = 34):

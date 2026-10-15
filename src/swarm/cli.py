@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .importers.grok import GrokImportRequest, GrokSessions
 from .models import Status
+from .paths import local_path
 from .processes import Processes
 from .sessions import AdoptRequest, Sessions
 from .store import Store
@@ -118,12 +119,12 @@ def run_report(store: Store, args: argparse.Namespace) -> dict:
         if (
             agent.managed
             and agent.session_file
-            and Path(agent.session_file).resolve() != Path(session_file).resolve()
+            and local_path(agent.session_file) != local_path(session_file)
         ):
             raise ValueError(
                 "report came from a different pi session; do not switch managed sessions"
             )
-        fields["session_file"] = session_file
+        fields["session_file"] = str(local_path(session_file))
     return store.update(args.id, fields).model_dump(mode="json")
 
 
