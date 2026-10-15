@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Swarm · Agent workspace</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/vendor/xterm.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script defer src="/static/vendor/xterm.js"></script>
+  <script defer src="/static/vendor/addon-fit.js"></script>
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Swarm dashboard"><span class="brand-mark">⬡</span>swarm<span class="edition">LOCAL WORKSPACE</span></a>
+    <div class="top-meta"><span id="health"></span><span id="connection" class="connection">Connecting…</span></div>
+  </header>
+  <nav id="tabs" class="tabs" aria-label="Workspace tabs"><button id="dashboard-tab" class="tab active" type="button">◫ &nbsp;Dashboard</button></nav>
+  <main id="dashboard">
+    <section class="page-head">
+      <div><div class="eyebrow">MISSION CONTROL</div><h1>Your agents, in sync.</h1><p>One workspace. Many independent minds.</p></div>
+      <div class="actions"><button id="adopt-button" type="button">↳ Adopt pi session</button><button id="import-grok-button" type="button">↳ Import Grok session</button><button id="create-button" type="button" class="primary">＋ New agent</button></div>
+    </section>
+    <section id="summary" class="summary" aria-label="Agent status counts"></section>
+    <div class="list-toolbar"><div><h2>Agent fleet <span id="agent-count" class="count">0</span></h2><span class="hint">Live updates from your local registry</span></div><label class="search-label"><span>⌕</span><input id="search" type="search" placeholder="Search agents, goals, branches…" aria-label="Search agents"></label></div>
+    <details id="registry-errors" class="registry-errors" hidden><summary>Registry warnings</summary><div id="error-list"></div></details>
+    <section id="agents" class="agent-grid" aria-label="Agents"></section>
+    <section id="empty" class="empty" hidden><div class="empty-mark">⬡</div><h2>A little quiet in the swarm.</h2><p>Create an agent, adopt pi history, or import a Grok session.<br>Every agent keeps its own folder, terminal, and conversation history.</p><button id="empty-create" class="primary" type="button">＋ Create your first agent</button></section>
+    <footer class="page-footer"><span><i class="tiny-dot"></i> LOCAL-FIRST · FILE-BASED · ALWAYS YOURS</span><code id="home-path">~/.swarm/agents</code></footer>
+  </main>
+  <section id="terminals" aria-label="Agent terminal workspace" hidden></section>
+
+  <dialog id="create-dialog">
+    <form id="create-form">
+      <header class="dialog-head"><div><div class="eyebrow">EXPAND THE FLEET</div><h2>New agent</h2></div><button type="button" class="icon-button" data-close aria-label="Close">×</button></header>
+      <p class="hint">Launch pi in an existing folder, or give it an isolated Git worktree.</p>
+      <label>Name<input name="name" required maxlength="120" placeholder="e.g. API engineer"></label>
+      <label>Goal<textarea name="goal" required rows="3" placeholder="What does success look like?"></textarea></label>
+      <label>Working folder<input name="folder" required placeholder="/home/you/projects/app" spellcheck="false"></label>
+      <label class="checkbox"><input name="create_worktree" type="checkbox">Create a new Git worktree at this folder</label>
+      <div class="form-row"><label>Local repository<input name="repository" placeholder="/home/you/projects/main-repo" spellcheck="false"></label><label>New branch<input name="branch" placeholder="swarm/my-feature" spellcheck="false"></label></div>
+      <p class="hint">Repository and new branch are required only when creating a worktree. Swarm never switches an existing folder's branch.</p>
+      <label>Model <span class="hint">optional · otherwise pi's default</span><input name="model" placeholder="provider/model" spellcheck="false"></label>
+      <p class="form-error" role="alert"></p>
+      <footer class="dialog-footer"><button type="button" data-close>Cancel</button><button class="primary" type="submit">Launch agent ↗</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="adopt-dialog" class="wide-dialog">
+    <form id="adopt-form">
+      <header class="dialog-head"><div><div class="eyebrow">BRING YOUR HISTORY</div><h2>Adopt a pi session</h2></div><button type="button" class="icon-button" data-close aria-label="Close">×</button></header>
+      <p class="hint">Register an inactive session without copying it or starting pi. Its original folder and conversation stay intact. Wake it when you're ready.</p>
+      <div class="session-toolbar"><input id="session-search" type="search" placeholder="Search saved sessions…" aria-label="Search saved sessions"><button id="refresh-sessions" type="button">↻ Refresh</button></div>
+      <div id="session-list" class="session-list" role="group" aria-label="Saved pi sessions"></div>
+      <label>Name<input name="name" maxlength="120" placeholder="Select a session above"></label>
+      <label>Goal<textarea name="goal" rows="2" placeholder="Optional · defaults to the original first request"></textarea></label>
+      <p class="hint">If a pi process is running in the same folder, adoption is conservatively blocked. Quit that pi process, then refresh.</p>
+      <p class="form-error" role="alert"></p>
+      <footer class="dialog-footer"><button type="button" data-close>Cancel</button><button class="primary" type="submit">Adopt session ↳</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="import-grok-dialog" class="wide-dialog">
+    <form id="import-grok-form">
+      <header class="dialog-head"><div><div class="eyebrow">CONTINUE IN PI</div><h2>Import Grok session</h2></div><button type="button" class="icon-button" data-close aria-label="Close">×</button></header>
+      <p class="hint">Convert a saved Grok Build conversation into a new pi session, then adopt it offline. Original Grok files stay unchanged. Stop Grok before waking the imported agent.</p>
+      <div class="session-toolbar"><input id="grok-session-search" type="search" placeholder="Search Grok sessions…" aria-label="Search Grok sessions"><button id="refresh-grok-sessions" type="button">↻ Refresh</button></div>
+      <p id="grok-roots" class="hint import-roots"></p>
+      <div id="grok-session-list" class="session-list" role="group" aria-label="Saved Grok sessions"></div>
+      <div id="grok-import-preview" class="import-preview" hidden></div>
+      <label>Name<input name="name" maxlength="120" placeholder="Select a Grok session above"></label>
+      <label>Goal<textarea name="goal" rows="2" placeholder="Optional · defaults to the first user request"></textarea></label>
+      <label>Working folder<input name="folder" required spellcheck="false" placeholder="/home/you/project or /mnt/c/Users/you/project"></label>
+      <p class="hint">Windows drive paths are mapped to /mnt on WSL. Override this folder if the project moved. Tool exchanges become historical text; original records remain archived in pi. Grok credentials, memory and tools are not installed.</p>
+      <p class="form-error" role="alert"></p>
+      <footer class="dialog-footer"><button type="button" data-close>Cancel</button><button class="primary" type="submit">Convert and adopt ↳</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="wake-dialog">
+    <form id="wake-form">
+      <header class="dialog-head"><h2 id="wake-title">Wake agent</h2><button type="button" class="icon-button" data-close aria-label="Close">×</button></header>
+      <p class="hint">Continue the exact saved session. For a live agent, this queues a message in its terminal.</p>
+      <label>Instructions <span class="hint">optional</span><textarea name="message" rows="4" placeholder="Resume where you were…"></textarea></label>
+      <p class="form-error" role="alert"></p>
+      <footer class="dialog-footer"><button type="button" data-close>Cancel</button><button class="primary" type="submit">Wake agent ↗</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="edit-dialog">
+    <form id="edit-form">
+      <header class="dialog-head"><h2>Edit agent</h2><button type="button" class="icon-button" data-close aria-label="Close">×</button></header>
+      <label>Name<input name="name" required maxlength="120"></label>
+      <label>Goal<textarea name="goal" required rows="3"></textarea></label>
+      <label>Status<select name="status"><option value="running">Running</option><option value="waiting">Waiting for input</option><option value="dormant">Dormant</option><option value="idle">Idle — turn completed</option><option value="done">Done — goal accomplished</option></select></label>
+      <label class="checkbox"><input type="checkbox" name="auto_resume">Restore automatically when Swarm starts</label>
+      <p class="hint">Changing a status only updates the record; it does not start, pause, or stop the process. Use Wake or Stop for process control.</p>
+      <p class="form-error" role="alert"></p>
+      <footer class="dialog-footer"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Save changes</button></footer>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <noscript>This dashboard requires JavaScript to display agents and attach terminals.</noscript>
+</body>
+</html>

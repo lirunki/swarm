@@ -1,0 +1,21 @@
+# Copy to ~/.config/systemd/user/swarm.service after editing all paths.
+# systemctl --user daemon-reload
+# systemctl --user enable --now swarm
+# Optional, for surviving logout: loginctl enable-linger "$USER"
+[Unit]
+Description=Swarm local agent dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Replace /home/YOU and project paths. Include the folder containing node/pi.
+Environment=PATH=/home/YOU/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/YOU/projects/swarm/.venv/bin/swarm serve --pi /home/YOU/.local/bin/pi
+Restart=on-failure
+RestartSec=5
+# Do not kill detached agents in this service's cgroup when restarting Swarm.
+KillMode=process
+
+[Install]
+WantedBy=default.target
