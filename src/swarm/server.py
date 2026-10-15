@@ -1,4 +1,4 @@
-"""Loopback-only HTTP/WebSocket application. One controller per SWARM_HOME."""
+"""Loopback-by-default HTTP/WebSocket application. One controller per SWARM_HOME."""
 
 from __future__ import annotations
 
