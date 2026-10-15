@@ -9,6 +9,7 @@ import threading
 from pathlib import Path
 
 from .adapters import resume_prompt, session_header
+from .discovery import sibling_worktree_path
 from .meta_compact import busy, require_not_busy
 from .models import Agent, CreateAgent, Status, now
 from .paths import local_path
@@ -49,11 +50,18 @@ class Controller:
 
     def create(self, request: CreateAgent) -> Agent:
         with self.lock:
-            folder = local_path(request.folder)
+            selected_folder = local_path(request.folder)
+            folder = selected_folder
             if request.create_worktree:
-                repo = local_path(request.repository)
+                if request.automatic_worktree_path:
+                    repo = selected_folder
+                    folder = sibling_worktree_path(selected_folder, request.branch)
+                else:
+                    repo = local_path(request.repository)
                 if not repo.is_dir():
                     raise ValueError("repository must be an existing local repository folder")
+                if folder.exists() or folder.is_symlink():
+                    raise ValueError(f"worktree destination already exists: {folder}")
                 git(repo, "check-ref-format", "--branch", request.branch)
                 git(repo, "worktree", "add", "-b", request.branch, "--", str(folder))
             elif not folder.is_dir():
@@ -93,6 +101,14 @@ class Controller:
             from .sessions import Sessions
 
             require_not_busy(agent)
+            if agent.spawn_state not in {None, "ready"}:
+                raise RuntimeError("Child workspace setup is incomplete; inspect its spawn error")
+            if getattr(agent, "stop_pending", False):
+                raise RuntimeError("Agent termination is pending")
+            if agent.parent_id:
+                from .orchestration import verify_workspace
+
+                verify_workspace(agent)
             agent = Sessions(self.store).ensure_agent_portable(agent)
             pid = self.processes.launch(agent, prompt)
             self.store.update(agent.id, {"pid": pid, "last_error": None})
@@ -104,11 +120,18 @@ class Controller:
         """Only once at controller startup; never automatically retry crashed agents."""
         with self.lock:
             for agent in self.store.scan():
+                if getattr(agent, "stop_pending", False):
+                    try:
+                        self.stop(str(agent.id))
+                    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                        log.warning("Pending stop failed: %s", exc)
+                    continue
                 if (
                     f"{agent.id}.md" in self.store.errors
                     or not agent.managed
                     or not agent.auto_resume
                     or busy(agent)
+                    or agent.spawn_state not in {None, "ready"}
                     or agent.status in {Status.done, Status.dormant}
                 ):
                     continue
@@ -118,12 +141,20 @@ class Controller:
                 self._launch(agent, prompt)
             self.refresh()
 
-    def wake(self, agent_id: str, message: str = "") -> Agent:
+    def wake(self, agent_id: str, message: str = "", *, preserve_child_wait: bool = False) -> Agent:
         with self.lock:
             agent = self.store.get(agent_id)
             require_not_busy(agent)
             if not agent.managed:
                 raise ValueError("observed agents must be explicitly adopted before waking")
+            if agent.spawn_state not in {None, "ready"}:
+                raise RuntimeError("Child workspace setup is incomplete; inspect its spawn error")
+            if getattr(agent, "orchestration_stop", None) or getattr(agent, "stop_pending", False):
+                raise RuntimeError("Child is stopping; wait until it has stopped")
+            if agent.parent_id:
+                from .orchestration import verify_workspace
+
+                verify_workspace(agent)
             prompt = message or resume_prompt(agent)
             agent = self.store.update(
                 agent.id,
@@ -133,6 +164,9 @@ class Controller:
                     "wait_reason": "",
                     "auto_resume": True,
                     "last_error": None,
+                    "child_wait": getattr(agent, "child_wait", None)
+                    if preserve_child_wait
+                    else None,
                 },
             )
             if self.processes.alive(agent):
@@ -159,9 +193,15 @@ class Controller:
                     "wake_at": None,
                     "status": Status.done if agent.status == Status.done else Status.idle,
                     "pid": None,
+                    "child_wait": None,
+                    "orchestration_stop": None,
+                    "stop_pending": True,
                 },
             )
             self.processes.stop(agent)
+            if self.processes.alive(agent):
+                raise RuntimeError("Could not stop the agent; termination remains pending")
+            agent = self.store.update(agent.id, {"stop_pending": False})
             self.refresh()
             return agent
 
@@ -190,6 +230,12 @@ class Controller:
             agents = self.store.scan()
             for agent in agents:
                 if f"{agent.id}.md" in self.store.errors or busy(agent):
+                    continue
+                if getattr(agent, "stop_pending", False):
+                    try:
+                        self.stop(str(agent.id))
+                    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                        log.warning("Pending stop failed: %s", exc)
                     continue
                 if (
                     agent.managed

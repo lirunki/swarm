@@ -6,8 +6,10 @@ const button = (text, cls, action) => { const el = node('button', cls, text); el
 const labels = {running: 'Running', waiting: 'Waiting for input', dormant: 'Dormant', idle: 'Idle', done: 'Done'};
 let state = {agents: [], errors: {}, health: {}, home: ''};
 let filter = 'all', activeTab = 'dashboard', restored = false, stateSocket, reconnectDelay = 1000;
+let restartingController = false, restartTimer;
 let selectedSession = null, sessionData = [], wakeId = null, editId = null;
 let selectedGrokSession = null, grokSessionData = [], grokLoadSequence = 0;
+let folderBrowserPath = null, folderLoadSequence = 0;
 let forgettingAgent = false, metaCompactingId = null, toolInputCompactingId = null;
 const terminals = new Map();
 const cardViews = new SwarmCardViews.CardViews();
@@ -50,11 +52,35 @@ function connectState() {
   if (stateSocket && stateSocket.readyState < 2) return;
   const el = $('#connection'); el.textContent = 'Connecting…'; el.className = 'connection';
   const socket = new WebSocket(wsURL('/ws/state')); stateSocket = socket;
-  socket.onopen = () => { reconnectDelay = 1000; el.textContent = '● Live'; el.className = 'connection live'; refresh(); };
+  socket.onopen = () => {
+    reconnectDelay = 1000; el.textContent = '● Live'; el.className = 'connection live'; refresh();
+    if (restartingController) {
+      restartingController = false; clearTimeout(restartTimer);
+      const restart = $('#restart-controller'); restart.disabled = false; restart.textContent = '↻ Restart backend';
+      toast('Swarm backend controller restarted. Agents kept running.');
+    }
+  };
   socket.onmessage = event => { try { applyState(JSON.parse(event.data)); } catch (error) { console.warn('Invalid state update', error); } };
   socket.onclose = () => { el.textContent = 'Reconnecting…'; el.className = 'connection offline'; setTimeout(connectState, reconnectDelay); reconnectDelay = Math.min(15000, reconnectDelay * 2); };
   socket.onerror = () => socket.close();
 }
+async function restartController() {
+  if (restartingController || !confirm('Restart the Swarm backend controller?\n\nAgent processes are owned by tmux and will keep running. The dashboard will reconnect automatically.')) return;
+  const restart = $('#restart-controller'); restartingController = true; restart.disabled = true; restart.textContent = 'Restarting…';
+  try {
+    await api('/api/controller/restart', 'POST');
+    toast('Backend restart requested. Waiting to reconnect…');
+    restartTimer = setTimeout(() => {
+      if (!restartingController) return;
+      restartingController = false; restart.disabled = false; restart.textContent = '↻ Restart backend';
+      toast('The backend did not reconnect within 20 seconds.', true);
+    }, 20000);
+  } catch (error) {
+    restartingController = false; restart.disabled = false; restart.textContent = '↻ Restart backend';
+    toast(error.message, true);
+  }
+}
+$('#restart-controller').addEventListener('click', restartController);
 function badge(status) {
   const el = node('span', `badge ${status}`); el.append(node('i', 'status-dot'), document.createTextNode(labels[status] || status)); return el;
 }
@@ -67,13 +93,20 @@ const toolInputCompactionRunning = a => a?.tool_input_compaction?.status === 'ru
 const compactionRunning = a => metaCompactionRunning(a) || toolInputCompactionRunning(a);
 const compactionRequestInFlight = a => !!a && (metaCompactingId === a.id || toolInputCompactingId === a.id);
 const compactionBlocked = a => compactionRunning(a) || compactionRequestInFlight(a);
+function canRevertToolInputs(a) {
+  const job = a?.tool_input_compaction;
+  return !!(job?.archive && job.source_sha256 && job.replacement_sha256 &&
+    (['completed', 'unchanged'].includes(job.status) || (job.status === 'failed' && job.operation === 'revert')));
+}
 function renderCard(a) {
   const card = node('article', 'agent-card'); card.dataset.agentId = a.id;
+  const activityHint = a.activity || 'No activity reported yet';
+  card.title = `${a.name}\n${labels[a.status] || a.status} · ${a.alive ? 'Process online' : 'Offline'}\nActivity: ${activityHint}`;
   card.classList.toggle('has-process', !!a.alive);
   const inside = node('div', 'card-inner'), summary = node('header', 'card-summary'), header = node('div', 'card-head');
   const identity = node('div', 'card-identity'), avatar = node('div', 'avatar', a.name.slice(0, 1).toUpperCase());
   const subtitle = node('div', 'card-subtitle', `${a.backend}${a.import_source ? ` ← ${a.import_source.backend}` : ''} · ${a.id.slice(0, 8)}${a.managed ? '' : ' · observed'}`);
-  const name = node('h3', '', a.name); name.title = a.name;
+  const name = node('h3', '', a.name); name.title = `${a.name}\nActivity: ${activityHint}`;
   identity.append(name, subtitle);
   const details = node('div', 'card-details'); details.id = `card-details-${a.id}`;
   const toggle = button('', 'card-toggle', () => {
@@ -82,12 +115,15 @@ function renderCard(a) {
     SwarmCardViews.applyCardView({card, details, foot, avatar, subtitle, toggle}, compact, a.name);
   });
   toggle.setAttribute('aria-controls', `${details.id} card-actions-${a.id}`);
-  header.append(avatar, identity, badge(a.status), toggle);
+  const statusBadge = badge(a.status); statusBadge.title = labels[a.status] || a.status;
+  header.append(avatar, identity, statusBadge, toggle);
   const goal = node('p', 'goal', a.goal); goal.title = a.goal;
-  summary.append(header, goal);
+  summary.append(header);
   const activity = node('div', 'activity'); activity.style.borderColor = `var(--${a.status})`;
-  activity.append(node('span', 'activity-label', 'CURRENT ACTIVITY'), document.createTextNode(a.activity || 'No activity reported yet'));
-  details.append(activity);
+  activity.id = `card-activity-${a.id}`;
+  toggle.setAttribute('aria-describedby', activity.id);
+  activity.append(node('span', 'activity-label', 'CURRENT ACTIVITY'), document.createTextNode(activityHint));
+  details.append(goal, activity);
   if (a.activities?.length) {
     const list = node('ul', 'activity-list');
     for (const item of a.activities) {
@@ -98,6 +134,7 @@ function renderCard(a) {
   const meta = node('dl', 'metadata');
   metadata(meta, 'Folder', a.folder); metadata(meta, 'Repository', a.repository); metadata(meta, 'Worktree', a.worktree);
   metadata(meta, 'Branch', a.branch); metadata(meta, 'Session', a.session_id || 'Not persisted yet');
+  if (a.parent_id) metadata(meta, 'Parent', agentById(a.parent_id)?.name || a.parent_id);
   metadata(meta, 'Process', a.pid ? `PID ${a.pid}` : 'Not running');
   metadata(meta, 'Wake at', a.wake_at ? new Date(a.wake_at).toLocaleString() : '');
   metadata(meta, 'Restore', a.auto_resume ? 'Automatic' : 'Manual');
@@ -136,9 +173,18 @@ function render() {
   const query = $('#search').value.trim().toLowerCase();
   const visible = state.agents.filter(a => (filter === 'all' || a.status === filter) && [a.name, a.goal, a.activity, a.folder, a.branch].join(' ').toLowerCase().includes(query));
   const focusedToggle = document.activeElement?.classList.contains('card-toggle') ? document.activeElement.closest('.agent-card')?.dataset.agentId : null;
-  $('#agents').replaceChildren(...visible.map(renderCard));
+  const forest = SwarmOrgChart.buildForest(state.agents, new Set(visible.map(a => a.id)));
+  const chart = $('#agents'), scrollLeft = chart.scrollLeft;
+  chart.replaceChildren(SwarmOrgChart.renderForest(forest.roots, renderCard));
+  chart.hidden = !forest.shownCount;
+  chart.scrollLeft = scrollLeft;
+  $('#hierarchy-summary').textContent = forest.ancestorCount
+    ? `${forest.matchedCount} ${forest.matchedCount === 1 ? 'match' : 'matches'} · ${forest.ancestorCount} dimmed ancestor${forest.ancestorCount === 1 ? '' : 's'} kept for context`
+    : `${forest.shownCount} agent${forest.shownCount === 1 ? '' : 's'} · ${forest.roots.length} root${forest.roots.length === 1 ? '' : 's'}`;
+  if (forest.issuesCount) $('#hierarchy-summary').textContent += ` · ${forest.issuesCount} missing or invalid parent links`;
+  $('#collapse-all').disabled = !state.agents.length;
   if (focusedToggle) {
-    const replacement = [...$('#agents').children].find(card => card.dataset.agentId === focusedToggle);
+    const replacement = [...chart.querySelectorAll('.agent-card')].find(card => card.dataset.agentId === focusedToggle);
     if (replacement) $('.card-toggle', replacement)?.focus({preventScroll: true});
   }
   const empty = $('#empty'); empty.hidden = visible.length > 0;
@@ -150,6 +196,10 @@ function render() {
   if ($('#edit-dialog').open) updateEditAvailability();
   if ($('#wake-dialog').open) updateWakeAvailability();
 }
+$('#collapse-all').addEventListener('click', () => {
+  cardViews.setAllCompact(state.home, state.agents, true);
+  render();
+});
 function activate(id) {
   activeTab = id && terminals.has(id) ? id : 'dashboard';
   $('#dashboard').hidden = activeTab !== 'dashboard'; $('#terminals').hidden = activeTab === 'dashboard';
@@ -232,6 +282,7 @@ function editAgent(id) {
   const a = agentById(id); if (!a) return; editId = id;
   const form = $('#edit-form'); form.elements.name.value = a.name; form.elements.goal.value = a.goal; form.elements.status.value = a.status; form.elements.auto_resume.checked = a.auto_resume;
   form.elements.meta_model.value = ''; form.elements.overlap_tokens.value = '10000'; form.elements.chunk_count.value = '2'; $('#meta-compact-controls').hidden = true; $('#meta-compact-toggle').textContent = 'Meta-compact…';
+  $('#revert-allow-history-loss').checked = false;
   updateEditAvailability(); showDialog('#edit-dialog');
 }
 function updateForgetAvailability() {
@@ -275,22 +326,29 @@ function updateEditAvailability() {
   let toolAvailability = 'Available while this managed Pi agent is stopped.';
   if (!a) toolAvailability = 'This agent is no longer registered.';
   else if (running || starting) toolAvailability = 'Meta-compaction is running. Wait for it to finish.';
-  else if (toolRunning || toolStarting) toolAvailability = 'Compacting completed tool inputs. It will remain stopped when complete.';
+  else if (toolRunning || toolStarting) toolAvailability = 'Updating the saved tool-input session. It will remain stopped when complete.';
   else if (!a.managed || a.backend !== 'pi') toolAvailability = 'Only managed Pi agents can compact tool inputs.';
   else if (!a.session_file) toolAvailability = 'A persisted Pi session is required.';
   else if (a.alive) toolAvailability = 'Stop this agent before compacting tool inputs.';
   $('#tool-input-compact-availability').textContent = toolAvailability;
   $('#compact-tool-inputs').disabled = !eligible || blocked;
+  $('#revert-tool-input-compaction').disabled = !eligible || blocked || !canRevertToolInputs(a);
+  $('#revert-allow-history-loss').disabled = !eligible || blocked || !canRevertToolInputs(a);
+  $('#tool-input-revert-hint').textContent = toolJob?.status === 'reverted'
+    ? 'Original session restored. Both the original archive and compacted backup are retained.'
+    : !canRevertToolInputs(a) ? 'No tool-input compaction is available to revert.'
+    : 'Stop the agent first. Revert refuses newer history unless you explicitly check the history-loss option.';
   const toolStatus = $('#tool-input-compact-status'); toolStatus.hidden = !toolJob;
   if (toolJob) {
     $('#tool-input-compact-state').textContent = toolJob.status || 'unknown';
-    const hasResult = toolJob.status === 'completed' || toolJob.status === 'unchanged' || toolJob.calls_compacted != null || toolJob.estimated_tokens_saved != null;
+    const hasResult = toolJob.status !== 'reverted' && (toolJob.status === 'completed' || toolJob.status === 'unchanged' || toolJob.calls_compacted != null || toolJob.estimated_tokens_saved != null);
     $('#tool-input-compact-result').hidden = !hasResult;
     $('#tool-input-compact-count').textContent = String(toolJob.calls_compacted ?? 0);
     $('#tool-input-compact-savings').textContent = String(toolJob.estimated_tokens_saved ?? 0);
     $('#tool-input-compact-error').hidden = !toolJob.error; $('#tool-input-compact-error').textContent = toolJob.error || '';
     $('#tool-input-compact-archive-row').hidden = !toolJob.archive; $('#tool-input-compact-archive').textContent = toolJob.archive || '';
     $('#tool-input-compact-directory-row').hidden = !toolJob.directory; $('#tool-input-compact-directory').textContent = toolJob.directory || '';
+    $('#tool-input-revert-backup-row').hidden = !toolJob.compacted_backup; $('#tool-input-revert-backup').textContent = toolJob.compacted_backup || '';
   }
 }
 async function startMetaCompaction() {
@@ -327,6 +385,26 @@ async function compactToolInputs() {
   } catch (error) { if (editId === id) $('.form-error', form).textContent = error.message; else toast(error.message, true); }
   finally { if (toolInputCompactingId === id) toolInputCompactingId = null; if ($('#edit-dialog').open) updateEditAvailability(); }
 }
+async function revertToolInputs() {
+  const id = editId, a = agentById(id), form = $('#edit-form');
+  if (!a || metaCompactingId || toolInputCompactingId || compactionRunning(a) || !canRevertToolInputs(a) || !a.managed || a.backend !== 'pi' || !a.session_file || a.alive) { updateEditAvailability(); return; }
+  const allowHistoryLoss = $('#revert-allow-history-loss').checked;
+  const historyWarning = allowHistoryLoss
+    ? 'WARNING: You enabled history loss. Newer history and other changes will be discarded from the active session and retained only in the backup.'
+    : 'Revert is refused if newer history or other changes exist, so they will not be discarded.';
+  if (!confirm(`Revert tool-input compaction for ${a.name}?\n\nThis restores the exact original session from:\n${a.tool_input_compaction.archive}\n\nThe entire current session is backed up first. ${historyWarning} The original large inputs and context-size problem may return. No model calls are made. Stop any external Pi using this session too.\n\nThe agent stays stopped until you explicitly Wake it.`)) return;
+  $('.form-error', form).textContent = ''; toolInputCompactingId = id; updateEditAvailability();
+  try {
+    const report = await api(`/api/agents/${id}/revert-tool-input-compaction`, 'POST', {allow_history_loss: allowHistoryLoss});
+    const current = agentById(id); if (current) current.tool_input_compaction = report;
+    const restoredMessage = report.history_discarded
+      ? 'Original restored. Newer history was removed from the active session and kept in the backup.'
+      : 'Original session restored. Current-session backup retained.';
+    toast(report.status === 'reverted' ? restoredMessage : (report.error || 'Revert failed.'), report.status !== 'reverted');
+    render(); await refresh();
+  } catch (error) { if (editId === id) $('.form-error', form).textContent = error.message; else toast(error.message, true); }
+  finally { if (toolInputCompactingId === id) toolInputCompactingId = null; if ($('#edit-dialog').open) updateEditAvailability(); }
+}
 async function forgetAgent() {
   const id = editId, a = agentById(id);
   if (!a || forgettingAgent) return;
@@ -349,6 +427,7 @@ async function forgetAgent() {
 }
 $('#forget-agent').addEventListener('click', forgetAgent);
 $('#compact-tool-inputs').addEventListener('click', compactToolInputs);
+$('#revert-tool-input-compaction').addEventListener('click', revertToolInputs);
 $('#meta-compact-toggle').addEventListener('click', () => {
   const controls = $('#meta-compact-controls'); controls.hidden = !controls.hidden;
   $('#meta-compact-toggle').textContent = controls.hidden ? 'Meta-compact…' : 'Hide options';
@@ -375,12 +454,91 @@ async function submit(form, action) {
     if (form.id === 'edit-form') updateEditAvailability(); else if (form.id === 'wake-form') updateWakeAvailability();
   }
 }
+function addSelectOption(select, value, text = value) {
+  const existing = [...select.options].find(option => option.value === value);
+  if (existing) { existing.textContent = text; return existing; }
+  const option = document.createElement('option'); option.value = value; option.textContent = text; select.append(option); return option;
+}
+function loadAgentFolderOptions(selected = '') {
+  const select = $('#create-form').elements.folder;
+  select.replaceChildren(); addSelectOption(select, '', state.agents.length ? 'Select an agent folder…' : 'Browse for a folder…');
+  const folders = [...new Set(state.agents.map(agent => agent.folder).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  for (const folder of folders) addSelectOption(select, folder);
+  if (selected) addSelectOption(select, selected).selected = true;
+}
+async function loadModelOptions() {
+  const select = $('#create-form').elements.model, hint = $('#model-selection-hint');
+  select.disabled = true; select.replaceChildren(); addSelectOption(select, '', 'Loading Pi models…');
+  try {
+    const data = await api('/api/config/models'); select.replaceChildren();
+    addSelectOption(select, '', data.default ? `Pi default — ${data.default}` : 'Pi default');
+    for (const model of data.models || []) {
+      const details = [model.context && `${model.context} context`, model.thinking === 'yes' && 'thinking', model.images === 'yes' && 'images'].filter(Boolean).join(' · ');
+      addSelectOption(select, model.id, details ? `${model.id} — ${details}` : model.id);
+    }
+    hint.textContent = data.error ? `Pi model discovery warning: ${data.error}` : `${(data.models || []).length} models available from the server's Pi configuration.`;
+  } catch (error) {
+    select.replaceChildren(); addSelectOption(select, '', 'Pi default'); hint.textContent = `Could not list Pi models: ${error.message}`;
+  } finally { select.disabled = false; }
+}
+function siblingWorktreePath(source, branch) {
+  const clean = source.replace(/\/+$/, ''), slash = clean.lastIndexOf('/'), parent = slash >= 0 ? clean.slice(0, slash + 1) : '', name = slash >= 0 ? clean.slice(slash + 1) : clean;
+  const safeBranch = branch.replace(/[\\/]/g, '_');
+  return clean && safeBranch ? `${parent}${name}_${safeBranch}` : '';
+}
+function updateWorktreeCreateFields() {
+  const form = $('#create-form'), enabled = form.elements.create_worktree.checked, fields = $('#worktree-create-fields');
+  fields.hidden = !enabled; form.elements.branch.required = enabled;
+  const destination = siblingWorktreePath(form.elements.folder.value, form.elements.branch.value.trim());
+  $('#worktree-destination').textContent = destination || 'Choose a folder and branch';
+  $('#folder-selection-hint').textContent = enabled
+    ? 'Select the existing Git worktree to branch from. The destination is computed below.'
+    : 'Choose a folder used by an existing agent, or browse folders visible to the Swarm server.';
+}
+async function loadFolderBrowser(path) {
+  const sequence = ++folderLoadSequence, message = $('#folder-browser-message'); message.textContent = '';
+  $('#folder-browser-list').replaceChildren(node('p', 'session-message', 'Reading server folders…'));
+  try {
+    const data = await api(`/api/folders${path ? `?path=${encodeURIComponent(path)}` : ''}`);
+    if (sequence !== folderLoadSequence) return;
+    folderBrowserPath = data.path; $('#folder-browser-path').textContent = data.path;
+    $('#folder-parent').disabled = !data.parent; $('#folder-parent').dataset.path = data.parent || '';
+    $('#select-folder').textContent = data.git ? 'Select this Git folder' : 'Select this folder';
+    const list = $('#folder-browser-list'); list.replaceChildren();
+    for (const directory of data.directories) {
+      const entry = button(directory.name, 'folder-entry', () => loadFolderBrowser(directory.path));
+      entry.setAttribute('role', 'option'); entry.title = directory.path; list.append(entry);
+    }
+    if (!data.directories.length) list.append(node('p', 'session-message', 'No readable subfolders.'));
+    if (data.truncated) message.textContent = 'Only the first 2,000 folders are shown.';
+  } catch (error) {
+    if (sequence !== folderLoadSequence) return;
+    folderBrowserPath = null; $('#folder-browser-list').replaceChildren(); message.textContent = error.message;
+  }
+}
+function openFolderBrowser() {
+  const selected = $('#create-form').elements.folder.value;
+  showDialog('#folder-dialog'); loadFolderBrowser(selected || null);
+}
+$('#browse-folder').addEventListener('click', openFolderBrowser);
+$('#folder-parent').addEventListener('click', event => loadFolderBrowser(event.currentTarget.dataset.path));
+$('#select-folder').addEventListener('click', () => {
+  if (!folderBrowserPath) return;
+  const select = $('#create-form').elements.folder; addSelectOption(select, folderBrowserPath).selected = true;
+  $('#folder-dialog').close(); updateWorktreeCreateFields();
+});
+$('#create-form').elements.folder.addEventListener('change', updateWorktreeCreateFields);
+$('#create-form').elements.create_worktree.addEventListener('change', updateWorktreeCreateFields);
+$('#create-form').elements.branch.addEventListener('input', updateWorktreeCreateFields);
 $('#create-form').addEventListener('submit', event => {
   event.preventDefault(); const form = event.currentTarget;
   submit(form, async () => {
-    const data = Object.fromEntries(new FormData(form)); data.create_worktree = form.elements.create_worktree.checked;
+    const data = Object.fromEntries(new FormData(form));
+    data.create_worktree = form.elements.create_worktree.checked;
+    data.automatic_worktree_path = data.create_worktree;
     if (!data.model) delete data.model;
-    if (data.create_worktree && (!data.repository || !data.branch)) throw new Error('A local repository and a new branch are required for a worktree.');
+    if (!data.create_worktree) delete data.branch;
+    if (data.create_worktree && (!data.folder || !data.branch.trim())) throw new Error('Choose a Git folder and enter a new branch.');
     const agent = await api('/api/agents', 'POST', data); $('#create-dialog').close(); form.reset();
     toast(agent.last_error ? `Agent registered but could not start: ${agent.last_error}` : 'Agent launched.', !!agent.last_error); await refresh();
   });
@@ -472,7 +630,11 @@ $('#import-grok-button').addEventListener('click', () => { $('#import-grok-form'
 $('#refresh-grok-sessions').addEventListener('click', loadGrokSessions);
 $('#grok-session-search').addEventListener('input', renderGrokSessions);
 for (const el of document.querySelectorAll('[data-close]')) el.addEventListener('click', () => el.closest('dialog').close());
-const createDialog = () => showDialog('#create-dialog');
+const createDialog = () => {
+  const form = $('#create-form'); form.reset(); loadAgentFolderOptions(); updateWorktreeCreateFields();
+  $('#model-selection-hint').textContent = 'Reading models from the server Pi configuration…';
+  showDialog('#create-dialog'); loadModelOptions();
+};
 $('#create-button').addEventListener('click', createDialog); $('#empty-create').addEventListener('click', createDialog);
 $('#adopt-button').addEventListener('click', () => { $('#adopt-form').reset(); $('#session-search').value = ''; showDialog('#adopt-dialog'); loadSessions(); });
 $('#refresh-sessions').addEventListener('click', loadSessions); $('#session-search').addEventListener('input', renderSessions);

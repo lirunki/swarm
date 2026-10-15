@@ -97,21 +97,42 @@ conservatively blocks while any native Pi has an unknown working folder.
   **idle** (turn completed), **done** (goal accomplished).
 - Live counts, status filters, search, current activity, activity checklist,
   checkpoint, folder, Git worktree/branch, session ID, process ID, and errors.
-- **New agent** starts pi in an existing folder. Research folders need not be Git repos.
-  Select **Create a new Git worktree** to run `git worktree add -b <branch>` in
-  an existing **local repository**. Swarm never switches an existing folder's branch.
-  Prefer a separate worktree per coding agent to prevent concurrent Git edits.
-- **Compact / expand cards** with the chevron in each card header. Compact cards
-  show only name, goal and status. Done, idle, dormant and offline agents compact
-  automatically; live running and waiting-for-input agents start expanded.
-  Manual choices take precedence and are remembered per agent, registry and browser,
-  across live updates/reloads. If browser storage is unavailable, choices still work
-  for the current page. This is display-only: model context/history and processes
-  are unaffected. Expand a card to use its normal actions and inspect details.
+- **New agent** starts pi in an existing server-local folder. The folder selector lists
+  folders already used by agents; **Browse…** navigates directories visible to the Swarm
+  server. Research folders need not be Git repositories. The model selector is populated
+  from the configured Pi executable's available model catalog (`pi --list-models`) and
+  identifies Pi's configured default without exposing credentials.
+- Select **Create a sibling Git worktree from this folder** to use the chosen existing Git
+  worktree as source. For source `X` and branch `feature/name`, Swarm creates the branch in
+  sibling `X_feature_name` (`/` and `\\` become `_`) using `git worktree add -b`. The
+  destination is shown before launch and must not already exist. Swarm never switches the
+  source folder's branch. Prefer a separate worktree per coding agent to prevent concurrent
+  Git edits.
+- **Compact org chart:** agents appear as 128×128 square tiles containing only
+  their name, status and expand arrow. Hover over the tile/name to see current
+  activity; a red name means a live process, independent of goal status. Cards
+  default to compact even when status changes; saved manual expansion choices
+  still take precedence. **Collapse all** restores the dense view in one click.
+  Expanding reveals the goal, activity, checkpoint, metadata and normal actions.
+- **Parent → child hierarchy:** connector lines show which agent created each
+  child using `parent_id`. Independent agents form separate roots. Roots wrap to
+  fit the viewport; wide families scroll horizontally without compressing names
+  into unreadable strips. Search/status filters retain dimmed ancestors so a
+  matching child keeps its lineage visible. Missing parents and invalid cycles
+  remain visible as roots with tooltip/accessibility warnings, never disappear.
+  Expanding an ancestor does not hide its descendants.
+- Card display preferences are remembered per agent, registry and browser across
+  updates/reloads. If browser storage is unavailable, they still work for the
+  current page. Keyboard users can focus the chart to scroll and use each tile's
+  expand button (with its activity description). These are display-only controls:
+  model context/history and process state are unaffected.
 - **Terminal** attaches to the real pi TUI using xterm.js and a tmux PTY client.
   Tabs retain scrollback while open, and open tabs are remembered locally.
 - **Closing a terminal tab, the browser, or Swarm does not stop agents.**
   No hidden agent launch happens when a tab opens.
+- **Restart backend** in the top-right header confirms, then replaces only the Swarm
+  controller process and reconnects the dashboard automatically. Agent processes remain
+  owned by tmux and continue running throughout the restart.
 - **Wake** resumes an offline session or submits instructions to a live pi editor.
   Treat that editor as shared: avoid composing a message while another browser
   tab/user submits one. Pi queues messages received while working.
@@ -132,6 +153,78 @@ conservatively blocks while any native Pi has an unknown working folder.
 Agents have your user account's filesystem, Git, network and provider access.
 Choose goals and folders accordingly. Pi project trust prompts are left intact;
 if pi is waiting at startup for trust/login/model selection, open its Terminal.
+
+## Orchestrate child agents from the CLI
+
+A Swarm-managed agent can delegate work to direct children through the controller:
+
+```bash
+swarm spawn --request-id stable-task-v1 --name 'Parser worker' \
+  --goal 'Implement the parser' --repository /absolute/repo \
+  --worktree /absolute/new-worktree --branch agent/parser --base HEAD \
+  --context fresh --instructions 'Run focused tests.'
+
+swarm agent list
+swarm agent status CHILD_ID
+swarm agent message CHILD_ID 'Also test malformed input.'
+swarm agent wake CHILD_ID --message 'Continue from the checkpoint.'
+swarm agent stop CHILD_ID          # checkpoint request; force after 30 seconds
+swarm agent stop CHILD_ID --force  # immediate termination
+swarm agent wait CHILD_ID
+```
+
+The parent defaults to `SWARM_AGENT_ID`, so these commands normally require a
+managed session. A local operator may instead put `--parent-id PARENT_ID` before the
+subcommand, for example `swarm --parent-id PARENT_ID agent list`. The controller URL
+defaults to `SWARM_API_URL` or `http://127.0.0.1:8787`; override it with global
+`--api-url`. Only loopback HTTP URLs are accepted. The client disables environment
+proxies and redirects and uses timeouts; it never manipulates tmux, records,
+sessions, or worktrees itself.
+
+Each spawn needs a stable `request_id` slug (maximum 80 characters). Persist it in
+the parent's checkpoint and reuse it when retrying the same logical request. If a
+response is lost, inspect `agent list` and retry with the same key—do not choose a
+new key until you have inspected the retained child. Message delivery can likewise
+be uncertain after a transport timeout, so inspect status before resending.
+
+A child owns a new branch in a new, nonexistent absolute worktree destination made
+from an absolute repository directory and an explicit base revision (normally
+`HEAD`). Dirty parent changes are not copied. Swarm never automatically commits,
+merges, deletes branches, or removes worktrees. `--context fresh` starts without the
+parent conversation. `--context fork` deterministically makes a portable checkpoint
+of at most 400,000 characters without model calls, gives the child a new identity,
+and archives its source; it does not share a live session. Snapshots are limited
+to 16 MiB each and 256 MiB retained per registry. The character limit does not
+guarantee fit in every model; use fresh context or compact first if necessary.
+Never use pi `/fork` on
+the parent session.
+
+Ownership is direct-child and cooperative, not a hostile-agent security sandbox;
+all agents run as the same user. Limits are four concurrent children per parent,
+16 active managed agents globally, three child nesting levels, and 32 retained children per
+parent. Failures remain as records/artifacts and are not automatically retried;
+inspect them before assigning a new key.
+
+`agent wait` registers an event-driven wait for child completion or attention and
+marks the parent dormant—there is no polling. The parent must finish its current
+turn after registration, unless the response has `ready: true` (the child already
+needs attention). The event wakes it; pending notifications survive restarts and
+carry stable event IDs so the parent can ignore a duplicate after uncertain
+delivery. Delivery failures retry up to three times, 30 seconds apart, then become
+an attention/error state. Operator stop clears the wait; `auto_resume: false`
+suppresses wakeups while disabled. Normal stop asks the child to checkpoint,
+then forces termination after 30 seconds. `--force` stops immediately. A pending
+termination survives controller restart and is not considered complete until
+process liveness confirms it.
+
+Worktree path, repository identity and branch are rechecked on child wake/recovery.
+Changing a child's checkout to another branch causes launch to be refused. Failed
+workspace setup is not retried automatically; partial folders/branches are kept
+for inspection. The registered request and optional parent snapshot live under
+`$SWARM_HOME/spawns/<child-id>/`. Reusing the same key returns the existing child,
+including its error state, rather than creating another worktree or launching twice.
+For a ready child whose Pi launch failed, use explicit `agent wake` after fixing
+the runtime; an incomplete workspace must be inspected and repaired separately.
 
 ## Adopt an existing pi session
 
@@ -216,10 +309,43 @@ Artifacts are kept under `$SWARM_HOME/tool-input-compactions/<job>/`:
 `toolrun_*.json` input files. Lookup IDs map to the original entry ID and tool-call
 position in the sidecar index; the original archive is never annotated or edited.
 Treat these files as private session data and retain them as long as their
-references remain useful. To undo, stop all writers, back up the current tracked
-file, and copy `original.jsonl` back to that path.
+references remain useful.
 
-The operation requires a stopped managed Pi agent. It checks for other session
+### Revert tool-input compaction
+
+Use **Stop → Edit → Revert tool-input compaction** to restore the exact original
+archive, including its full inputs and other branches. Swarm verifies the archive
+checksum, session identity and tracked path, saves the compacted session as a
+`compacted-before-revert-<id>.jsonl` backup alongside the archive, then atomically
+restores the original bytes. The agent remains stopped with auto-resume disabled;
+Wake it explicitly afterward. This makes no model calls, and the original
+context-size problem may return.
+
+**By default, revert refuses if the session has changed since compaction**,
+including new conversation turns or another kind of compaction. To intentionally
+restore the old snapshot anyway, check **Allow discarding history added since
+compaction**. This option is unchecked whenever Edit opens, and the confirmation
+explicitly warns that newer history and other changes will be removed from the
+active session. The **entire current session**, including that newer history, is
+saved in the backup first. Nothing is merged into the original archive.
+
+Even with the override, archive checksum/identity and stopped-process checks
+remain mandatory. Writes occurring *during* the revert cause it to be refused:
+the override only covers the current snapshot that was backed up. The report
+records the opt-in and whether changed history was actually replaced. A repeated
+no-op Compact tool inputs action retains the undo
+metadata, and retrying an already completed revert does not rewrite the session.
+Server restart reconciles interrupted restores by hash without repeating them.
+Edit displays the restored status and compacted-backup path.
+
+API: `POST /api/agents/<id>/revert-tool-input-compaction` returns the report with
+HTTP 200, or refuses changed/live sessions with HTTP 409. Send
+`{"allow_history_loss": true}` only to explicitly authorize dropping pre-existing
+changes; omitted/false keeps the safe default. The flag must be a JSON boolean.
+Invalid or corrupted archives are rejected without replacing the session. Revert
+uses only Swarm's recorded archive; callers cannot supply a file path.
+
+Both operations require a stopped managed Pi agent. Compaction checks for other session
 owners, active processes, and source changes before atomic replacement. The
 tracked session ID/path stay unchanged and auto-resume remains disabled after a
 successful compaction. Failed or no-op operations do not replace the source.
@@ -501,6 +627,8 @@ No webhook polling integration is bundled; agents can use timers to schedule
 checks, or an external service can call Wake. Endpoints:
 
 - `GET /api/state`, `WS /ws/state`: full live dashboard state.
+- `GET /api/config/models`: models available to the configured Pi executable; `GET /api/folders`: one level of the server-local directory picker.
+- `POST /api/controller/restart`: send a response, then replace only the controller process in place; tmux-owned agents remain running.
 - `POST /api/agents`: create/start; `PATCH /api/agents/{id}`: update metadata.
 - `POST /api/agents/{id}/wake` and `/stop`: explicit process control.
 - `DELETE /api/agents/{id}`: forget an inactive agent, terminating any remaining
@@ -519,6 +647,7 @@ ruff check src tests
 ruff format --check src tests
 node --check src/swarm/static/app.js
 node --check src/swarm/static/card-views.js
+node --check src/swarm/static/org-chart.js
 node --test tests/frontend/*.test.cjs
 ```
 
@@ -526,6 +655,21 @@ When Node is installed, pytest also runs the dependency-free frontend tests for
 card rendering/disclosure, automatic defaults, persisted overrides, storage failures,
 Edit/Forget confirmation and server-race error handling. These use a minimal DOM
 contract and are not a substitute for a real browser layout/keyboard check.
+The org-chart tests also cover filters/ancestor retention, missing and cyclic
+parent links, deterministic order, and deep hierarchies without recursive traversal.
+
+Optional Chromium layout checks use synthetic agents and an isolated static server,
+not your running Swarm or real sessions:
+
+```bash
+pip install playwright
+python -m playwright install --with-deps chromium
+pytest -q tests/test_dashboard_browser.py
+```
+
+These test desktop/mobile tile dimensions, non-overlap, scrolling, expand/collapse,
+activity tooltips, filtered lineage, keyboard focus after updates and safe text
+rendering. They skip when Playwright or its browser runtime is unavailable.
 
 Tests cover record safety/concurrency, snapshots, recovery rules, one-shot timers,
 adoption/import safeguards, Grok source preservation and conversion, worktree

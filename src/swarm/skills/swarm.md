@@ -87,6 +87,72 @@ updated; do not claim that the dashboard shows `waiting`.
   --activity 'Goal complete' --notes 'Implemented, tested, and documented. PR 42 merged.'
 ```
 
+## Orchestrating direct children
+
+A managed agent may create and control only its **direct children** through the local
+controller API. This is a cooperative same-user ownership boundary, not a sandbox
+against hostile agents: children still have the user's filesystem, Git, network and
+provider access. Never manipulate tmux, child records, session files, or worktrees
+for orchestration; use the CLI. An operator outside a managed session must put global
+`--parent-id PARENT` before the subcommand. Managed sessions inherit
+`SWARM_AGENT_ID` automatically.
+
+Before spawning, choose a stable task key and persist it in your checkpoint. Reuse
+that key for every retry of the same logical task:
+
+```bash
+"$SWARM_PYTHON" -m swarm spawn \
+  --request-id stable-task-v1 --name 'Parser worker' --goal 'Implement parser' \
+  --repository /absolute/repo --worktree /absolute/new-worktree \
+  --branch agent/parser --base HEAD --context fresh \
+  --instructions 'Run focused tests and leave changes uncommitted.'
+
+"$SWARM_PYTHON" -m swarm agent list
+"$SWARM_PYTHON" -m swarm agent status CHILD_ID
+"$SWARM_PYTHON" -m swarm agent message CHILD_ID 'Please also test malformed input.'
+"$SWARM_PYTHON" -m swarm agent wake CHILD_ID --message 'Continue from your checkpoint.'
+"$SWARM_PYTHON" -m swarm agent stop CHILD_ID
+"$SWARM_PYTHON" -m swarm agent stop CHILD_ID --force
+"$SWARM_PYTHON" -m swarm agent wait CHILD_ID
+```
+
+The repository must be an absolute existing repository directory. The worktree must
+be an absolute, nonexistent destination; the branch must be new, and `--base` must
+explicitly identify the intended starting revision (normally `HEAD`). Dirty changes
+are never copied into the child worktree. Swarm does not merge, delete a worktree or
+branch, or commit for you.
+
+`--context fresh` starts clean context. `--context fork` creates a portable,
+bounded checkpoint (at most 400,000 characters) without model calls, gives the child
+a new identity, and archives the source used to build it. It does not share a live
+session. Fork snapshots are limited to 16 MiB each and 256 MiB total retained
+snapshots per registry. The character cap is not a provider token guarantee; use
+fresh context or compact first if the chosen model cannot fit it.
+**Never use pi's `/fork` on the parent session** (nor `/new`, `/clone`, or
+`/resume`) in a managed process.
+
+Limits for agent-initiated spawns/wakes are four active children per parent,
+16 active managed agents globally, and three child nesting levels. At most 32 children are retained per parent. A live process still consumes an active
+slot even if its goal is marked done; stop finished children to free those slots. Failed children
+remain visible with their records and artifacts and are not automatically retried.
+Inspect the existing child and artifacts before choosing a new request key.
+
+`agent wait` is event-driven: it registers the parent for a child completion or
+attention event and marks the parent dormant; it does not poll. If the response
+has `ready: true`, the child already needs attention—inspect that result immediately.
+Otherwise finish the current turn so the parent can actually become dormant. A matching event
+wakes the parent. Pending delivery is durable across restarts; notification messages
+include an event ID and may repeat if delivery succeeded just before an interruption.
+Ignore already-handled event IDs. Failed delivery is retried up to three times,
+30 seconds apart, then shown as an attention/error state. Operator stop clears the
+wait; disabling the parent's `auto_resume` suppresses wakeups while disabled. Cooperative `agent stop` requests a checkpoint and allows up to 30 seconds
+before forcing termination; `--force` stops immediately.
+
+The CLI accepts only loopback HTTP controller URLs, ignores proxies and redirects,
+and uses request timeouts. If a spawn response is lost, inspect `agent list` and
+retry with the **same** request ID; a new key can create duplicate work. For messages
+or other uncertain operations, inspect status before repeating a side effect.
+
 ## Checkpoints and recovery
 
 Use `--notes` to persist a concise Markdown checkpoint: completed work, current

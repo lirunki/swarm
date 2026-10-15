@@ -221,6 +221,65 @@ def test_real_git_worktree_metadata_and_branch_isolation(ctrl, tmp_path):
     assert branch != agent.branch
 
 
+def test_automatic_worktree_path_creates_sibling_and_sanitizes_branch(ctrl, tmp_path):
+    repo = tmp_path / "project"
+    repo.mkdir()
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    agent = ctrl.create(
+        CreateAgent(
+            name="Sibling coder",
+            goal="Ship",
+            folder=str(repo),
+            branch="feature/nested",
+            create_worktree=True,
+            automatic_worktree_path=True,
+        )
+    )
+
+    destination = tmp_path / "project_feature_nested"
+    assert agent.folder == str(destination)
+    assert agent.worktree == str(destination)
+    assert agent.repository == str(repo)
+    assert agent.branch == "feature/nested"
+    assert (destination / ".git").is_file()
+
+
+def test_automatic_worktree_path_refuses_existing_destination(ctrl, tmp_path):
+    repo = tmp_path / "project"
+    repo.mkdir()
+    destination = tmp_path / "project_feature"
+    destination.mkdir()
+    with pytest.raises(ValueError, match="destination already exists"):
+        ctrl.create(
+            CreateAgent(
+                name="Coder",
+                goal="Ship",
+                folder=str(repo),
+                branch="feature",
+                create_worktree=True,
+                automatic_worktree_path=True,
+            )
+        )
+
+
 def test_timer_launch_failure_does_not_retry_forever(ctrl, monkeypatch):
     timer = add(ctrl, "dormant", wake_at=now() - timedelta(seconds=1))
     calls = []

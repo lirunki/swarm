@@ -59,6 +59,72 @@ def test_state_static_security_and_validation(tmp_path):
             assert ws.receive_json()["agents"] == []
 
 
+def test_creation_discovery_endpoints_return_only_safe_picker_data(tmp_path, monkeypatch):
+    folder = tmp_path / "workspace"
+    folder.mkdir()
+    monkeypatch.setattr(
+        "swarm.server.discover_models",
+        lambda pi: {
+            "models": [{"id": "provider/model", "provider": "provider", "model": "model"}],
+            "default": "provider/model",
+            "error": None,
+        },
+    )
+    app = make_app(tmp_path, pi="configured-pi")
+    with TestClient(app) as client:
+        models = client.get("/api/config/models")
+        assert models.status_code == 200
+        assert models.json()["models"][0]["id"] == "provider/model"
+        folders = client.get("/api/folders", params={"path": str(tmp_path)})
+        assert folders.status_code == 200
+        assert {entry["name"] for entry in folders.json()["directories"]} >= {
+            "swarm",
+            "workspace",
+        }
+        assert (
+            client.get("/api/folders", params={"path": str(tmp_path / "missing")}).status_code
+            == 400
+        )
+
+
+def test_restart_process_reexecutes_the_current_console_script(monkeypatch):
+    import swarm.server as module
+
+    calls = []
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: calls.append(("sleep", seconds)))
+    monkeypatch.setattr(module.sys, "argv", ["/venv/bin/swarm", "serve", "--port", "9000"])
+    monkeypatch.setattr(module.sys, "executable", "/venv/bin/python")
+    monkeypatch.setattr(
+        module.os, "execv", lambda executable, argv: calls.append((executable, argv))
+    )
+
+    module.restart_process()
+
+    assert calls == [
+        ("sleep", 0.35),
+        (
+            "/venv/bin/python",
+            ["/venv/bin/python", "/venv/bin/swarm", "serve", "--port", "9000"],
+        ),
+    ]
+
+
+def test_controller_restart_is_scheduled_after_accepted_request(tmp_path):
+    calls = []
+    app = make_app(tmp_path, restart_action=lambda: calls.append("restart"))
+    with TestClient(app) as client:
+        response = client.post("/api/controller/restart")
+        assert response.status_code == 202
+        assert response.json() == {"restarting": True}
+        assert calls == ["restart"]
+        assert (
+            client.post(
+                "/api/controller/restart", headers={"Origin": "https://evil.example"}
+            ).status_code
+            == 403
+        )
+
+
 def test_repeated_state_websocket_close_finishes_child_cleanup(tmp_path):
     with TestClient(make_app(tmp_path)) as client:
         for _ in range(20):

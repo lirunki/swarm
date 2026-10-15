@@ -2,8 +2,9 @@
 (function (root) {
   'use strict';
 
-  function defaultCompact(agent) {
-    return !agent.alive || ['idle', 'dormant', 'done'].includes(agent.status);
+  // Stable tile sizes keep the org chart readable as agents change state.
+  function defaultCompact() {
+    return true;
   }
 
   class CardViews {
@@ -44,6 +45,15 @@
       try {
         this.getStorage()?.setItem(this.key(home), JSON.stringify(Object.fromEntries(values)));
       } catch { /* Removing a record must work with blocked storage too. */ }
+    }
+
+    setAllCompact(home, agents, compact) {
+      if (typeof compact !== 'boolean') throw new TypeError('compact must be a boolean');
+      const values = this.overrides(home);
+      for (const agent of agents) values.set(agent.id, compact);
+      try {
+        this.getStorage()?.setItem(this.key(home), JSON.stringify(Object.fromEntries(values)));
+      } catch { /* Apply in memory even when persistence is unavailable. */ }
     }
 
     setCompact(home, id, compact) {

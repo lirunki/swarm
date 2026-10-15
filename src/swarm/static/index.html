@@ -11,12 +11,13 @@
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
   <script defer src="/static/card-views.js"></script>
+  <script defer src="/static/org-chart.js"></script>
   <script defer src="/static/app.js"></script>
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="/" aria-label="Swarm dashboard"><span class="brand-mark">⬡</span>swarm<span class="edition">LOCAL WORKSPACE</span></a>
-    <div class="top-meta"><span id="health"></span><span id="connection" class="connection">Connecting…</span></div>
+    <div class="top-meta"><span id="health"></span><span id="connection" class="connection">Connecting…</span><button id="restart-controller" class="restart-controller" type="button" title="Restart the Swarm backend controller">↻ Restart backend</button></div>
   </header>
   <nav id="tabs" class="tabs" aria-label="Workspace tabs"><button id="dashboard-tab" class="tab active" type="button">◫ &nbsp;Dashboard</button></nav>
   <main id="dashboard">
@@ -25,9 +26,9 @@
       <div class="actions"><button id="adopt-button" type="button">↳ Adopt pi session</button><button id="import-grok-button" type="button">↳ Import Grok session</button><button id="create-button" type="button" class="primary">＋ New agent</button></div>
     </section>
     <section id="summary" class="summary" aria-label="Agent status counts"></section>
-    <div class="list-toolbar"><div><h2>Agent fleet <span id="agent-count" class="count">0</span></h2><span class="hint">Live updates from your local registry</span></div><label class="search-label"><span>⌕</span><input id="search" type="search" placeholder="Search agents, goals, branches…" aria-label="Search agents"></label></div>
+    <div class="list-toolbar"><div><h2>Agent hierarchy <span id="agent-count" class="count">0</span></h2><span class="hint">Parent → child · Hover for activity</span><p id="hierarchy-summary" class="hint" aria-live="polite"></p></div><div class="fleet-tools"><button id="collapse-all" class="small" type="button">Collapse all</button><label class="search-label"><span>⌕</span><input id="search" type="search" placeholder="Search agents, goals, branches…" aria-label="Search agents"></label></div></div>
     <details id="registry-errors" class="registry-errors" hidden><summary>Registry warnings</summary><div id="error-list"></div></details>
-    <section id="agents" class="agent-grid" aria-label="Agents"></section>
+    <section id="agents" class="agent-grid org-chart" aria-label="Agent hierarchy" tabindex="0"></section>
     <section id="empty" class="empty" hidden><div class="empty-mark">⬡</div><h2>A little quiet in the swarm.</h2><p>Create an agent, adopt pi history, or import a Grok session.<br>Every agent keeps its own folder, terminal, and conversation history.</p><button id="empty-create" class="primary" type="button">＋ Create your first agent</button></section>
     <footer class="page-footer"><span><i class="tiny-dot"></i> LOCAL-FIRST · FILE-BASED · ALWAYS YOURS</span><code id="home-path">~/.swarm/agents</code></footer>
   </main>
@@ -36,17 +37,33 @@
   <dialog id="create-dialog">
     <form id="create-form">
       <header class="dialog-head"><div><div class="eyebrow">EXPAND THE FLEET</div><h2>New agent</h2></div><button type="button" class="icon-button" data-close aria-label="Close">×</button></header>
-      <p class="hint">Launch pi in an existing folder, or give it an isolated Git worktree.</p>
+      <p class="hint">Launch pi in an existing server-local folder, or create an isolated sibling Git worktree.</p>
       <label>Name<input name="name" required maxlength="120" placeholder="e.g. API engineer"></label>
       <label>Goal<textarea name="goal" required rows="3" placeholder="What does success look like?"></textarea></label>
-      <label>Working folder<input name="folder" required placeholder="/home/you/projects/app" spellcheck="false"></label>
-      <label class="checkbox"><input name="create_worktree" type="checkbox">Create a new Git worktree at this folder</label>
-      <div class="form-row"><label>Local repository<input name="repository" placeholder="/home/you/projects/main-repo" spellcheck="false"></label><label>New branch<input name="branch" placeholder="swarm/my-feature" spellcheck="false"></label></div>
-      <p class="hint">Repository and new branch are required only when creating a worktree. Swarm never switches an existing folder's branch.</p>
-      <label>Model <span class="hint">optional · otherwise pi's default</span><input name="model" placeholder="provider/model" spellcheck="false"></label>
+      <label>Working folder
+        <span class="picker-row"><select name="folder" required><option value="">Loading folders…</option></select><button id="browse-folder" type="button">Browse…</button></span>
+      </label>
+      <p id="folder-selection-hint" class="hint picker-hint">Choose a folder used by an existing agent, or browse folders visible to the Swarm server.</p>
+      <label class="checkbox"><input name="create_worktree" type="checkbox">Create a sibling Git worktree from this folder</label>
+      <div id="worktree-create-fields" hidden>
+        <label>New branch<input name="branch" placeholder="swarm/my-feature" spellcheck="false"></label>
+        <p class="hint">The selected folder must be a Git worktree. Swarm creates the branch in a new sibling folder and never switches the selected folder.</p>
+        <p class="worktree-preview">Destination: <code id="worktree-destination">Choose a folder and branch</code></p>
+      </div>
+      <label>Model<select name="model"><option value="">Loading Pi models…</option></select></label>
+      <p id="model-selection-hint" class="hint picker-hint">Models are read from the Pi configuration available to this server.</p>
       <p class="form-error" role="alert"></p>
       <footer class="dialog-footer"><button type="button" data-close>Cancel</button><button class="primary" type="submit">Launch agent ↗</button></footer>
     </form>
+  </dialog>
+
+  <dialog id="folder-dialog" class="wide-dialog">
+    <header class="dialog-head"><div><div class="eyebrow">SERVER FILESYSTEM</div><h2>Select working folder</h2></div><button type="button" class="icon-button" data-close aria-label="Close">×</button></header>
+    <p class="hint">This browser shows directories visible to the machine running Swarm.</p>
+    <div class="folder-browser-toolbar"><button id="folder-parent" type="button">↑ Parent</button><code id="folder-browser-path"></code></div>
+    <div id="folder-browser-list" class="folder-browser-list" role="listbox" aria-label="Server folders"></div>
+    <p id="folder-browser-message" class="form-error" role="alert"></p>
+    <footer class="dialog-footer"><button type="button" data-close>Cancel</button><button id="select-folder" class="primary" type="button">Select this folder</button></footer>
   </dialog>
 
   <dialog id="adopt-dialog" class="wide-dialog">
@@ -117,12 +134,17 @@
       <section class="tool-input-compact-section" aria-labelledby="tool-input-compact-heading">
         <div class="tool-input-compact-head"><div><h3 id="tool-input-compact-heading">Tool input compaction</h3><p id="tool-input-compact-availability" class="hint"></p></div><button id="compact-tool-inputs" type="button">Compact tool inputs</button></div>
         <p class="hint tool-input-compact-description">Shorten completed tool-call inputs without model calls. Tool outputs are preserved.</p>
+        <label class="checkbox"><input id="revert-allow-history-loss" name="allow_history_loss" type="checkbox">Allow discarding history added since compaction</label>
+        <p class="hint">When checked, revert replaces the current session with the original archive, removing newer history and other changes from the active session. The entire current session is backed up first.</p>
+        <button id="revert-tool-input-compaction" type="button" disabled>Revert tool-input compaction</button>
+        <p id="tool-input-revert-hint" class="hint">By default, revert refuses if the session has changed since compaction.</p>
         <div id="tool-input-compact-status" class="meta-compact-status" aria-live="polite" hidden>
           <p><strong id="tool-input-compact-state"></strong></p>
           <p id="tool-input-compact-result" hidden><span id="tool-input-compact-count"></span> completed call inputs compacted · estimated <span id="tool-input-compact-savings"></span> tokens saved</p>
           <p id="tool-input-compact-error" class="meta-compact-error" hidden></p>
           <p id="tool-input-compact-archive-row" hidden>Original archive: <code id="tool-input-compact-archive"></code></p>
           <p id="tool-input-compact-directory-row" hidden>Result directory: <code id="tool-input-compact-directory"></code></p>
+          <p id="tool-input-revert-backup-row" hidden>Session backup before revert: <code id="tool-input-revert-backup"></code></p>
         </div>
       </section>
       <p id="forget-explanation" class="hint forget-explanation">Forget stops any remaining Swarm-owned process and removes the card. Saved session history stays in its current location.</p>
