@@ -60,6 +60,8 @@ class Agent(BaseModel):
     repository: str = ""
     branch: str = ""
     model: str | None = None
+    parent_id: UUID | None = None
+    spawn_state: str | None = None
     pid: int | None = Field(default=None, gt=0)
     session_id: str | None = None
     session_file: str | None = None
@@ -89,12 +91,19 @@ class CreateAgent(BaseModel):
     repository: str = ""
     branch: str = ""
     create_worktree: bool = False
+    automatic_worktree_path: bool = False
     model: str | None = None
 
     @model_validator(mode="after")
     def worktree_requirements(self) -> CreateAgent:
-        if self.create_worktree and (not self.repository or not self.branch):
-            raise ValueError("creating a worktree requires a local repository and new branch")
+        if not self.create_worktree:
+            if self.automatic_worktree_path:
+                raise ValueError("automatic_worktree_path requires create_worktree")
+            return self
+        if not self.branch:
+            raise ValueError("creating a worktree requires a new branch")
+        if not self.automatic_worktree_path and not self.repository:
+            raise ValueError("creating a worktree requires a local repository")
         return self
 
 

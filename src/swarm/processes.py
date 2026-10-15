@@ -19,8 +19,9 @@ from .store import Store
 
 
 class Processes:
-    def __init__(self, store: Store, pi: str = "pi"):
+    def __init__(self, store: Store, pi: str = "pi", api_url: str = "http://127.0.0.1:8787"):
         self.store = store
+        self.api_url = api_url
         digest = hashlib.sha256(str(store.home).encode()).hexdigest()[:16]
         self.socket = f"swarm-{digest}"
         self.adapters: dict[str, Adapter] = {"pi": PiAdapter(pi)}
@@ -45,9 +46,16 @@ class Processes:
         if not agent.managed or not shutil.which("tmux"):
             return False
         result = self.run(
-            "display-message", "-p", "-t", self.target(agent) + ":0.0", "#{pane_dead}", check=False
+            "display-message",
+            "-p",
+            "-t",
+            self.target(agent) + ":0.0",
+            "#{pane_dead}|#{pane_start_command}",
+            check=False,
         )
-        return result.returncode == 0 and result.stdout.strip() == "0"
+        dead, _, command = result.stdout.strip().partition("|")
+        # A crash between new-session and respawn-pane must not strand a placeholder.
+        return result.returncode == 0 and dead == "0" and command.strip("\\\"'") != "sleep 86400"
 
     def pid(self, agent: Agent) -> int | None:
         result = self.run(
@@ -78,6 +86,8 @@ class Processes:
             "SWARM_AGENT_FILE": str(self.store.path(agent.id)),
             "SWARM_PYTHON": sys.executable,
             "SWARM_SKILL": str(SKILL),
+            "SWARM_API_URL": self.api_url,
+            "SWARM_PARENT_ID": str(agent.parent_id) if agent.parent_id else "",
             "TERM": "xterm-256color",
         }
         # tmux's server may predate refreshed credentials. Set this session's environment.

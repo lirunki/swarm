@@ -473,3 +473,127 @@ def test_revert_restart_reconciles_commit_without_rewriting(app_agent, replaced)
         assert current.tool_input_compaction["status"] == ("reverted" if replaced else "failed")
         assert path.read_bytes() == (original if replaced else compacted)
         assert not current.auto_resume
+
+
+@pytest.mark.parametrize("explicit_false", [False, True])
+@pytest.mark.parametrize("repeat_noop", [False, True])
+def test_history_loss_override_is_opt_in_and_backs_up_new_history(
+    app_agent, explicit_false, repeat_noop
+):
+    app, agent, path, _, _ = app_agent
+    original = path.read_bytes()
+    with TestClient(app) as client:
+        root = f"/api/agents/{agent.id}"
+        compact = client.post(root + "/compact-tool-inputs", json={}).json()
+        records = [json.loads(line) for line in path.read_text().splitlines()]
+        records.append(
+            {
+                "type": "message",
+                "id": uuid4().hex[:8],
+                "parentId": records[-1]["id"],
+                "timestamp": "2026-10-15T00:00:00Z",
+                "message": {
+                    "role": "user",
+                    "content": "New history to retain in backup, not in restored session",
+                },
+            }
+        )
+        newer = ("\n".join(encode(r) for r in records) + "\n").encode()
+        path.write_bytes(newer)
+        if repeat_noop:
+            noop = client.post(root + "/compact-tool-inputs", json={}).json()
+            assert noop["status"] == "unchanged" and noop["archive"] == compact["archive"]
+        url = root + "/revert-tool-input-compaction"
+        refused = client.post(url, json={"allow_history_loss": False} if explicit_false else {})
+        assert refused.status_code == 409 and path.read_bytes() == newer
+        response = client.post(url, json={"allow_history_loss": True})
+        assert response.status_code == 200, response.text
+        report = response.json()
+        assert report["status"] == "reverted" and report["history_discarded"]
+        assert report["allow_history_loss"] and report["revert_from_sha256"] == digest(newer)
+        assert path.read_bytes() == original
+        assert Path(report["compacted_backup"]).read_bytes() == newer
+        assert Path(compact["archive"]).read_bytes() == original
+        assert not app.state.controller.store.get(agent.id).auto_resume
+
+
+@pytest.mark.parametrize("value", ["true", "false", 1, 0, None, [], {}])
+def test_history_loss_api_requires_a_real_boolean(app_agent, value):
+    app, agent, path, _, _ = app_agent
+    before = path.read_bytes()
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/agents/{agent.id}/revert-tool-input-compaction",
+            json={"allow_history_loss": value},
+        )
+        assert response.status_code == 422
+        assert path.read_bytes() == before
+
+
+def test_override_still_refuses_writes_after_backup(app_agent, monkeypatch):
+    import swarm.tool_inputs as module
+
+    app, agent, path, _, _ = app_agent
+    original = path.read_bytes()
+    with TestClient(app) as client:
+        root = f"/api/agents/{agent.id}"
+        compact = client.post(root + "/compact-tool-inputs", json={}).json()
+        newer = path.read_bytes() + b"\n"
+        path.write_bytes(newer)
+        real_write = module.atomic_write
+
+        def race(target, content):
+            real_write(target, content)
+            if target.name.startswith("compacted-before-revert-"):
+                path.write_bytes(newer + b"\n")
+
+        monkeypatch.setattr(module, "atomic_write", race)
+        result = client.post(
+            root + "/revert-tool-input-compaction", json={"allow_history_loss": True}
+        )
+        assert result.status_code == 409 and "changed during revert" in result.json()["detail"]
+        report = app.state.controller.store.get(agent.id).tool_input_compaction
+        assert report["status"] == "failed" and not report["history_discarded"]
+        assert Path(report["compacted_backup"]).read_bytes() == newer
+        assert path.read_bytes() == newer + b"\n"
+        assert Path(compact["archive"]).read_bytes() == original
+
+
+@pytest.mark.parametrize("damage", ["archive", "identity"])
+def test_override_does_not_bypass_integrity_checks(app_agent, damage):
+    app, agent, path, _, _ = app_agent
+    with TestClient(app) as client:
+        root = f"/api/agents/{agent.id}"
+        compact = client.post(root + "/compact-tool-inputs", json={}).json()
+        if damage == "archive":
+            Path(compact["archive"]).write_bytes(b"tampered archive")
+        else:
+            lines = path.read_text().splitlines()
+            header = json.loads(lines[0])
+            header["id"] = str(uuid4())
+            path.write_text(encode(header) + "\n" + "\n".join(lines[1:]) + "\n")
+        before = path.read_bytes()
+        result = client.post(
+            root + "/revert-tool-input-compaction", json={"allow_history_loss": True}
+        )
+        assert result.status_code == 400 and path.read_bytes() == before
+
+
+def test_history_loss_audit_survives_interrupted_publish(app_agent):
+    app, agent, path, _, _ = app_agent
+    original = path.read_bytes()
+    with TestClient(app) as client:
+        compact = client.post(f"/api/agents/{agent.id}/compact-tool-inputs", json={}).json()
+    newer_hash = digest(path.read_bytes() + b"\n")
+    report = compact | {
+        "status": "running",
+        "operation": "revert",
+        "allow_history_loss": True,
+        "revert_from_sha256": newer_hash,
+        "history_discarded": False,
+    }
+    app.state.tool_input_compactor.save(agent.id, report)
+    path.write_bytes(original)
+    with TestClient(app):
+        recovered = app.state.controller.store.get(agent.id).tool_input_compaction
+        assert recovered["status"] == "reverted" and recovered["history_discarded"]

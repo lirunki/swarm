@@ -4,26 +4,32 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import sys
+import time
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import UUID
 
 from anyio import CancelScope
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .controller import Controller
+from .discovery import browse_folders, discover_models
 from .importers.grok import GrokImportRequest, GrokSessions
 from .meta_compact import MetaCompactor, MetaCompactRequest, require_not_busy
 from .models import AgentPatch, CreateAgent, WakeRequest
+from .orchestration import ChildMessage, ChildStop, Orchestrator, OwnershipError, SpawnRequest
 from .processes import Processes
 from .sessions import AdoptRequest, Sessions
 from .store import Store
 from .terminal import bridge
-from .tool_inputs import ToolInputCompactor
+from .tool_inputs import RevertToolInputsRequest, ToolInputCompactor
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -37,6 +43,18 @@ def same_origin(headers) -> bool:
     return parsed.scheme in {"http", "https"} and parsed.netloc == headers.get("host")
 
 
+def restart_process() -> None:
+    """Replace this controller process after its HTTP response has been sent."""
+    time.sleep(0.35)
+    argv = list(sys.argv)
+    script = Path(argv[0])
+    if script.name == "__main__.py" and script.parent.name == "swarm":
+        command = [sys.executable, "-m", "swarm", *argv[1:]]
+    else:
+        command = [sys.executable, *argv]
+    os.execv(sys.executable, command)
+
+
 def create_app(
     home: Path,
     pi: str = "pi",
@@ -44,10 +62,13 @@ def create_app(
     session_roots: list[Path] | None = None,
     allowed_hosts: list[str] | None = None,
     grok_session_roots: list[Path] | None = None,
+    api_url: str = "http://127.0.0.1:8787",
+    restart_action: Callable[[], None] = restart_process,
 ) -> FastAPI:
     store = Store(home)
-    processes = Processes(store, pi)
+    processes = Processes(store, pi, api_url)
     controller = Controller(store, processes)
+    orchestration = Orchestrator(controller)
     meta_compactor = MetaCompactor(controller, pi)
     tool_input_compactor = ToolInputCompactor(meta_compactor)
     sessions = Sessions(store, session_roots)
@@ -63,7 +84,9 @@ def create_app(
     async def monitor() -> None:
         while True:
             try:
-                if await asyncio.to_thread(controller.tick):
+                changed = await asyncio.to_thread(controller.tick)
+                coordinated = await asyncio.to_thread(orchestration.tick)
+                if changed or coordinated:
                     await broadcast()
             except Exception:
                 log.exception("Registry monitor failed; retrying on next tick")
@@ -72,6 +95,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         with store.controller_lock():
+            await asyncio.to_thread(orchestration.recover)
             await asyncio.to_thread(tool_input_compactor.recover)
             await asyncio.to_thread(meta_compactor.recover)
             if recover:
@@ -89,6 +113,7 @@ def create_app(
 
     app = FastAPI(title="Swarm", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.controller = controller
+    app.state.orchestration = orchestration
     app.state.meta_compactor = meta_compactor
     app.state.tool_input_compactor = tool_input_compactor
     app.state.sessions = sessions
@@ -115,6 +140,10 @@ def create_app(
     async def not_found(request, exc):
         return JSONResponse({"detail": str(exc)}, status_code=404)
 
+    @app.exception_handler(OwnershipError)
+    async def ownership_error(request: Request, exc: OwnershipError):
+        return JSONResponse({"detail": str(exc)}, status_code=403)
+
     @app.exception_handler(ValueError)
     async def bad_request(request, exc):
         return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -131,6 +160,21 @@ def create_app(
     def state():
         controller.refresh()
         return controller.state
+
+    @app.post("/api/controller/restart", status_code=202)
+    async def restart_controller(background_tasks: BackgroundTasks):
+        # Starlette starts background tasks only after sending the response. The
+        # in-place exec keeps the controller PID while tmux-owned agents continue.
+        background_tasks.add_task(restart_action)
+        return {"restarting": True}
+
+    @app.get("/api/config/models")
+    async def models():
+        return await asyncio.to_thread(discover_models, pi)
+
+    @app.get("/api/folders")
+    async def folders(path: str | None = None):
+        return await asyncio.to_thread(browse_folders, path)
 
     @app.post("/api/agents", status_code=201)
     async def create(request: CreateAgent):
@@ -151,6 +195,48 @@ def create_app(
         await broadcast()
         return result
 
+    @app.post("/api/agents/{parent_id}/children", status_code=201)
+    async def spawn_child(parent_id: UUID, request: SpawnRequest):
+        result = await asyncio.to_thread(orchestration.spawn, str(parent_id), request)
+        await broadcast()
+        return result
+
+    @app.get("/api/agents/{parent_id}/children")
+    async def children(parent_id: UUID):
+        return await asyncio.to_thread(orchestration.children, str(parent_id))
+
+    @app.get("/api/agents/{parent_id}/children/{child_id}")
+    async def child_status(parent_id: UUID, child_id: UUID):
+        return await asyncio.to_thread(orchestration.status, str(parent_id), str(child_id))
+
+    @app.post("/api/agents/{parent_id}/children/{child_id}/message")
+    async def child_message(parent_id: UUID, child_id: UUID, request: ChildMessage):
+        return await asyncio.to_thread(
+            orchestration.message, str(parent_id), str(child_id), request
+        )
+
+    @app.post("/api/agents/{parent_id}/children/{child_id}/wake")
+    async def child_wake(parent_id: UUID, child_id: UUID, request: WakeRequest):
+        result = await asyncio.to_thread(
+            orchestration.wake, str(parent_id), str(child_id), request.message
+        )
+        await broadcast()
+        return result
+
+    @app.post("/api/agents/{parent_id}/children/{child_id}/stop")
+    async def child_stop(parent_id: UUID, child_id: UUID, request: ChildStop):
+        result = await asyncio.to_thread(
+            orchestration.stop, str(parent_id), str(child_id), request.force
+        )
+        await broadcast()
+        return result
+
+    @app.post("/api/agents/{parent_id}/children/{child_id}/wait")
+    async def child_wait(parent_id: UUID, child_id: UUID):
+        result = await asyncio.to_thread(orchestration.wait, str(parent_id), str(child_id))
+        await broadcast()
+        return result
+
     @app.post("/api/agents/{agent_id}/meta-compact", status_code=202)
     async def meta_compact(agent_id: UUID, request: MetaCompactRequest):
         job = await asyncio.to_thread(meta_compactor.start, str(agent_id), request)
@@ -166,8 +252,13 @@ def create_app(
         return result
 
     @app.post("/api/agents/{agent_id}/revert-tool-input-compaction")
-    async def revert_tool_input_compaction(agent_id: UUID):
-        result = await asyncio.to_thread(tool_input_compactor.revert, str(agent_id))
+    async def revert_tool_input_compaction(
+        agent_id: UUID, request: RevertToolInputsRequest | None = None
+    ):
+        options = request or RevertToolInputsRequest()
+        result = await asyncio.to_thread(
+            tool_input_compactor.revert, str(agent_id), options.allow_history_loss
+        )
         await asyncio.to_thread(controller.refresh)
         await broadcast()
         return result

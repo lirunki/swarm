@@ -11,6 +11,8 @@ import shlex
 from pathlib import Path
 from uuid import uuid4
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from .meta_compact import MetaCompactor, digest, read_source, session_context
 from .models import now
 from .paths import agent_path
@@ -19,6 +21,11 @@ from .store import Store, atomic_write
 log = logging.getLogger(__name__)
 LOOKUP_ID = re.compile(r"toolrun_([0-9a-f]{32})_([0-9a-f]{16})")
 GUIDE_TYPE = "swarm.tool_input_archive"
+
+
+class RevertToolInputsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    allow_history_loss: bool = Field(default=False, strict=True)
 
 
 def encode(value) -> str:
@@ -387,8 +394,13 @@ class ToolInputCompactor:
                     isinstance(previous, dict)
                     and previous.get("archive")
                     and previous.get("source") == str(path)
-                    and previous.get("replacement_sha256") == digest(data)
-                    and previous.get("status") != "reverted"
+                    and (
+                        previous.get("status") in {"completed", "unchanged"}
+                        or (
+                            previous.get("status") == "failed"
+                            and previous.get("operation") == "revert"
+                        )
+                    )
                 ):
                     for key in (
                         "id",
@@ -451,8 +463,8 @@ class ToolInputCompactor:
                     raise
             return report
 
-    def revert(self, agent_id: str) -> dict:
-        """Restore an unchanged compacted snapshot, never discard newer history."""
+    def revert(self, agent_id: str, allow_history_loss: bool = False) -> dict:
+        """Restore the archive; discard pre-existing changes only with explicit consent."""
         with self.controller.lock:
             agent = self.store.get(agent_id)
             path = self.guard.eligible(agent)
@@ -479,7 +491,9 @@ class ToolInputCompactor:
             ):
                 raise ValueError("Compaction archive does not belong to this session path")
             current = read_source(path)
-            if digest(current) != report.get("replacement_sha256"):
+            current_sha256 = digest(current)
+            history_changed = current_sha256 != report.get("replacement_sha256")
+            if history_changed and not allow_history_loss:
                 raise RuntimeError(
                     "Session changed since tool-input compaction. Revert refused "
                     "to preserve newer history; the original archive is still available."
@@ -502,6 +516,9 @@ class ToolInputCompactor:
                 error=None,
                 compacted_backup=str(backup),
                 revert_started_at=now().isoformat(),
+                allow_history_loss=allow_history_loss,
+                history_discarded=False,
+                revert_from_sha256=current_sha256,
             )
             self.store.update(agent.id, {"auto_resume": False, "wake_at": None, "pid": None})
             self.save(agent.id, report)
@@ -509,17 +526,26 @@ class ToolInputCompactor:
                 if self.controller.processes.alive(agent):
                     raise RuntimeError("Agent restarted during revert")
                 self.guard.check_external(agent)
-                if digest(read_source(path)) != report["replacement_sha256"]:
+                # Consent applies only to the snapshot we backed up, never concurrent writes.
+                if digest(read_source(path)) != current_sha256:
                     raise RuntimeError("Session changed during revert; refusing to overwrite")
                 atomic_write(path, original)
-                report.update(status="reverted", reverted_at=now().isoformat())
+                report.update(
+                    status="reverted",
+                    reverted_at=now().isoformat(),
+                    history_discarded=history_changed,
+                )
                 self.save(agent.id, report)
             except Exception as exc:
                 try:
                     restored = digest(read_source(path)) == report["source_sha256"]
                 except (OSError, ValueError):
                     restored = False
-                report.update(status="reverted" if restored else "failed", error=str(exc))
+                report.update(
+                    status="reverted" if restored else "failed",
+                    error=str(exc),
+                    history_discarded=restored and history_changed,
+                )
                 if restored:
                     report["reverted_at"] = now().isoformat()
                 self.save(agent.id, report)
@@ -545,8 +571,13 @@ class ToolInputCompactor:
                         else "Interrupted before replacement; inspect the "
                         "session and retained backups before retrying.",
                     )
-                    if reverting and replaced:
-                        job["reverted_at"] = now().isoformat()
+                    if reverting:
+                        job["history_discarded"] = replaced and (
+                            job.get("revert_from_sha256", job.get("replacement_sha256"))
+                            != job.get("replacement_sha256")
+                        )
+                        if replaced:
+                            job["reverted_at"] = now().isoformat()
                 except (OSError, ValueError, KeyError) as exc:
                     job.update(status="failed", error=str(exc))
                 self.store.update(agent.id, {"auto_resume": False, "wake_at": None})

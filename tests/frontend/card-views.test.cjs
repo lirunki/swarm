@@ -11,18 +11,14 @@ function memoryStorage() {
   return {values, getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value)};
 }
 
-test('automatic view follows activity and actual process liveness', () => {
-  for (const status of ['running', 'waiting']) {
-    assert.equal(defaultCompact(agent(status, true)), false);
-    assert.equal(defaultCompact(agent(status, false)), true);
-  }
-  for (const status of ['idle', 'dormant', 'done']) {
+test('org chart defaults to compact tiles regardless of state or liveness', () => {
+  for (const status of ['running', 'waiting', 'idle', 'dormant', 'done']) {
     for (const alive of [true, false]) assert.equal(defaultCompact(agent(status, alive)), true);
   }
   const views = new CardViews(() => memoryStorage());
-  assert.equal(views.isCompact(home, agent('running')), false);
+  assert.equal(views.isCompact(home, agent('running')), true);
   assert.equal(views.isCompact(home, agent('done')), true);
-  assert.equal(views.isCompact(home, agent('waiting')), false);
+  assert.equal(views.isCompact(home, agent('waiting')), true);
 });
 
 test('explicit expanded=false and compact=true preferences survive updates and reloads', () => {
@@ -34,7 +30,7 @@ test('explicit expanded=false and compact=true preferences survive updates and r
   views.setCompact(home, 'agent-1', true);
   assert.equal(views.isCompact(home, agent('running')), true);
   assert.equal(new CardViews(() => storage).isCompact(home, agent('waiting')), true);
-  assert.equal(views.isCompact('/registry/two', agent('running')), false);
+  assert.equal(views.isCompact('/registry/two', agent('running')), true);
 });
 
 test('automatic defaults are not persisted as manual overrides', () => {
@@ -52,11 +48,11 @@ test('blocked reads, malformed storage and denied writes do not break controls',
     assert.equal(views.isCompact(home, agent('done')), false);
   }
   const blocked = new CardViews(() => { throw Error('storage blocked'); });
-  assert.equal(blocked.isCompact(home, agent('running')), false);
+  assert.equal(blocked.isCompact(home, agent('running')), true);
   blocked.setCompact(home, 'agent-1', true);
   assert.equal(blocked.isCompact(home, agent('running')), true);
   blocked.forget(home, 'agent-1');
-  assert.equal(blocked.isCompact(home, agent('running')), false);
+  assert.equal(blocked.isCompact(home, agent('running')), true);
   assert.throws(() => blocked.setCompact(home, 'agent-1', 'false'), TypeError);
 });
 
@@ -98,7 +94,8 @@ function renderer() {
   const storage = memoryStorage(), calls = [];
   const context = vm.createContext({
     document: {createElement: tag => new Element(tag), createTextNode: value => new Text(value)},
-    state: {home}, cardViews: new CardViews(() => storage), SwarmCardViews: {applyCardView},
+    state: {home, agents: []}, cardViews: new CardViews(() => storage), SwarmCardViews: {applyCardView},
+    agentById: id => context.state.agents.find(a => a.id === id),
     metaCompactingId: null, toolInputCompactingId: null,
     labels: {running: 'Running', waiting: 'Waiting for input', idle: 'Idle', dormant: 'Dormant', done: 'Done'},
     since: () => 'just now', openTerminal: id => calls.push(['terminal', id]), editAgent: id => calls.push(['edit', id]),
@@ -121,11 +118,15 @@ test('compact renderer exposes only summary and toggle, expanded form restores a
   assert.equal(toggle.getAttribute('aria-expanded'), 'false');
   assert.match(toggle.getAttribute('aria-label'), /Expand card for Researcher/);
   assert.match(toggle.getAttribute('aria-controls'), /card-details-agent-1 card-actions-agent-1/);
-  assert.match(visibleText(card), /Researcher/); assert.match(visibleText(card), /Track the PR/); assert.match(visibleText(card), /Done/);
-  assert.doesNotMatch(visibleText(card), /Checking CI|\/workspace|Checkpoint|Terminal|Example error|Example reason/);
+  assert.match(visibleText(card), /Researcher/); assert.match(visibleText(card), /Done/);
+  assert.doesNotMatch(visibleText(card), /Track the PR|Checking CI|\/workspace|Checkpoint|Terminal|Example error|Example reason/);
+  assert.match(card.title, /Activity: Checking CI/);
+  assert.match(find(card, 'card-identity').childNodes[0].title, /Checking CI/);
+  assert.equal(toggle.getAttribute('aria-describedby'), 'card-activity-agent-1');
   toggle.click();
   assert.equal(toggle.getAttribute('aria-expanded'), 'true');
   assert.match(visibleText(card), /Checking CI/); assert.match(visibleText(card), /\/workspace/);
+  assert.match(visibleText(card), /Track the PR/);
   for (const text of ['Terminal ↗', 'Edit', 'Wake', 'Stop']) {
     const action = walk(card).find(el => el.tagName === 'BUTTON' && el.textContent === text);
     assert.ok(action, text); action.click();
@@ -198,16 +199,16 @@ test('tool input compaction has a separate safe report UI and blocks Wake while 
   wake.click(); assert.deepEqual(calls, []);
 });
 
-function toolInputDialog({confirmResult = true, reject = false} = {}) {
+function toolInputDialog({confirmResult = true, reject = false, allowHistoryLoss = false} = {}) {
   const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
   const calls = [], errors = new Element('p'), a = fullAgent('idle', false);
   const form = {querySelector: selector => selector === '.form-error' ? errors : null};
-  const dialog = {open: true};
+  const dialog = {open: true}, historyLoss = {checked: allowHistoryLoss};
   const context = vm.createContext({
     editId: a.id, metaCompactingId: null, toolInputCompactingId: null, state: {agents: [a]},
     agentById: id => context.state.agents.find(record => record.id === id),
     compactionRunning: record => record?.meta_compaction?.status === 'running' || record?.tool_input_compaction?.status === 'running',
-    $: (selector, root) => root ? root.querySelector(selector) : selector === '#edit-form' ? form : selector === '#edit-dialog' ? dialog : null,
+    $: (selector, root) => root ? root.querySelector(selector) : selector === '#edit-form' ? form : selector === '#edit-dialog' ? dialog : selector === '#revert-allow-history-loss' ? historyLoss : null,
     confirm: text => { calls.push(['confirm', text]); return confirmResult; },
     api: async (url, method, body) => { calls.push(['api', url, method, body]); if (reject) throw Error('<server failure>'); return {status: 'completed', calls_compacted: 7, estimated_tokens_saved: 321, archive: '/archive/original.jsonl'}; },
     updateEditAvailability: () => calls.push(['availability']), render: () => calls.push(['render']),
@@ -281,9 +282,26 @@ test('confirmed revert uses dedicated endpoint and retains restored status', asy
   for (const phrase of ['backed up first', 'newer history', 'No model calls', 'stays stopped']) assert.ok(confirmation.includes(phrase), phrase);
   const request = t.calls.find(call => call[0] === 'api');
   assert.equal(request[1], '/api/agents/agent-1/revert-tool-input-compaction');
-  assert.equal(request[2], 'POST'); assert.equal(Object.keys(request[3]).length, 0);
+  assert.equal(request[2], 'POST'); assert.equal(request[3].allow_history_loss, false);
   assert.equal(t.agent.tool_input_compaction.status, 'reverted');
   assert.equal(t.context.toolInputCompactingId, null);
+});
+
+test('history-loss checkbox requires explicit opt-in and shows destructive confirmation', async () => {
+  const t = withRevertArchive(toolInputDialog({allowHistoryLoss: true}));
+  await t.context.revertToolInputs();
+  const confirmation = t.calls.find(call => call[0] === 'confirm')[1];
+  assert.match(confirmation, /WARNING: You enabled history loss/);
+  assert.match(confirmation, /retained only in the backup/);
+  assert.equal(t.calls.find(call => call[0] === 'api')[3].allow_history_loss, true);
+  const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
+  const tag = html.match(/<input[^>]+id="revert-allow-history-loss"[^>]*>/)[0];
+  assert.doesNotMatch(tag, /\bchecked\b/);
+  const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
+  assert.match(source, /revert-allow-history-loss'\)\.checked = false/);
+  const canceled = withRevertArchive(toolInputDialog({allowHistoryLoss: true, confirmResult: false}));
+  await canceled.context.revertToolInputs();
+  assert.equal(canceled.calls.filter(call => call[0] === 'api').length, 0);
 });
 
 test('cancelled, live, busy and unavailable reverts make no API calls', async () => {
@@ -306,7 +324,8 @@ test('revert errors are plain text and release compaction interlock', async () =
 });
 
 test('manual renderer choice survives new state snapshots and fake reload', () => {
-  const {render, storage} = renderer();
+  const {render, storage, context} = renderer();
+  context.cardViews.setCompact(home, 'agent-1', false);
   const card = render(fullAgent()); find(card, 'card-toggle').click();
   assert.equal(render(fullAgent('waiting')).classList.contains('is-compact'), true);
   assert.equal(new CardViews(() => storage).isCompact(home, fullAgent()), true);
@@ -317,7 +336,7 @@ test('manual renderer choice survives new state snapshots and fake reload', () =
 test('rendered untrusted names/goals remain text and new helper loads before the app', () => {
   const {render} = renderer();
   const a = fullAgent('idle'); a.name = '<script>bad()</script>'; a.goal = '<img src=x onerror=bad()>';
-  const card = render(a);
+  const card = render(a); find(card, 'card-toggle').click();
   assert.ok(visibleText(card).includes(a.name)); assert.ok(visibleText(card).includes(a.goal));
   assert.equal(walk(card).some(el => ['SCRIPT', 'IMG'].includes(el.tagName)), false);
   const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
@@ -385,4 +404,32 @@ test('server-side active-state rejection keeps the dialog, card and terminal int
   assert.equal(t.dialog.open, true); assert.equal(t.context.state.agents.length, 2);
   assert.equal(t.calls.some(call => ['detach', 'preference', 'close'].includes(call[0])), false);
   assert.equal(t.forget.disabled, true); assert.equal(t.save.disabled, false);
+});
+
+
+test('Collapse all changes display preferences in one storage write', () => {
+  const storage = memoryStorage(); let writes = 0;
+  const original = storage.setItem;
+  storage.setItem = (key, value) => { writes++; original(key, value); };
+  const views = new CardViews(() => storage);
+  views.setCompact(home, 'agent-1', false); writes = 0;
+  const agents = [agent('running'), {...agent('idle'), id: 'agent-2'}];
+  views.setAllCompact(home, agents, true);
+  assert.equal(writes, 1);
+  for (const a of agents) assert.equal(new CardViews(() => storage).isCompact(home, a), true);
+  assert.equal(agents[0].status, 'running'); assert.equal(agents[0].alive, true);
+  const blocked = new CardViews(() => { throw Error('denied'); });
+  blocked.setAllCompact(home, agents, false);
+  assert.equal(blocked.isCompact(home, agents[0]), false);
+});
+
+test('org chart integration loads before app and keeps nested-toggle focus', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
+  assert.ok(html.indexOf('src="/static/org-chart.js"') < html.indexOf('src="/static/app.js"'));
+  assert.match(html, /id="agents" class="agent-grid org-chart"/);
+  assert.match(html, /id="collapse-all"/);
+  assert.match(source, /SwarmOrgChart.buildForest\(state.agents, new Set\(visible.map/);
+  assert.match(source, /chart.querySelectorAll\('.agent-card'\)/);
+  assert.match(source, /cardViews.setAllCompact\(state.home, state.agents, true\)/);
 });
