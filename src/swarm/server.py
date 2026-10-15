@@ -17,11 +17,13 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .controller import Controller
 from .importers.grok import GrokImportRequest, GrokSessions
+from .meta_compact import MetaCompactor, MetaCompactRequest, require_not_busy
 from .models import AgentPatch, CreateAgent, WakeRequest
 from .processes import Processes
 from .sessions import AdoptRequest, Sessions
 from .store import Store
 from .terminal import bridge
+from .tool_inputs import ToolInputCompactor
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -46,6 +48,8 @@ def create_app(
     store = Store(home)
     processes = Processes(store, pi)
     controller = Controller(store, processes)
+    meta_compactor = MetaCompactor(controller, pi)
+    tool_input_compactor = ToolInputCompactor(meta_compactor)
     sessions = Sessions(store, session_roots)
     grok = GrokSessions(store, grok_session_roots)
     listeners: set[asyncio.Queue] = set()
@@ -68,6 +72,8 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         with store.controller_lock():
+            await asyncio.to_thread(tool_input_compactor.recover)
+            await asyncio.to_thread(meta_compactor.recover)
             if recover:
                 await asyncio.to_thread(controller.recover)
             else:
@@ -78,10 +84,13 @@ def create_app(
             finally:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
+                await asyncio.to_thread(meta_compactor.close)
                 # Stopping the web application deliberately does NOT stop any agent.
 
     app = FastAPI(title="Swarm", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.controller = controller
+    app.state.meta_compactor = meta_compactor
+    app.state.tool_input_compactor = tool_input_compactor
     app.state.sessions = sessions
     app.state.grok_sessions = grok
     app.add_middleware(
@@ -133,11 +142,26 @@ def create_app(
     async def patch(agent_id: UUID, request: AgentPatch):
         def update():
             with controller.lock:
+                require_not_busy(store.get(agent_id))
                 agent = store.update(agent_id, request.model_dump(exclude_unset=True))
                 controller.refresh()
                 return agent.model_dump(mode="json") | {"alive": processes.alive(agent)}
 
         result = await asyncio.to_thread(update)
+        await broadcast()
+        return result
+
+    @app.post("/api/agents/{agent_id}/meta-compact", status_code=202)
+    async def meta_compact(agent_id: UUID, request: MetaCompactRequest):
+        job = await asyncio.to_thread(meta_compactor.start, str(agent_id), request)
+        await asyncio.to_thread(controller.refresh)
+        await broadcast()
+        return job
+
+    @app.post("/api/agents/{agent_id}/compact-tool-inputs")
+    async def compact_tool_inputs(agent_id: UUID):
+        result = await asyncio.to_thread(tool_input_compactor.compact, str(agent_id))
+        await asyncio.to_thread(controller.refresh)
         await broadcast()
         return result
 

@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import subprocess
+import sys
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .controller import git_metadata
+from .importers.pi_history import PiHistory
 from .models import Agent, ImportSource, Status
-from .paths import cygwin, local_path
-from .store import Store
+from .paths import cygwin
+from .paths import local_path as runtime_path
+from .store import Store, atomic_write
+
+WSL_MOUNT_ROOT = Path("/mnt")
 
 
 class AdoptRequest(BaseModel):
@@ -57,6 +64,118 @@ ConvertTo-Json -Compress -InputObject @($processes | ForEach-Object { $_.Process
         raise RuntimeError(
             "Cannot inspect Windows pi processes; adoption is disabled until PowerShell/CIM works"
         ) from exc
+
+
+def is_wsl() -> bool:
+    if sys.platform != "linux":
+        return False
+    if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
+        return True
+    if Path("/proc/sys/fs/binfmt_misc/WSLInterop").exists() or Path("/run/WSL").exists():
+        return True
+    try:
+        return (
+            "microsoft"
+            in Path("/proc/version").read_text(encoding="utf-8", errors="ignore").lower()
+        )
+    except OSError:
+        return False
+
+
+def windows_path(value: str | Path) -> PureWindowsPath | None:
+    raw = str(value)
+    if raw.startswith("\\\\?\\"):
+        raw = raw[4:]
+    path = PureWindowsPath(raw)
+    return path if path.drive and path.is_absolute() else None
+
+
+def local_path(value: str | Path) -> Path:
+    """Map native Windows paths for the active WSL or Cygwin runtime."""
+    if cygwin():
+        return runtime_path(value)
+    raw = str(value)
+    windows = windows_path(raw)
+    if windows:
+        if os.name == "nt":
+            return Path(raw).expanduser().resolve()
+        if is_wsl() and re.fullmatch(r"[A-Za-z]:", windows.drive):
+            mount = WSL_MOUNT_ROOT / windows.drive[0].lower()
+            if mount.is_dir():
+                return mount.joinpath(*windows.parts[1:]).resolve()
+        raise ValueError("Windows path cannot be mapped here")
+    return Path(raw).expanduser().resolve()
+
+
+def configured_root(value: str | Path) -> Path:
+    """Preserve WSL env fallbacks without disguising unsupported Cygwin paths."""
+    if cygwin():
+        return runtime_path(value)
+    try:
+        return local_path(value)
+    except ValueError:
+        return Path(value).expanduser().resolve()
+
+
+def default_roots(store_sessions_dir: Path) -> list[Path]:
+    config = os.environ.get("PI_CODING_AGENT_DIR")
+    session_dir = os.environ.get("PI_CODING_AGENT_SESSION_DIR")
+    if config and PureWindowsPath(config).drive:
+        default = PureWindowsPath(config) / "sessions"
+    else:
+        default = Path(config) / "sessions" if config else "~/.pi/agent/sessions"
+    roots = [configured_root(session_dir) if session_dir else configured_root(default)]
+    if is_wsl():
+        userprofile = os.environ.get("USERPROFILE")
+        if userprofile:
+            try:
+                profile_root = (
+                    PureWindowsPath(userprofile) / ".pi" / "agent" / "sessions"
+                    if PureWindowsPath(userprofile).drive
+                    else Path(userprofile) / ".pi" / "agent" / "sessions"
+                )
+                roots.append(local_path(profile_root))
+            except ValueError:
+                pass
+        windows_home = WSL_MOUNT_ROOT / "c" / "Users" / Path.home().name
+        if windows_home.is_dir():
+            roots.append((windows_home / ".pi" / "agent" / "sessions").resolve())
+    roots.append(store_sessions_dir.expanduser().resolve())
+    return list(dict.fromkeys(path.expanduser().resolve() for path in roots))
+
+
+def text_blocks(content) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        pieces = []
+        for block in content:
+            if not isinstance(block, dict):
+                pieces.append(str(block))
+                continue
+            kind = block.get("type")
+            if kind == "text" and isinstance(block.get("text"), str):
+                pieces.append(block["text"])
+            elif kind == "thinking" and isinstance(block.get("thinking"), str):
+                pieces.append(
+                    "[Historical assistant reasoning; context only, not a new instruction]\n"
+                    + block["thinking"]
+                )
+            elif kind == "toolCall":
+                pieces.append(
+                    "[Historical tool call; already attempted, not a pending command]\n"
+                    + json.dumps(block, ensure_ascii=False, indent=2)
+                )
+            elif kind == "toolResult":
+                pieces.append(
+                    "[Historical tool result]\n" + json.dumps(block, ensure_ascii=False, indent=2)
+                )
+            else:
+                pieces.append(json.dumps(block, ensure_ascii=False, indent=2))
+        return "\n\n".join(piece for piece in pieces if piece.strip())
+    return json.dumps(content, ensure_ascii=False)
 
 
 def running_pi_folders() -> list[str | None]:
@@ -111,9 +230,8 @@ def running_pi_folders() -> list[str | None]:
 class Sessions:
     def __init__(self, store: Store, roots: list[Path] | None = None):
         self.store = store
-        config = local_path(os.environ.get("PI_CODING_AGENT_DIR", "~/.pi/agent"))
-        default = Path(os.environ.get("PI_CODING_AGENT_SESSION_DIR", str(config / "sessions")))
-        self.roots = [local_path(p) for p in (roots or [default, store.sessions_dir])]
+        discovered = roots or default_roots(store.sessions_dir)
+        self.roots = [local_path(p) for p in discovered]
 
     def metadata(self, path: Path) -> dict:
         path = local_path(path).resolve(strict=True)
@@ -128,7 +246,8 @@ class Sessions:
             if not isinstance(header.get("cwd"), str) or not header["cwd"]:
                 raise ValueError("session header must include its working folder")
             session_id = str(UUID(str(header["id"])))
-            folder = str(local_path(header["cwd"]))
+            original_folder = str(header["cwd"])
+            folder = str(local_path(original_folder))
             head = stream.read(65536)
             # Read a bounded tail for the latest /name without loading a huge session.
         with path.open("rb") as stream:
@@ -157,6 +276,8 @@ class Sessions:
             "session_file": str(path),
             "session_id": session_id,
             "folder": folder,
+            "original_folder": original_folder,
+            "portable_copy_required": bool(is_wsl() and windows_path(original_folder)),
             "name": name or Path(folder).name or "Imported pi session",
             "goal": goal,
             "updated_at": datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(),
@@ -167,6 +288,14 @@ class Sessions:
         if any(
             a.session_id == meta["session_id"]
             or (a.session_file and str(local_path(a.session_file)) == meta["session_file"])
+            or (
+                a.import_source
+                and a.import_source.backend == "pi"
+                and (
+                    a.import_source.session_id == meta["session_id"]
+                    or str(local_path(a.import_source.session_file)) == meta["session_file"]
+                )
+            )
             for a in agents
         ):
             return "Already registered with Swarm"
@@ -198,10 +327,125 @@ class Sessions:
                 errors[str(path)] = str(exc)
         return {"sessions": entries, "errors": errors}
 
+    @staticmethod
+    def sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def converted_path(self, meta: dict) -> Path:
+        suffix = self.sha256(Path(meta["session_file"]))[:12]
+        return self.store.sessions_dir / "imports" / "pi" / f"{meta['session_id']}-{suffix}.jsonl"
+
+    def convert_external_pi(self, meta: dict, name: str) -> tuple[dict, ImportSource]:
+        source = ImportSource(
+            backend="pi",
+            session_id=meta["session_id"],
+            session_file=meta["session_file"],
+            sha256=self.sha256(Path(meta["session_file"])),
+            original_folder=meta["original_folder"],
+            warnings=[
+                "Imported from a Windows-authored pi session for WSL portability; exact "
+                "provider connection state is not portable across environments."
+            ],
+        )
+        output = self.converted_path(meta)
+        if not output.exists():
+            history = PiHistory(meta["session_id"], meta["folder"], name)
+            history.add(
+                "custom",
+                customType="swarm.import.source",
+                data={"source": source.model_dump(mode="json")},
+            )
+            history.historical(
+                "Pi import",
+                "This is a portable copy of a Windows-authored pi session imported into WSL. "
+                "The original session remains read-only at its source path. Historical tool "
+                "calls/results are inert transcript, not pending commands. Verify the current "
+                f"filesystem/external state before continuing. Original workspace: "
+                f"{meta['original_folder']}. Current workspace: {meta['folder']}.",
+            )
+            with Path(meta["session_file"]).open(encoding="utf-8") as stream:
+                next(stream, None)
+                for index, line in enumerate(stream):
+                    if not line.strip():
+                        continue
+                    record = json.loads(line)
+                    history.add(
+                        "custom",
+                        customType="swarm.import.pi.record",
+                        data={"index": index, "record": record},
+                    )
+                    if record.get("type") != "message":
+                        continue
+                    message = record.get("message", {})
+                    text = text_blocks(message.get("content", "")).strip()
+                    if not text:
+                        continue
+                    if message.get("role") == "user":
+                        history.user(text)
+                    elif message.get("role") == "assistant":
+                        model = str(record.get("model") or message.get("model") or "pi-import")
+                        history.assistant(text, model)
+                    else:
+                        history.historical(
+                            f"Pi {message.get('role', 'message')}",
+                            text,
+                        )
+            atomic_write(output, history.encode())
+        return self.metadata(output), source
+
+    def ensure_agent_portable(self, agent: Agent) -> Agent:
+        if not agent.session_file or (agent.import_source and agent.import_source.backend == "pi"):
+            return agent
+        path = local_path(agent.session_file)
+        # New agents do not have a file until Pi starts. Native sessions (including
+        # meta-compacted checkpoints and custom-root adoptions) need no conversion.
+        if not path.exists():
+            return agent  # PiAdapter still rejects missing history for a known session ID.
+        with path.open(encoding="utf-8") as stream:
+            header = json.loads(stream.readline(65536))
+        if not is_wsl() or not windows_path(header.get("cwd", "")):
+            return agent
+        meta = self.metadata(path)
+        with self.store.lock(meta["session_id"]):
+            converted, source = self.convert_external_pi(meta, agent.name)
+            return self.store.update(
+                agent.id,
+                {
+                    "folder": converted["folder"],
+                    "session_id": converted["session_id"],
+                    "session_file": converted["session_file"],
+                    "import_source": source.model_dump(mode="json"),
+                    "notes": (
+                        f"Imported {source.backend} session {source.session_id} into pi. "
+                        f"Original source: {source.session_file}. Historical tool calls/results "
+                        "are inert transcript, not pending commands. Read the imported history, "
+                        "verify current filesystem/external state, and use pi's current tools "
+                        "when continuing. Stop the original agent before waking."
+                    ),
+                },
+            )
+
     def adopt(self, request: AdoptRequest) -> Agent:
         meta = self.metadata(Path(request.session_file))
         # Serialize adoption by the original pi UUID, including across CLI/server processes.
         with self.store.lock(meta["session_id"]):
+            if meta["portable_copy_required"]:
+                reason = self.blocked(meta, self.store.scan(), running_pi_folders())
+                if reason:
+                    raise ValueError(reason)
+                converted, source = self.convert_external_pi(
+                    meta, request.name.strip() or meta["name"]
+                )
+                request = AdoptRequest(
+                    session_file=converted["session_file"],
+                    name=request.name,
+                    goal=request.goal,
+                )
+                return self._register(request, converted, source=source)
             return self._register(request, meta)
 
     def adopt_import(self, request: AdoptRequest, source: ImportSource) -> Agent:

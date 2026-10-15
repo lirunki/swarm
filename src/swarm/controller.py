@@ -9,6 +9,7 @@ import threading
 from pathlib import Path
 
 from .adapters import resume_prompt, session_header
+from .meta_compact import busy, require_not_busy
 from .models import Agent, CreateAgent, Status, now
 from .paths import local_path
 from .processes import Processes
@@ -89,6 +90,10 @@ class Controller:
 
     def _launch(self, agent: Agent, prompt: str | None) -> None:
         try:
+            from .sessions import Sessions
+
+            require_not_busy(agent)
+            agent = Sessions(self.store).ensure_agent_portable(agent)
             pid = self.processes.launch(agent, prompt)
             self.store.update(agent.id, {"pid": pid, "last_error": None})
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
@@ -103,6 +108,7 @@ class Controller:
                     f"{agent.id}.md" in self.store.errors
                     or not agent.managed
                     or not agent.auto_resume
+                    or busy(agent)
                     or agent.status in {Status.done, Status.dormant}
                 ):
                     continue
@@ -115,6 +121,7 @@ class Controller:
     def wake(self, agent_id: str, message: str = "") -> Agent:
         with self.lock:
             agent = self.store.get(agent_id)
+            require_not_busy(agent)
             if not agent.managed:
                 raise ValueError("observed agents must be explicitly adopted before waking")
             prompt = message or resume_prompt(agent)
@@ -141,6 +148,7 @@ class Controller:
     def stop(self, agent_id: str) -> Agent:
         with self.lock:
             agent = self.store.get(agent_id)
+            require_not_busy(agent)
             if not agent.managed:
                 raise ValueError("Swarm cannot stop an externally observed process")
             # Persist intent first; a reboot during stop must not resurrect this process.
@@ -161,6 +169,7 @@ class Controller:
         """Stop an inactive owned worker and unregister it, preserving all history."""
         with self.lock:
             agent = self.store.get(agent_id)
+            require_not_busy(agent)
             alive = self.processes.alive(agent)
             if alive and agent.status == Status.running:
                 raise RuntimeError("Agent is actively running. Stop it before forgetting it.")
@@ -180,7 +189,7 @@ class Controller:
         with self.lock:
             agents = self.store.scan()
             for agent in agents:
-                if f"{agent.id}.md" in self.store.errors:
+                if f"{agent.id}.md" in self.store.errors or busy(agent):
                     continue
                 if (
                     agent.managed
