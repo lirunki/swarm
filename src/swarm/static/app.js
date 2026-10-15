@@ -8,7 +8,7 @@ let state = {agents: [], errors: {}, health: {}, home: ''};
 let filter = 'all', activeTab = 'dashboard', restored = false, stateSocket, reconnectDelay = 1000;
 let selectedSession = null, sessionData = [], wakeId = null, editId = null;
 let selectedGrokSession = null, grokSessionData = [], grokLoadSequence = 0;
-let forgettingAgent = false;
+let forgettingAgent = false, metaCompactingId = null, toolInputCompactingId = null;
 const terminals = new Map();
 const cardViews = new SwarmCardViews.CardViews();
 let toastTimer;
@@ -62,6 +62,11 @@ function metadata(list, label, value) {
   if (!value) return;
   const dt = node('dt', '', label), dd = node('dd', '', String(value)); dd.title = String(value); list.append(dt, dd);
 }
+const metaCompactionRunning = a => a?.meta_compaction?.status === 'running';
+const toolInputCompactionRunning = a => a?.tool_input_compaction?.status === 'running';
+const compactionRunning = a => metaCompactionRunning(a) || toolInputCompactionRunning(a);
+const compactionRequestInFlight = a => !!a && (metaCompactingId === a.id || toolInputCompactingId === a.id);
+const compactionBlocked = a => compactionRunning(a) || compactionRequestInFlight(a);
 function renderCard(a) {
   const card = node('article', 'agent-card'); card.dataset.agentId = a.id;
   const inside = node('div', 'card-inner'), summary = node('header', 'card-summary'), header = node('div', 'card-head');
@@ -104,10 +109,10 @@ function renderCard(a) {
   if (a.last_error) details.append(node('div', 'card-error', a.last_error));
   const foot = node('div', 'card-foot'); foot.id = `card-actions-${a.id}`;
   const runtime = node('span', `runtime${a.alive ? ' online' : ''}`, `${a.alive ? '● Online' : '○ Offline'} · ${since(a.updated_at)}`); runtime.title = a.updated_at;
-  const actions = node('div', 'actions');
+  const actions = node('div', 'actions'), compacting = compactionBlocked(a);
   actions.append(button('Terminal ↗', 'small', () => openTerminal(a.id)), button('Edit', 'small', () => editAgent(a.id)));
   if (a.managed) {
-    actions.append(button('Wake', 'small', () => wakeAgent(a.id)));
+    const wake = button('Wake', 'small', () => wakeAgent(a.id)); wake.disabled = compacting; if (compacting) wake.title = metaCompactionRunning(a) ? 'Meta-compaction is running' : 'Tool input compaction is running'; actions.append(wake);
     if (a.alive || a.auto_resume) actions.append(button('Stop', 'small danger', () => stopAgent(a.id)));
   }
   foot.append(runtime, actions); inside.append(summary, details); card.append(inside, foot);
@@ -141,7 +146,8 @@ function render() {
   const errors = Object.entries(state.errors || {}); $('#registry-errors').hidden = !errors.length;
   $('#error-list').replaceChildren(...errors.map(([file, message]) => node('pre', '', `${file}: ${message}`)));
   for (const terminal of terminals.values()) syncTerminal(terminal);
-  if ($('#edit-dialog').open) updateForgetAvailability();
+  if ($('#edit-dialog').open) updateEditAvailability();
+  if ($('#wake-dialog').open) updateWakeAvailability();
 }
 function activate(id) {
   activeTab = id && terminals.has(id) ? id : 'dashboard';
@@ -158,13 +164,14 @@ function openTerminal(id, focus = true) {
     const pane = node('div', 'terminal-pane'); pane.hidden = true;
     const header = node('div', 'terminal-header');
     const title = node('strong'), info = node('span', 'hint'), connected = node('span', 'hint', 'Detached');
-    header.append(title, info, connected, button('↻ Reconnect', 'small', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); }), button('Wake', 'small', () => wakeAgent(id)), button('Close tab', 'small', () => closeTerminal(id)));
+    const wakeButton = button('Wake', 'small', () => wakeAgent(id));
+    header.append(title, info, connected, button('↻ Reconnect', 'small', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); }), wakeButton, button('Close tab', 'small', () => closeTerminal(id)));
     const surface = node('div', 'terminal-surface'), screen = node('div', 'terminal-screen'), overlay = node('div', 'terminal-overlay');
     surface.append(screen, overlay); pane.append(header, surface); $('#terminals').append(pane);
     const group = node('span', 'tab-group'), tab = button('', 'tab', () => activate(id));
     const tabLabel = node('span', 'tab-label'); tab.append(node('span', '', '›_'), tabLabel);
     group.append(tab, button('×', 'tab-close', () => closeTerminal(id))); $('.tab-close', group).setAttribute('aria-label', 'Close terminal tab'); $('#tabs').append(group);
-    const t = {id, pane, title, info, connected, screen, overlay, group, tab, tabLabel, term: null, fit: null, ws: null, timer: null, closed: false};
+    const t = {id, pane, title, info, connected, wakeButton, screen, overlay, group, tab, tabLabel, term: null, fit: null, ws: null, timer: null, closed: false};
     terminals.set(id, t); syncTerminal(t);
   }
   if (focus) activate(id); else remember();
@@ -187,8 +194,9 @@ function syncTerminal(t) {
   const a = agentById(t.id); if (!a) return;
   t.title.textContent = a.name; t.tabLabel.textContent = a.name;
   t.info.textContent = `${labels[a.status]} · ${a.session_id || 'session pending'} · ${a.folder}`;
+  const compacting = compactionBlocked(a); t.wakeButton.disabled = compacting; t.wakeButton.title = compacting ? 'Session compaction is running' : '';
   if (!a.alive) {
-    overlay(t, 'This agent is offline.', 'Opening a terminal only attaches to a process. Wake the agent explicitly to continue its saved session.', a.managed ? 'Wake agent ↗' : '', a.managed ? () => wakeAgent(t.id) : null);
+    overlay(t, compacting ? 'Session compaction is running.' : 'This agent is offline.', compacting ? 'The saved session is being updated. It stays stopped afterward; wake it explicitly when the job completes.' : 'Opening a terminal only attaches to a process. Wake the agent explicitly to continue its saved session.', a.managed && !compacting ? 'Wake agent ↗' : '', a.managed && !compacting ? () => wakeAgent(t.id) : null);
   } else if (t.term && (!t.ws || t.ws.readyState > 1) && !t.timer) attachTerminal(t);
 }
 function attachTerminal(t) {
@@ -222,20 +230,106 @@ function showDialog(id) { const dlg = $(id); $('.form-error', dlg).textContent =
 function editAgent(id) {
   const a = agentById(id); if (!a) return; editId = id;
   const form = $('#edit-form'); form.elements.name.value = a.name; form.elements.goal.value = a.goal; form.elements.status.value = a.status; form.elements.auto_resume.checked = a.auto_resume;
-  updateForgetAvailability(); showDialog('#edit-dialog');
+  form.elements.meta_model.value = ''; form.elements.overlap_tokens.value = '10000'; form.elements.chunk_count.value = '2'; $('#meta-compact-controls').hidden = true; $('#meta-compact-toggle').textContent = 'Meta-compact…';
+  updateEditAvailability(); showDialog('#edit-dialog');
 }
 function updateForgetAvailability() {
   const a = agentById(editId);
-  const active = a?.alive && a.status === 'running';
-  $('#forget-agent').disabled = forgettingAgent || !a || active;
-  $('#forget-explanation').textContent = !a ? 'This agent is no longer registered.' : active
-    ? 'This agent is actively running. Stop it before forgetting it.'
+  const active = a?.alive && a.status === 'running', compacting = compactionBlocked(a);
+  $('#forget-agent').disabled = forgettingAgent || !a || active || compacting;
+  $('#forget-explanation').textContent = !a ? 'This agent is no longer registered.' : compacting
+    ? 'Forget is disabled while session compaction is running.'
+    : active ? 'This agent is actively running. Stop it before forgetting it.'
     : 'Forget stops any remaining Swarm-owned process and removes the card. Saved session history stays in its current location.';
+}
+function updateEditAvailability() {
+  updateForgetAvailability();
+  const a = agentById(editId), job = a?.meta_compaction, toolJob = a?.tool_input_compaction;
+  const running = metaCompactionRunning(a), toolRunning = toolInputCompactionRunning(a), starting = metaCompactingId === editId, toolStarting = toolInputCompactingId === editId;
+  const blocked = running || toolRunning || starting || toolStarting;
+  const eligible = !!a && a.managed === true && a.backend === 'pi' && !!a.session_file && !a.alive;
+  let availability = 'Available while this managed Pi agent is stopped.';
+  if (!a) availability = 'This agent is no longer registered.';
+  else if (running) availability = 'Compacting the saved session. It will remain stopped when complete.';
+  else if (toolRunning || toolStarting) availability = 'Tool input compaction is running. It will remain stopped when complete.';
+  else if (!a.managed || a.backend !== 'pi') availability = 'Only managed Pi agents can be meta-compacted.';
+  else if (!a.session_file) availability = 'A persisted Pi session is required.';
+  else if (a.alive) availability = 'Stop this agent before meta-compacting its session.';
+  $('#meta-compact-availability').textContent = availability;
+  $('#meta-compact-toggle').disabled = !eligible || blocked;
+  $('#start-meta-compact').disabled = !eligible || blocked;
+  const optionsHidden = $('#meta-compact-controls').hidden;
+  $('#edit-form').elements.meta_model.disabled = blocked || optionsHidden;
+  $('#edit-form').elements.overlap_tokens.disabled = blocked || optionsHidden;
+  $('#edit-form').elements.chunk_count.disabled = blocked || optionsHidden;
+  $('#save-agent').disabled = blocked;
+  const status = $('#meta-compact-status'); status.hidden = !job;
+  if (job) {
+    $('#meta-compact-state').textContent = job.status || 'unknown';
+    $('#meta-compact-stage').textContent = job.stage ? `· ${job.stage}` : '';
+    $('#meta-compact-error').hidden = !job.error; $('#meta-compact-error').textContent = job.error || '';
+    $('#meta-compact-archive-row').hidden = !job.archive; $('#meta-compact-archive').textContent = job.archive || '';
+    $('#meta-compact-directory-row').hidden = !job.directory; $('#meta-compact-directory').textContent = job.directory || '';
+  }
+  let toolAvailability = 'Available while this managed Pi agent is stopped.';
+  if (!a) toolAvailability = 'This agent is no longer registered.';
+  else if (running || starting) toolAvailability = 'Meta-compaction is running. Wait for it to finish.';
+  else if (toolRunning || toolStarting) toolAvailability = 'Compacting completed tool inputs. It will remain stopped when complete.';
+  else if (!a.managed || a.backend !== 'pi') toolAvailability = 'Only managed Pi agents can compact tool inputs.';
+  else if (!a.session_file) toolAvailability = 'A persisted Pi session is required.';
+  else if (a.alive) toolAvailability = 'Stop this agent before compacting tool inputs.';
+  $('#tool-input-compact-availability').textContent = toolAvailability;
+  $('#compact-tool-inputs').disabled = !eligible || blocked;
+  const toolStatus = $('#tool-input-compact-status'); toolStatus.hidden = !toolJob;
+  if (toolJob) {
+    $('#tool-input-compact-state').textContent = toolJob.status || 'unknown';
+    const hasResult = toolJob.status === 'completed' || toolJob.status === 'unchanged' || toolJob.calls_compacted != null || toolJob.estimated_tokens_saved != null;
+    $('#tool-input-compact-result').hidden = !hasResult;
+    $('#tool-input-compact-count').textContent = String(toolJob.calls_compacted ?? 0);
+    $('#tool-input-compact-savings').textContent = String(toolJob.estimated_tokens_saved ?? 0);
+    $('#tool-input-compact-error').hidden = !toolJob.error; $('#tool-input-compact-error').textContent = toolJob.error || '';
+    $('#tool-input-compact-archive-row').hidden = !toolJob.archive; $('#tool-input-compact-archive').textContent = toolJob.archive || '';
+    $('#tool-input-compact-directory-row').hidden = !toolJob.directory; $('#tool-input-compact-directory').textContent = toolJob.directory || '';
+  }
+}
+async function startMetaCompaction() {
+  const id = editId, a = agentById(id), form = $('#edit-form');
+  if (!a || metaCompactingId || toolInputCompactingId || compactionRunning(a) || !a.managed || a.backend !== 'pi' || !a.session_file || a.alive) { updateEditAvailability(); return; }
+  const overlapInput = form.elements.overlap_tokens, chunkInput = form.elements.chunk_count;
+  if (!overlapInput.reportValidity() || !chunkInput.reportValidity()) return;
+  const overlapTokens = Number(overlapInput.value), chunkCount = Number(chunkInput.value), model = form.elements.meta_model.value.trim();
+  if (!Number.isInteger(chunkCount) || chunkCount < 2 || chunkCount > 16) { chunkInput.setCustomValidity('Use a whole number from 2 to 16.'); chunkInput.reportValidity(); chunkInput.setCustomValidity(''); return; }
+  if (!Number.isInteger(overlapTokens) || overlapTokens < 0 || overlapTokens > 100000) { overlapInput.setCustomValidity('Use a whole number from 0 to 100000.'); overlapInput.reportValidity(); overlapInput.setCustomValidity(''); return; }
+  const modelDescription = model || 'the agent/session model (an explicit model is required if none is saved)';
+  if (!confirm(`Meta-compact ${a.name}?\n\nThis summarizes ${chunkCount} chunks separately, then merges them (${chunkCount + 1} Pi stages) using ${modelDescription}. Provider retries may add requests and costs. Summaries are lossy. Each adjacent pair shares approximately ${overlapTokens.toLocaleString()} tokens of overlap (capped for short inputs). Stop any external Pi using this session too.\n\nAfter success, Swarm archives and replaces this tracked file:\n${a.session_file}\n\nThe agent stays stopped until you explicitly Wake it.`)) return;
+  $('.form-error', form).textContent = ''; metaCompactingId = id; updateEditAvailability();
+  try {
+    const job = await api(`/api/agents/${id}/meta-compact`, 'POST', {model: model || null, overlap_tokens: overlapTokens, chunk_count: chunkCount});
+    const current = agentById(id); if (current) current.meta_compaction = job;
+    const message = job.status === 'failed' ? (job.error || 'Meta-compaction failed.') : job.status === 'completed' ? 'Meta-compaction completed.' : 'Meta-compaction started.';
+    toast(message, job.status === 'failed');
+    render(); await refresh();
+  } catch (error) { if (editId === id) $('.form-error', form).textContent = error.message; else toast(error.message, true); }
+  finally { if (metaCompactingId === id) metaCompactingId = null; if ($('#edit-dialog').open) updateEditAvailability(); }
+}
+async function compactToolInputs() {
+  const id = editId, a = agentById(id), form = $('#edit-form');
+  if (!a || metaCompactingId || toolInputCompactingId || compactionRunning(a) || !a.managed || a.backend !== 'pi' || !a.session_file || a.alive) { updateEditAvailability(); return; }
+  if (!confirm(`Compact completed tool inputs for ${a.name}?\n\nNo model calls are made. Long completed tool inputs are replaced by 100-character previews and toolrun IDs. Tool output contents are preserved. Completed tool exchanges become inert history and cannot execute as tool calls.\n\nThe full original session is archived, and the active branch is retained. This agent stays stopped until you explicitly Wake it.\n\nSession:\n${a.session_file}`)) return;
+  $('.form-error', form).textContent = ''; toolInputCompactingId = id; updateEditAvailability();
+  try {
+    const report = await api(`/api/agents/${id}/compact-tool-inputs`, 'POST', {});
+    const current = agentById(id); if (current) current.tool_input_compaction = report;
+    const count = report.calls_compacted ?? 0, savings = report.estimated_tokens_saved ?? 0;
+    toast(report.status === 'unchanged' ? 'Tool inputs were already compact.' : `Compacted ${count} tool inputs; estimated ${savings} tokens saved.`, !!report.error);
+    render(); await refresh();
+  } catch (error) { if (editId === id) $('.form-error', form).textContent = error.message; else toast(error.message, true); }
+  finally { if (toolInputCompactingId === id) toolInputCompactingId = null; if ($('#edit-dialog').open) updateEditAvailability(); }
 }
 async function forgetAgent() {
   const id = editId, a = agentById(id);
   if (!a || forgettingAgent) return;
-  if (a.alive && a.status === 'running') { updateForgetAvailability(); return; }
+  if ((a.alive && a.status === 'running') || compactionBlocked(a)) { updateForgetAvailability(); return; }
   const history = a.session_file ? `Saved session history will be kept at:\n${a.session_file}` : 'Any saved session history will be kept.';
   if (!confirm(`Forget ${a.name}? This stops any remaining Swarm-owned process and removes the dashboard card.\n\n${history}`)) return;
   const form = $('#edit-form'); $('.form-error', form).textContent = '';
@@ -250,11 +344,24 @@ async function forgetAgent() {
     if (editId === id) $('.form-error', form).textContent = error.message;
     else toast(error.message, true);
   }
-  finally { forgettingAgent = false; updateForgetAvailability(); $('[type=submit]', form).disabled = false; }
+  finally { forgettingAgent = false; updateForgetAvailability(); $('[type=submit]', form).disabled = compactionBlocked(agentById(editId)); }
 }
 $('#forget-agent').addEventListener('click', forgetAgent);
+$('#compact-tool-inputs').addEventListener('click', compactToolInputs);
+$('#meta-compact-toggle').addEventListener('click', () => {
+  const controls = $('#meta-compact-controls'); controls.hidden = !controls.hidden;
+  $('#meta-compact-toggle').textContent = controls.hidden ? 'Meta-compact…' : 'Hide options';
+  updateEditAvailability();
+});
+$('#start-meta-compact').addEventListener('click', startMetaCompaction);
+function updateWakeAvailability() {
+  const running = compactionBlocked(agentById(wakeId));
+  $('[type=submit]', $('#wake-form')).disabled = running;
+}
 function wakeAgent(id) {
-  wakeId = id; $('#wake-form').reset(); $('#wake-title').textContent = `Wake ${agentById(id)?.name || 'agent'}`; showDialog('#wake-dialog');
+  const a = agentById(id); if (!a) return;
+  if (compactionBlocked(a)) { toast('Wait for session compaction to finish before waking this agent.', true); return; }
+  wakeId = id; $('#wake-form').reset(); $('#wake-title').textContent = `Wake ${a.name || 'agent'}`; updateWakeAvailability(); showDialog('#wake-dialog');
 }
 async function stopAgent(id) {
   if (!confirm(`Stop ${agentById(id)?.name}? This stops the process and disables automatic restore. Its goal and session are retained.`)) return;
@@ -262,7 +369,10 @@ async function stopAgent(id) {
 }
 async function submit(form, action) {
   const submitButton = $('[type=submit]', form); submitButton.disabled = true; $('.form-error', form).textContent = '';
-  try { await action(); } catch (error) { $('.form-error', form).textContent = error.message; } finally { submitButton.disabled = false; }
+  try { await action(); } catch (error) { $('.form-error', form).textContent = error.message; } finally {
+    submitButton.disabled = false;
+    if (form.id === 'edit-form') updateEditAvailability(); else if (form.id === 'wake-form') updateWakeAvailability();
+  }
 }
 $('#create-form').addEventListener('submit', event => {
   event.preventDefault(); const form = event.currentTarget;
@@ -276,10 +386,12 @@ $('#create-form').addEventListener('submit', event => {
 });
 $('#wake-form').addEventListener('submit', event => {
   event.preventDefault(); const form = event.currentTarget;
+  if (compactionBlocked(agentById(wakeId))) { updateWakeAvailability(); return; }
   submit(form, async () => { const a = await api(`/api/agents/${wakeId}/wake`, 'POST', {message: form.elements.message.value}); $('#wake-dialog').close(); toast(a.last_error || 'Resume instructions sent.', !!a.last_error); await refresh(); });
 });
 $('#edit-form').addEventListener('submit', event => {
   event.preventDefault(); const form = event.currentTarget;
+  if (compactionBlocked(agentById(editId))) { updateEditAvailability(); return; }
   submit(form, async () => { await api(`/api/agents/${editId}`, 'PATCH', {name: form.elements.name.value, goal: form.elements.goal.value, status: form.elements.status.value, auto_resume: form.elements.auto_resume.checked}); $('#edit-dialog').close(); toast('Agent record updated.'); await refresh(); });
 });
 async function loadSessions() {

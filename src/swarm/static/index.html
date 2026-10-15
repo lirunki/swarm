@@ -98,9 +98,36 @@
       <label>Status<select name="status"><option value="running">Running</option><option value="waiting">Waiting for input</option><option value="dormant">Dormant</option><option value="idle">Idle — turn completed</option><option value="done">Done — goal accomplished</option></select></label>
       <label class="checkbox"><input type="checkbox" name="auto_resume">Restore automatically when Swarm starts</label>
       <p class="hint">Changing a status only updates the record; it does not start, pause, or stop the process. Use Wake or Stop for process control.</p>
+      <section class="meta-compact-section" aria-labelledby="meta-compact-heading">
+        <div class="meta-compact-head"><div><h3 id="meta-compact-heading">Meta-compaction</h3><p id="meta-compact-availability" class="hint"></p></div><button id="meta-compact-toggle" type="button">Meta-compact…</button></div>
+        <div id="meta-compact-status" class="meta-compact-status" aria-live="polite" hidden>
+          <p><strong id="meta-compact-state"></strong><span id="meta-compact-stage"></span></p>
+          <p id="meta-compact-error" class="meta-compact-error" hidden></p>
+          <p id="meta-compact-archive-row" hidden>Original archive: <code id="meta-compact-archive"></code></p>
+          <p id="meta-compact-directory-row" hidden>Result directory: <code id="meta-compact-directory"></code></p>
+        </div>
+        <div id="meta-compact-controls" hidden>
+          <p class="hint">Rebuild this stopped Pi session with lossy summaries while preserving an approximate token overlap between sections.</p>
+          <label>Model override <span class="hint">optional</span><input name="meta_model" placeholder="provider/model" spellcheck="false"></label>
+          <div class="form-row"><label>Number of chunks<input name="chunk_count" type="number" value="2" min="2" max="16" step="1" required></label><label>Overlap tokens<input name="overlap_tokens" type="number" value="10000" min="0" max="100000" step="1" required></label></div>
+          <p class="hint">Overlap is shared between each adjacent pair. Each chunk gets a separate summary, followed by one combined merge.</p>
+          <button id="start-meta-compact" type="button" class="meta-compact-start">Start meta-compaction</button>
+        </div>
+      </section>
+      <section class="tool-input-compact-section" aria-labelledby="tool-input-compact-heading">
+        <div class="tool-input-compact-head"><div><h3 id="tool-input-compact-heading">Tool input compaction</h3><p id="tool-input-compact-availability" class="hint"></p></div><button id="compact-tool-inputs" type="button">Compact tool inputs</button></div>
+        <p class="hint tool-input-compact-description">Shorten completed tool-call inputs without model calls. Tool outputs are preserved.</p>
+        <div id="tool-input-compact-status" class="meta-compact-status" aria-live="polite" hidden>
+          <p><strong id="tool-input-compact-state"></strong></p>
+          <p id="tool-input-compact-result" hidden><span id="tool-input-compact-count"></span> completed call inputs compacted · estimated <span id="tool-input-compact-savings"></span> tokens saved</p>
+          <p id="tool-input-compact-error" class="meta-compact-error" hidden></p>
+          <p id="tool-input-compact-archive-row" hidden>Original archive: <code id="tool-input-compact-archive"></code></p>
+          <p id="tool-input-compact-directory-row" hidden>Result directory: <code id="tool-input-compact-directory"></code></p>
+        </div>
+      </section>
       <p id="forget-explanation" class="hint forget-explanation">Forget stops any remaining Swarm-owned process and removes the card. Saved session history stays in its current location.</p>
       <p class="form-error" role="alert"></p>
-      <footer class="dialog-footer"><button id="forget-agent" type="button" class="danger forget-agent">Forget agent</button><button type="button" data-close>Cancel</button><button type="submit" class="primary">Save changes</button></footer>
+      <footer class="dialog-footer"><button id="forget-agent" type="button" class="danger forget-agent">Forget agent</button><button type="button" data-close>Cancel</button><button id="save-agent" type="submit" class="primary">Save changes</button></footer>
     </form>
   </dialog>
   <div id="toast" class="toast" role="status" hidden></div>

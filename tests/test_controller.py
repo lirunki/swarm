@@ -49,7 +49,7 @@ def add(ctrl, status, **fields):
         Agent(
             name=status,
             goal="Make progress",
-            folder=str(ctrl.store.home),
+            folder=fields.pop("folder", str(ctrl.store.home)),
             managed=True,
             status=status,
             **fields,
@@ -141,6 +141,9 @@ def test_wake_converts_windows_pi_session_to_portable_copy(ctrl, tmp_path, monke
     project = windows_home / "work"
     project.mkdir()
     session = sessions_root / "windows.jsonl"
+    from uuid import uuid4
+
+    session_id = str(uuid4())
     session.write_text(
         "\n".join(
             json.dumps(entry)
@@ -148,7 +151,7 @@ def test_wake_converts_windows_pi_session_to_portable_copy(ctrl, tmp_path, monke
                 {
                     "type": "session",
                     "version": 3,
-                    "id": "actual-id",
+                    "id": session_id,
                     "cwd": fr"C:\\Users\\{Path.home().name}\\work",
                 },
                 {
@@ -164,7 +167,7 @@ def test_wake_converts_windows_pi_session_to_portable_copy(ctrl, tmp_path, monke
         "idle",
         folder=str(project),
         session_file=str(session),
-        session_id="actual-id",
+        session_id=session_id,
     )
 
     ctrl.wake(str(agent.id), "Resume where you were")

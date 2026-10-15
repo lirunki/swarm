@@ -126,6 +126,128 @@ all adoption; on macOS, `lsof` is used to resolve folders. Refresh after quittin
 the original pi. These are point-in-time local process checks, not locks shared
 with unmanaged pi: do not open the same saved session elsewhere after adoption.
 
+## Compact large tool inputs without model calls
+
+Use **Stop → Edit → Compact tool inputs** to move bulky historical tool arguments
+out of active context. This is a separate, deterministic operation from
+Meta-compact: it makes **no model calls** and does not summarize outputs.
+
+For each eligible completed tool call, Swarm retains the first **100 characters**
+of its serialized arguments, the tool name, target path when available,
+original call ID, and a generated `toolrun_id`. Inputs qualify when they are
+at least 1,000 characters or contain multiple escaped newlines; they are only
+elided if the preview and retrieval instructions actually save context.
+Incomplete, ambiguous or malformed call/result groups are left alone.
+
+To avoid broken provider call/result pairing and replay signatures, affected
+**completed exchanges become inert historical context**. In a multi-tool exchange,
+small sibling calls retain their complete arguments. Tool-output text and image
+payloads are preserved verbatim, with separate historical labels added; outputs
+are never shortened. The current branch and effective context edits are retained.
+The full original session, including other branches, is archived byte-for-byte.
+Native Pi tool calls and Swarm's Windows-Pi imported transcripts are supported.
+
+The compacted session contains instructions for reading one archived input:
+
+```bash
+"$SWARM_PYTHON" -m swarm tool-input toolrun_<job>_<call> --offset 0 --limit 8000
+```
+
+For a different registry, use `swarm --home /path/to/home tool-input ...`.
+The response is JSON containing `input`, `next_offset`, `total_chars` and `eof`.
+Offsets/limits are in characters, with at most 64,000 characters per request.
+This **only reads arguments**; it never executes the archived call. Retrieve
+additional pages as needed rather than loading the entire original session.
+Checksums detect changed archived inputs.
+
+Artifacts are kept under `$SWARM_HOME/tool-input-compactions/<job>/`:
+`original.jsonl`, `replacement.jsonl`, `index.json`, `job.json`, and individual
+`toolrun_*.json` input files. Lookup IDs map to the original entry ID and tool-call
+position in the sidecar index; the original archive is never annotated or edited.
+Treat these files as private session data and retain them as long as their
+references remain useful. To undo, stop all writers, back up the current tracked
+file, and copy `original.jsonl` back to that path.
+
+The operation requires a stopped managed Pi agent. It checks for other session
+owners, active processes, and source changes before atomic replacement. The
+tracked session ID/path stay unchanged and auto-resume remains disabled after a
+successful compaction. Failed or no-op operations do not replace the source.
+Edit shows the affected-call count, estimated token savings, archive path and
+errors; re-running on already shortened calls is a no-op. Output-heavy sessions
+may still need Meta-compact.
+
+API: `POST /api/agents/<id>/compact-tool-inputs` returns the result with HTTP 200.
+The last result is also published as `agent.tool_input_compaction` in state.
+
+## Recover oversized sessions with Meta-compact
+
+If ordinary `/compact` fails because even its summarization request exceeds the
+provider's context window, use **Edit → Meta-compact…**:
+
+1. **Stop** the agent first, including any external Pi using the same session.
+2. Open **Edit → Meta-compact…**. Optionally enter an exact `provider/model` ID.
+   By default Swarm uses the agent model override or the model saved in the
+   session; if neither exists, an explicit model is required.
+3. Choose **Number of chunks** (default **2**, range **2–16**). Leave the shared
+   overlap at **10,000 estimated tokens** per adjacent pair, or adjust it.
+4. Confirm the model usage and replacement. Progress remains visible in Edit
+   even if you close the dialog. After completion, **Wake** explicitly.
+
+Swarm snapshots the saved Pi v3 session and projects its active branch, honoring
+existing compaction boundaries and context edits. It splits that text into the
+requested number of approximately equal chunks, with shared overlap between
+adjacent chunks (estimated at four characters per token, capped at half a base
+chunk for short inputs). Each chunk is saved to a file and supplied in full via
+stdin to a separate, persisted Pi worker session. One final worker merges all
+chunk summaries with instructions to remove duplicated overlap and
+preserve unique facts. Tools, extensions, MCP, skills and context-file discovery
+are disabled for these workers; historical commands are data, never executed.
+
+This is **lossy summarization**, not exact compression. With N chunks there are
+**N + 1 model stages** (N summaries plus one merge); provider retries/recovery
+can incur additional requests and costs. More chunks reduce each input's size
+but increase model usage. Swarm checks the selected model's advertised context
+and rejects chunks whose estimated input exceeds 70% of it before summarizing.
+It also checks a worst-case merge budget for all N summaries. Estimates are not
+exact provider token counts: a model can still reject a chunk. Increase the
+chunk count or choose a larger model if inputs do not fit; if the combined
+summary budget is too large, use fewer chunks or a larger model. Sessions over
+128 MiB are rejected; worker calls time out after 30 minutes each.
+
+Only after all stages succeed and the result validates does Swarm archive the
+byte-for-byte original and atomically replace the tracked session file with a
+Pi compaction checkpoint. The session ID, tracked path and Swarm agent identity
+are retained. The agent stays stopped with auto-resume disabled. Wake, edits,
+Forget and duplicate jobs are blocked while compaction runs. Source changes or
+newly detected external Pi processes cause replacement to be refused.
+
+Artifacts are kept outside session discovery roots at:
+
+```text
+$SWARM_HOME/meta-compactions/<agent-id>/<job-id>/
+  job.json              # persisted stage/status and hashes
+  split.json            # chunk ranges and overlap boundaries
+  chunk-1.txt … chunk-N.txt             # inputs with marked overlap
+  chunk-1.jsonl … chunk-N.jsonl, merge.jsonl  # Pi worker sessions
+  summary-1.txt … summary-N.txt, combined.txt
+  original.jsonl        # exact original archive (source.jsonl before commit)
+  replacement.jsonl    # validated replacement
+```
+
+Worker event streams and stderr logs are retained there too; treat all artifacts
+as private session data. Failures leave the source unchanged. Server shutdown
+cancels workers; restart reconciles any completed replacement and marks other
+interrupted jobs failed, without repeating paid requests. To restore manually,
+stop the agent and all other writers, back up its current tracked file, then
+copy `original.jsonl` back to that path. Restoring the archive also restores its
+original context-size problem.
+
+API: `POST /api/agents/<id>/meta-compact` with
+`{"model": "provider/model", "overlap_tokens": 10000, "chunk_count": 4}` returns
+a job with HTTP 202. `chunk_count` defaults to 2 when omitted. The model is
+optional when saved metadata supplies it. Job status is published
+as `agent.meta_compaction` through the normal state API/WebSocket.
+
 ## Import a Grok Build session into pi
 
 Click **Import Grok session**, choose a saved conversation, check its working

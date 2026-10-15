@@ -99,6 +99,7 @@ function renderer() {
   const context = vm.createContext({
     document: {createElement: tag => new Element(tag), createTextNode: value => new Text(value)},
     state: {home}, cardViews: new CardViews(() => storage), SwarmCardViews: {applyCardView},
+    metaCompactingId: null, toolInputCompactingId: null,
     labels: {running: 'Running', waiting: 'Waiting for input', idle: 'Idle', dormant: 'Dormant', done: 'Done'},
     since: () => 'just now', openTerminal: id => calls.push(['terminal', id]), editAgent: id => calls.push(['edit', id]),
     wakeAgent: id => calls.push(['wake', id]), stopAgent: id => calls.push(['stop', id]),
@@ -133,6 +134,98 @@ test('compact renderer exposes only summary and toggle, expanded form restores a
   toggle.click(); assert.equal(find(card, 'card-details').hidden, true); assert.equal(find(card, 'card-foot').hidden, true);
 });
 
+test('running meta-compaction disables card Wake without hiding Edit or status access', () => {
+  const {render, calls} = renderer();
+  const a = fullAgent('idle', false); a.auto_resume = false; a.meta_compaction = {status: 'running', stage: 'summarizing'};
+  const card = render(a); find(card, 'card-toggle').click();
+  const wake = walk(card).find(el => el.tagName === 'BUTTON' && el.textContent === 'Wake');
+  const edit = walk(card).find(el => el.tagName === 'BUTTON' && el.textContent === 'Edit');
+  assert.equal(wake.disabled, true); assert.match(wake.title, /Meta-compaction/);
+  edit.click(); wake.click(); assert.deepEqual(calls, [['edit', 'agent-1']]);
+});
+
+test('meta-compaction Edit UI exposes bounded inputs and safe persisted output fields', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
+  assert.match(html, /id="meta-compact-toggle"[^>]*>Meta-compact…/);
+  assert.match(html, /name="overlap_tokens"[^>]*value="10000"[^>]*min="0"[^>]*max="100000"/);
+  assert.match(html, /name="chunk_count"[^>]*value="2"[^>]*min="2"[^>]*max="16"/);
+  for (const id of ['meta-compact-stage', 'meta-compact-error', 'meta-compact-archive', 'meta-compact-directory']) assert.ok(html.includes(`id="${id}"`));
+  assert.match(source, /\/meta-compact`, 'POST', \{model: model \|\| null, overlap_tokens: overlapTokens, chunk_count: chunkCount\}/);
+  assert.match(source, /\$\{chunkCount \+ 1\} Pi stages/); assert.match(source, /Summaries are lossy/);
+  assert.match(source, /form\.elements\.chunk_count\.value = '2'/);
+  assert.match(source, /chunkCount < 2 \|\| chunkCount > 16/);
+  assert.match(source, /After success, Swarm archives and replaces/); assert.match(source, /stays stopped until you explicitly Wake/);
+  assert.match(source, /\$\('#meta-compact-error'\)\.textContent = job\.error \|\| ''/);
+  assert.match(source, /a\.managed === true && a\.backend === 'pi' && !!a\.session_file && !a\.alive/);
+});
+
+test('tool input compaction has a separate safe report UI and blocks Wake while running', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
+  assert.match(html, /id="compact-tool-inputs"[^>]*>Compact tool inputs</);
+  for (const id of ['tool-input-compact-count', 'tool-input-compact-savings', 'tool-input-compact-error', 'tool-input-compact-archive', 'tool-input-compact-directory']) assert.ok(html.includes(`id="${id}"`));
+  assert.match(source, /\/compact-tool-inputs`, 'POST', \{\}/);
+  assert.match(source, /toolJob\.calls_compacted/); assert.match(source, /toolJob\.estimated_tokens_saved/);
+  assert.match(source, /\$\('#tool-input-compact-error'\)\.textContent = toolJob\.error \|\| ''/);
+  assert.match(source, /\$\('#tool-input-compact-archive'\)\.textContent = toolJob\.archive \|\| ''/);
+  assert.match(source, /\$\('#meta-compact-toggle'\)\.disabled = !eligible \|\| blocked/);
+  assert.match(source, /\$\('#save-agent'\)\.disabled = blocked/);
+  assert.match(source, /const compacting = compactionBlocked\(a\)/);
+  const {render, calls} = renderer();
+  const a = fullAgent('idle', false); a.tool_input_compaction = {status: 'running'};
+  const card = render(a); find(card, 'card-toggle').click();
+  const wake = walk(card).find(el => el.tagName === 'BUTTON' && el.textContent === 'Wake');
+  assert.equal(wake.disabled, true); assert.match(wake.title, /Tool input compaction/);
+  wake.click(); assert.deepEqual(calls, []);
+});
+
+function toolInputDialog({confirmResult = true, reject = false} = {}) {
+  const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
+  const calls = [], errors = new Element('p'), a = fullAgent('idle', false);
+  const form = {querySelector: selector => selector === '.form-error' ? errors : null};
+  const dialog = {open: true};
+  const context = vm.createContext({
+    editId: a.id, metaCompactingId: null, toolInputCompactingId: null, state: {agents: [a]},
+    agentById: id => context.state.agents.find(record => record.id === id),
+    compactionRunning: record => record?.meta_compaction?.status === 'running' || record?.tool_input_compaction?.status === 'running',
+    $: (selector, root) => root ? root.querySelector(selector) : selector === '#edit-form' ? form : selector === '#edit-dialog' ? dialog : null,
+    confirm: text => { calls.push(['confirm', text]); return confirmResult; },
+    api: async (url, method, body) => { calls.push(['api', url, method, body]); if (reject) throw Error('<server failure>'); return {status: 'completed', calls_compacted: 7, estimated_tokens_saved: 321, archive: '/archive/original.jsonl'}; },
+    updateEditAvailability: () => calls.push(['availability']), render: () => calls.push(['render']),
+    refresh: async () => calls.push(['refresh']), toast: (text, error) => calls.push(['toast', text, error]),
+  });
+  const start = source.indexOf('async function compactToolInputs()');
+  const end = source.indexOf('\nasync function forgetAgent()', start);
+  vm.runInContext(source.slice(start, end), context);
+  return {context, calls, agent: a, errors};
+}
+
+test('confirmed tool input compaction posts an empty object and retains its report', async () => {
+  const t = toolInputDialog(); await t.context.compactToolInputs();
+  const confirmation = t.calls.find(call => call[0] === 'confirm')[1];
+  for (const phrase of ['No model calls', '100-character previews', 'toolrun IDs', 'output contents are preserved', 'inert history', 'original session is archived', 'active branch is retained', 'stays stopped']) assert.ok(confirmation.includes(phrase), phrase);
+  const request = t.calls.find(call => call[0] === 'api');
+  assert.equal(request[1], '/api/agents/agent-1/compact-tool-inputs'); assert.equal(request[2], 'POST'); assert.equal(Object.keys(request[3]).length, 0);
+  assert.equal(t.agent.tool_input_compaction.calls_compacted, 7);
+  assert.ok(t.calls.some(call => call[0] === 'toast' && /7 tool inputs/.test(call[1])));
+  assert.equal(t.context.toolInputCompactingId, null);
+});
+
+test('canceling tool input compaction has no API effects', async () => {
+  const t = toolInputDialog({confirmResult: false}); await t.context.compactToolInputs();
+  assert.equal(t.calls.filter(call => call[0] === 'api').length, 0);
+  assert.equal(t.agent.tool_input_compaction, undefined);
+});
+
+test('tool input compaction errors remain text and release the in-flight lock', async () => {
+  const t = toolInputDialog({reject: true}); await t.context.compactToolInputs();
+  assert.equal(t.errors.textContent, '<server failure>');
+  assert.equal(t.errors.childNodes[0] instanceof Text, true);
+  assert.equal(t.context.toolInputCompactingId, null);
+  assert.equal(t.agent.tool_input_compaction, undefined);
+});
+
 test('manual renderer choice survives new state snapshots and fake reload', () => {
   const {render, storage} = renderer();
   const card = render(fullAgent()); find(card, 'card-toggle').click();
@@ -164,6 +257,7 @@ function forgetDialog({active = false, confirm = true, reject = false} = {}) {
   const a = fullAgent(active ? 'running' : 'idle');
   const context = vm.createContext({
     editId: a.id, forgettingAgent: false, state: {home, agents: [a, {...a, id: 'other-agent'}]},
+    compactionBlocked: record => record?.meta_compaction?.status === 'running' || record?.tool_input_compaction?.status === 'running',
     $: (selector, root) => root ? root.querySelector(selector) : controls[selector],
     agentById: id => context.state.agents.find(record => record.id === id),
     confirm: text => { calls.push(['confirm', text]); return confirm; },

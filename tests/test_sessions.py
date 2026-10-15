@@ -106,6 +106,8 @@ def test_wsl_discovers_windows_pi_sessions_and_imports_portable_copy(tmp_path, m
 
     monkeypatch.setattr("swarm.sessions.running_pi_folders", lambda: [])
     monkeypatch.setattr(module, "is_wsl", lambda: True)
+    monkeypatch.setenv("PI_CODING_AGENT_SESSION_DIR", str(tmp_path / "linux-sessions"))
+    monkeypatch.delenv("USERPROFILE", raising=False)
     mount = tmp_path / "mnt"
     monkeypatch.setattr(module, "WSL_MOUNT_ROOT", mount)
     windows_home = mount / "c" / "Users" / Path.home().name

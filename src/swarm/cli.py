@@ -15,6 +15,7 @@ from .models import Status
 from .processes import Processes
 from .sessions import AdoptRequest, Sessions
 from .store import Store
+from .tool_inputs import retrieve
 
 
 def parser() -> argparse.ArgumentParser:
@@ -49,6 +50,10 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("list", help="list agent records as JSON")
     commands.add_parser("doctor", help="check runtime prerequisites")
     commands.add_parser("sessions", help="list adoptable pi sessions as JSON")
+    tool_input = commands.add_parser("tool-input", help="read archived tool input; never execute it")
+    tool_input.add_argument("toolrun_id")
+    tool_input.add_argument("--offset", type=int, default=0, help="character offset (default 0)")
+    tool_input.add_argument("--limit", type=int, default=8000, help="characters per page (1–64000)")
     adopt = commands.add_parser(
         "adopt", help="register an inactive pi session, without starting it"
     )
@@ -175,6 +180,8 @@ def main(argv: list[str] | None = None) -> None:
             )
         elif args.command == "report":
             print(json.dumps(run_report(store, args), indent=2))
+        elif args.command == "tool-input":
+            print(json.dumps(retrieve(store, args.toolrun_id, args.offset, args.limit), indent=2))
         elif args.command == "sessions":
             print(json.dumps(Sessions(store, args.pi_sessions_dir).list(), indent=2))
         elif args.command == "adopt":

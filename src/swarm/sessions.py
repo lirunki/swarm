@@ -361,9 +361,16 @@ class Sessions:
     def ensure_agent_portable(self, agent: Agent) -> Agent:
         if not agent.session_file or (agent.import_source and agent.import_source.backend == "pi"):
             return agent
-        meta = self.metadata(Path(agent.session_file))
-        if not meta["portable_copy_required"]:
+        path = Path(agent.session_file)
+        # New agents do not have a file until Pi starts. Native sessions (including
+        # meta-compacted checkpoints and custom-root adoptions) need no conversion.
+        if not path.exists():
+            return agent  # PiAdapter still rejects missing history for a known session ID.
+        with path.open(encoding="utf-8") as stream:
+            header = json.loads(stream.readline(65536))
+        if not is_wsl() or not windows_path(header.get("cwd", "")):
             return agent
+        meta = self.metadata(path)
         with self.store.lock(meta["session_id"]):
             converted, source = self.convert_external_pi(meta, agent.name)
             return self.store.update(
