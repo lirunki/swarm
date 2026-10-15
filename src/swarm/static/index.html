@@ -100,8 +100,8 @@
   <dialog id="wake-dialog">
     <form id="wake-form">
       <header class="dialog-head"><h2 id="wake-title">Wake agent</h2><button type="button" class="icon-button" data-close aria-label="Close">×</button></header>
-      <p class="hint">Continue the exact saved session. For a live agent, this queues a message in its terminal.</p>
-      <label>Instructions <span class="hint">optional</span><textarea name="message" rows="4" placeholder="Resume where you were…"></textarea></label>
+      <p class="hint">Continue the exact saved session. Leave instructions empty to wake it without submitting any prompt. For a live agent, nonempty instructions are queued in its terminal.</p>
+      <label>Instructions <span class="hint">optional · empty means no prompt</span><textarea name="message" rows="4" placeholder="Optional instructions…"></textarea></label>
       <p class="form-error" role="alert"></p>
       <footer class="dialog-footer"><button type="button" data-close>Cancel</button><button class="primary" type="submit">Wake agent ↗</button></footer>
     </form>

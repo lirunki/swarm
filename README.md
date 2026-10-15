@@ -116,8 +116,11 @@ conservatively blocks while any native Pi has an unknown working folder.
   controller process and reconnects the dashboard automatically. Agent processes remain
   owned by tmux and continue running throughout the restart.
 - **Wake** resumes an offline session or submits instructions to a live pi editor.
-  Treat that editor as shared: avoid composing a message while another browser
-  tab/user submits one. Pi queues messages received while working.
+  Leave the optional instructions empty to resume or mark running **without sending any
+  prompt**. API clients get the same behavior with an explicit `{"message":""}`; omitting
+  `message` retains the generated safety resume prompt used by timers and automation.
+  Treat a live editor as shared: avoid composing a message while another browser tab/user
+  submits one. Pi queues nonempty messages received while working.
 - **Stop** terminates that agent's tmux session and disables automatic restore;
   history and goal are retained. **Edit** changes registry metadata only —
   setting a status alone does not suspend/start the process.

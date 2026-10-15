@@ -141,7 +141,9 @@ class Controller:
                 self._launch(agent, prompt)
             self.refresh()
 
-    def wake(self, agent_id: str, message: str = "", *, preserve_child_wait: bool = False) -> Agent:
+    def wake(
+        self, agent_id: str, message: str | None = None, *, preserve_child_wait: bool = False
+    ) -> Agent:
         with self.lock:
             agent = self.store.get(agent_id)
             require_not_busy(agent)
@@ -155,7 +157,9 @@ class Controller:
                 from .orchestration import verify_workspace
 
                 verify_workspace(agent)
-            prompt = message or resume_prompt(agent)
+            # Omitted instructions retain the safe automated-resume prompt used by
+            # timers and API clients. Explicit "" means launch with no user prompt.
+            prompt = resume_prompt(agent) if message is None else (message or None)
             agent = self.store.update(
                 agent.id,
                 {
@@ -170,10 +174,11 @@ class Controller:
                 },
             )
             if self.processes.alive(agent):
-                try:
-                    self.processes.send_prompt(agent, prompt)
-                except (ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-                    self.store.update(agent.id, {"last_error": str(exc)})
+                if prompt is not None:
+                    try:
+                        self.processes.send_prompt(agent, prompt)
+                    except (ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                        self.store.update(agent.id, {"last_error": str(exc)})
             else:
                 self._launch(agent, prompt)
             self.refresh()

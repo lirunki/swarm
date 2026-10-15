@@ -7,7 +7,7 @@ import pytest
 
 from swarm.adapters import PiAdapter, resume_prompt
 from swarm.controller import Controller
-from swarm.models import Agent, CreateAgent, Status, now
+from swarm.models import Agent, CreateAgent, Status, WakeRequest, now
 from swarm.store import Store
 
 
@@ -97,6 +97,44 @@ def test_explicit_stop_disables_recovery(ctrl):
     ctrl.wake(str(agent.id), "Continue with the agreed design")
     assert ctrl.store.get(agent.id).auto_resume
     assert len(ctrl.processes.launches) == 2
+
+
+def test_wake_request_distinguishes_omitted_from_explicit_empty():
+    assert WakeRequest().message is None
+    assert WakeRequest(message="").message == ""
+
+
+def test_explicit_empty_wake_launches_offline_session_without_prompt(ctrl):
+    agent = add(ctrl, "idle", auto_resume=False)
+
+    woken = ctrl.wake(str(agent.id), "")
+
+    assert woken.status == Status.running
+    assert woken.auto_resume
+    assert ctrl.processes.launches[-1][0].id == agent.id
+    assert ctrl.processes.launches[-1][1] is None
+
+
+def test_explicit_empty_wake_does_not_message_live_session(ctrl):
+    agent = add(ctrl, "waiting", wait_reason="Need review")
+    ctrl.processes.running.add(str(agent.id))
+
+    ctrl.wake(str(agent.id), "")
+
+    assert ctrl.processes.messages == []
+    assert ctrl.store.get(agent.id).status == Status.running
+    assert ctrl.store.get(agent.id).wait_reason == ""
+
+
+def test_omitted_and_nonempty_wake_instructions_keep_existing_behavior(ctrl):
+    automated = add(ctrl, "idle")
+    ctrl.wake(str(automated.id))
+    assert "Resume where you were" in ctrl.processes.launches[-1][1]
+
+    live = add(ctrl, "waiting")
+    ctrl.processes.running.add(str(live.id))
+    ctrl.wake(str(live.id), "Continue with the review")
+    assert ctrl.processes.messages[-1][1] == "Continue with the review"
 
 
 def test_observed_or_invalid_agents_never_execute(ctrl):

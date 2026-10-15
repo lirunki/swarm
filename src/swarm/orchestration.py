@@ -348,7 +348,7 @@ class Orchestrator:
             self.controller.processes.send_prompt(child, request.message)
             return self.describe(self.store.get(child.id))
 
-    def wake(self, parent_id: str, child_id: str, message: str = "") -> dict:
+    def wake(self, parent_id: str, child_id: str, message: str | None = None) -> dict:
         with self.controller.lock:
             child = self.owned(parent_id, child_id)
             if getattr(child, "orchestration_stop", None):

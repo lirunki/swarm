@@ -171,4 +171,6 @@ class AgentPatch(BaseModel):
 
 class WakeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    message: str = Field(default="", max_length=32000)
+    # Omitted preserves automated resume behavior; an explicit empty string means
+    # "start/mark running without submitting a prompt".
+    message: str | None = Field(default=None, max_length=32000)

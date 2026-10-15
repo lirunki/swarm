@@ -570,7 +570,13 @@ $('#create-form').addEventListener('submit', event => {
 $('#wake-form').addEventListener('submit', event => {
   event.preventDefault(); const form = event.currentTarget;
   if (compactionBlocked(agentById(wakeId))) { updateWakeAvailability(); return; }
-  submit(form, async () => { const a = await api(`/api/agents/${wakeId}/wake`, 'POST', {message: form.elements.message.value}); $('#wake-dialog').close(); toast(a.last_error || 'Resume instructions sent.', !!a.last_error); await refresh(); });
+  submit(form, async () => {
+    const message = form.elements.message.value;
+    const a = await api(`/api/agents/${wakeId}/wake`, 'POST', {message});
+    $('#wake-dialog').close();
+    toast(a.last_error || (message ? 'Resume instructions sent.' : 'Session resumed without a prompt.'), !!a.last_error);
+    await refresh();
+  });
 });
 $('#edit-form').addEventListener('submit', event => {
   event.preventDefault(); const form = event.currentTarget;
