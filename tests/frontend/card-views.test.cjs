@@ -134,6 +134,24 @@ test('compact renderer exposes only summary and toggle, expanded form restores a
   toggle.click(); assert.equal(find(card, 'card-details').hidden, true); assert.equal(find(card, 'card-foot').hidden, true);
 });
 
+test('collapsed name highlight follows process liveness, not task status', () => {
+  const {render, context} = renderer();
+  context.cardViews.setCompact(home, 'agent-1', true);
+  for (const status of ['running', 'waiting', 'idle', 'dormant', 'done']) {
+    const card = render(fullAgent(status, true));
+    assert.equal(card.classList.contains('is-compact'), true);
+    assert.equal(card.classList.contains('has-process'), true, status);
+    find(card, 'card-toggle').click();
+    assert.equal(card.classList.contains('is-compact'), false);
+    find(card, 'card-toggle').click();
+    assert.equal(card.classList.contains('is-compact'), true);
+    const stopped = render(fullAgent(status, false));
+    assert.equal(stopped.classList.contains('has-process'), false, status);
+  }
+  const css = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.css'), 'utf8');
+  assert.match(css, /\.agent-card\.is-compact\.has-process \.card-identity h3\{color:#ff7b7b\}/);
+});
+
 test('running meta-compaction disables card Wake without hiding Edit or status access', () => {
   const {render, calls} = renderer();
   const a = fullAgent('idle', false); a.auto_resume = false; a.meta_compaction = {status: 'running', stage: 'summarizing'};

@@ -69,6 +69,7 @@ const compactionRequestInFlight = a => !!a && (metaCompactingId === a.id || tool
 const compactionBlocked = a => compactionRunning(a) || compactionRequestInFlight(a);
 function renderCard(a) {
   const card = node('article', 'agent-card'); card.dataset.agentId = a.id;
+  card.classList.toggle('has-process', !!a.alive);
   const inside = node('div', 'card-inner'), summary = node('header', 'card-summary'), header = node('div', 'card-head');
   const identity = node('div', 'card-identity'), avatar = node('div', 'avatar', a.name.slice(0, 1).toUpperCase());
   const subtitle = node('div', 'card-subtitle', `${a.backend}${a.import_source ? ` ← ${a.import_source.backend}` : ''} · ${a.id.slice(0, 8)}${a.managed ? '' : ' · observed'}`);
