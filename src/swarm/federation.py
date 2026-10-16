@@ -14,12 +14,12 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
 from websockets.asyncio.client import connect
-from websockets.exceptions import ConnectionClosed
+from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from .relay import NODE_ID, PROTOCOL_VERSION
 
@@ -49,7 +49,7 @@ class FederationConfig:
     url: str
     node_id: str
     name: str
-    api_key: str
+    api_key: str = field(repr=False)
     local_api_url: str
     allow_remote_restart: bool = False
 
@@ -59,14 +59,32 @@ class FederationConfig:
             raise ValueError(
                 "relay URL must use wss:// (ws:// is accepted only for private testing)"
             )
+        if (
+            not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "relay URL must include a host and must not contain credentials, a query or a fragment"
+            )
+        try:
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("relay URL has an invalid port") from exc
         if parsed.scheme == "ws" and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
             raise ValueError("insecure relay ws:// is allowed only on loopback")
         if not NODE_ID.fullmatch(self.node_id):
             raise ValueError("relay node ID must be 1-64 URL-safe characters")
         if not self.name.strip() or len(self.name) > 120:
             raise ValueError("relay node name must be 1-120 characters")
-        if len(self.api_key.encode()) < 32:
-            raise ValueError("relay API key must be at least 32 bytes")
+        if not 32 <= len(self.api_key.encode()) <= 4096 or any(
+            ord(char) < 33 or ord(char) > 126 for char in self.api_key
+        ):
+            raise ValueError(
+                "relay API key must be 32-4096 printable ASCII characters without spaces"
+            )
 
 
 class FederatedStream:
@@ -113,6 +131,12 @@ class FederationClient:
         self.config = config
         self.state_provider = state_provider
         self.websocket = None
+        self.ready = False
+        self.last_error: str | None = None
+        # websockets DEBUG logging prints handshake headers, including Authorization.
+        # A private disabled logger prevents credential leaks even with global DEBUG.
+        self._transport_logger = logging.Logger(f"{__name__}.transport")
+        self._transport_logger.disabled = True
         self.send_lock = asyncio.Lock()
         self.task: asyncio.Task | None = None
         self.state_task: asyncio.Task | None = None
@@ -154,6 +178,10 @@ class FederationClient:
             task.cancel()
         await asyncio.gather(*self.inbound_tasks, return_exceptions=True)
         self._fail_connection(RuntimeError("federation client stopped"))
+        self.ready = False
+        self.nodes = {}
+        await self._invalidate_remote_states()
+        await self._notify_presence()
 
     async def _run(self) -> None:
         delay = 1.0
@@ -162,6 +190,7 @@ class FederationClient:
                 async with connect(
                     self.config.url,
                     additional_headers={"Authorization": f"Bearer {self.config.api_key}"},
+                    logger=self._transport_logger,
                     max_size=1_048_576,
                     open_timeout=15,
                     ping_interval=20,
@@ -188,9 +217,11 @@ class FederationClient:
                 return
             except Exception as exc:
                 if not self.stopping:
-                    log.warning("Federation relay disconnected: %s", exc)
+                    self.last_error = self._connection_error(exc)
+                    log.warning("Federation relay disconnected: %s", self.last_error)
             finally:
                 self.websocket = None
+                self.ready = False
                 self.nodes = {}
                 self.presence_version = -1
                 await self._invalidate_remote_states()
@@ -202,6 +233,18 @@ class FederationClient:
                 await asyncio.sleep(delay + random.random() * min(delay, 1.0))
                 delay = min(delay * 2, 30)
 
+    @staticmethod
+    def _connection_error(error: Exception) -> str:
+        # An untrusted peer can put arbitrary text in close reasons/HTTP headers.
+        # Never reflect those strings (or Authorization values) into logs/settings.
+        if isinstance(error, InvalidStatus):
+            return "Relay rejected the connection. Check the API key and relay URL."
+        if isinstance(error, ConnectionClosed):
+            return "Relay closed the connection. Check the node ID and relay configuration."
+        if isinstance(error, OSError):
+            return "Could not reach the relay. Check the URL, TLS certificate and network."
+        return "Relay connection failed. Check the URL, node ID and API key."
+
     async def _receive_loop(self, websocket) -> None:
         async for raw in websocket:
             if not isinstance(raw, str):
@@ -209,6 +252,11 @@ class FederationClient:
             message = json.loads(raw)
             kind = message.get("type")
             if kind == "welcome":
+                if message.get("protocol") != PROTOCOL_VERSION:
+                    raise ValueError("unsupported relay protocol")
+                self.ready = True
+                self.last_error = None
+                await self._notify_presence()
                 self.queue_state()
             elif kind == "presence":
                 version = message.get("version")
@@ -311,7 +359,11 @@ class FederationClient:
         return summaries
 
     async def _notify_presence(self) -> None:
-        value = {"nodes": self.summaries(), "relay_online": self.websocket is not None}
+        value = {
+            "nodes": self.summaries(),
+            "relay_online": self.websocket is not None,
+            "enabled": bool(self.task) and not self.stopping,
+        }
         for queue in list(self.presence_listeners):
             if queue.full():
                 queue.get_nowait()
@@ -329,7 +381,13 @@ class FederationClient:
     def subscribe_presence(self) -> asyncio.Queue:
         queue: asyncio.Queue = asyncio.Queue(maxsize=1)
         self.presence_listeners.add(queue)
-        queue.put_nowait({"nodes": self.summaries(), "relay_online": self.websocket is not None})
+        queue.put_nowait(
+            {
+                "nodes": self.summaries(),
+                "relay_online": self.websocket is not None,
+                "enabled": bool(self.task) and not self.stopping,
+            }
+        )
         return queue
 
     def unsubscribe_presence(self, queue: asyncio.Queue) -> None:

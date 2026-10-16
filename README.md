@@ -186,8 +186,54 @@ sudo systemctl status swarm-relay
 
 ### 2. Connect each Swarm backend
 
-Copy one active mesh key to a mode-0600 file on each backend and choose a unique stable node
-ID (`A-Z`, `a-z`, digits, `.`, `_`, `-`; 1–64 characters):
+Use **Settings** at the dashboard's top-right to configure the **local controller**.
+The dialog remains local even while the Swarm selector displays a remote workspace.
+Enter:
+
+- **Relay URL**, for example `wss://swarm-relay.example.com:9443/v1/connect`.
+- **Relay node ID**, a unique stable ID such as `workstation-a`.
+- **Relay name**, the display name such as `Office workstation`.
+- **Relay API key**, one of the relay's active keys (32–4096 printable ASCII characters).
+
+Click **Connect** to save the configuration and start the existing outbound relay
+client without restarting the controller or any agent. Status progresses from
+Connecting to Connected, or Reconnecting with a safe error message. The button is
+**Disconnect** while connection/retry is enabled; disconnect before editing fields.
+Closing the dialog does not disconnect. Remote workspaces appear in the existing
+Swarm selector when the connection is ready.
+
+The backend stores the profile, key and connection intent in
+`$SWARM_HOME/relay-settings.json` (mode 0600 on POSIX). Protect the user profile/file
+ACL on Windows too. This file contains a secret: do not commit it, publish it as a
+product or share it. The API returns only a `has_api_key` indicator; it never returns
+the saved key. Password drafts are cleared after submission and when closing the
+dialog. No key is written to browser storage. Submit keys over **localhost or HTTPS**.
+URLs must use WSS (plain WS is accepted only for loopback tests), and must not contain
+credentials, query strings or fragments.
+
+Leave the key blank to reuse it for the same relay URL. Changing the URL requires
+explicit key entry to avoid forwarding a saved credential to a different relay.
+**Disconnect** saves a disabled state, retaining the profile/key for a later Connect.
+An enabled saved profile reconnects when the controller restarts; a disconnected
+profile stays disconnected. Saved Settings take precedence over startup relay defaults,
+so after configuring the UI you can launch plain `swarm serve`. Remove the protected
+profile file while the controller is stopped to return to CLI-only defaults.
+The local API origin and remote-restart permission remain startup policy, not form inputs.
+
+Settings call these **local** backend endpoints (not the active remote workspace):
+
+- `GET /api/federation/settings`: redacted configuration, intent, connection state/error.
+- `POST /api/federation/connect`: `relay_url`, `relay_node_id`, `relay_name`, optional
+  `relay_api_key` (null/empty reuses a saved key only for an unchanged URL).
+- `POST /api/federation/disconnect`: stop relay connection/retries, keeping agent processes alive.
+
+Responses are marked `Cache-Control: no-store`. Settings endpoints are deliberately
+under the federation prefix, which mesh RPC is not allowed to proxy. This reduces
+accidental remote configuration; it is not a sandbox against trusted mesh peers with
+filesystem/terminal control.
+
+CLI-only configuration is also supported. Copy one active mesh key to a mode-0600
+file on each backend and choose a unique stable node ID:
 
 ```bash
 swarm serve \
@@ -214,8 +260,9 @@ The capability is advertised to dashboards, which disable the remote restart but
 is absent. Agent processes remain tmux-owned during a controller restart. There is no remote
 Git fetch, pull or push API.
 
-For zero-downtime key rotation: start the relay with old and new key files, update and restart
-controllers one at a time to use the new key, then restart the relay with only the new key.
+For zero-downtime key rotation: start the relay with old and new key files, then disconnect,
+update and reconnect controllers one at a time through Settings (or restart CLI-only
+controllers with the new key). Finally restart the relay with only the new key.
 The relay accepts at most two keys and compares them in constant time.
 
 ## Windows without WSL (experimental)
@@ -720,6 +767,7 @@ Default storage (`SWARM_HOME` overrides `~/.swarm`):
   sessions/*.jsonl    # exact session files for agents created by Swarm
   sessions/imports/   # converted foreign sessions (currently Grok Build)
   state.json         # atomically persisted last-good dashboard snapshot
+  relay-settings.json # protected relay profile/key and connection intent (if configured)
   locks/             # cross-process report/adoption locks
   controller.lock    # single-controller lock
 ```

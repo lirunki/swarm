@@ -15,6 +15,8 @@ from uuid import UUID
 
 from anyio import CancelScope
 from fastapi import BackgroundTasks, FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
@@ -22,13 +24,14 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .controller import Controller
 from .discovery import browse_folders, discover_models
-from .federation import MAX_RPC_REQUEST, FederationClient, FederationConfig
+from .federation import MAX_RPC_REQUEST, FederationConfig
 from .importers.grok import GrokImportRequest, GrokSessions
 from .meta_compact import MetaCompactor, MetaCompactRequest, require_not_busy
 from .models import AgentPatch, CreateAgent, WakeRequest
 from .orchestration import ChildMessage, ChildStop, Orchestrator, OwnershipError, SpawnRequest
 from .processes import Processes
 from .products import ProductRequest, Products
+from .relay_settings import RelayConnectRequest, RelaySettings
 from .sessions import AdoptRequest, Sessions
 from .store import Store
 from .terminal import bridge
@@ -79,16 +82,15 @@ def create_app(
     sessions = Sessions(store, session_roots)
     grok = GrokSessions(store, grok_session_roots)
     listeners: set[asyncio.Queue] = set()
-    federation = (
-        FederationClient(federation_config, lambda: controller.state) if federation_config else None
-    )
+    relay_settings = RelaySettings(store, api_url, lambda: controller.state, federation_config)
+    federation = relay_settings.client
 
     async def broadcast() -> None:
         for queue in list(listeners):
             if queue.full():
                 queue.get_nowait()
             queue.put_nowait(controller.state)
-        if federation:
+        if federation and relay_settings.enabled:
             federation.queue_state()
 
     async def monitor() -> None:
@@ -114,13 +116,11 @@ def create_app(
             else:
                 await asyncio.to_thread(controller.refresh)
             task = asyncio.create_task(monitor())
-            if federation:
-                federation.start()
+            relay_settings.start()
             try:
                 yield
             finally:
-                if federation:
-                    await federation.close()
+                await relay_settings.close()
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
                 await asyncio.to_thread(meta_compactor.close)
@@ -135,6 +135,7 @@ def create_app(
     app.state.sessions = sessions
     app.state.grok_sessions = grok
     app.state.federation = federation
+    app.state.relay_settings = relay_settings
     app.add_middleware(
         TrustedHostMiddleware, allowed_hosts=allowed_hosts or ["127.0.0.1", "localhost", "[::1]"]
     )
@@ -169,6 +170,16 @@ def create_app(
     async def runtime_error(request, exc):
         return JSONResponse({"detail": str(exc)}, status_code=409)
 
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error(request: Request, exc: RequestValidationError):
+        if request.url.path == "/api/federation/connect":
+            # FastAPI normally echoes invalid input; relay credentials must never return.
+            errors = [{key: error[key] for key in ("loc", "msg", "type")} for error in exc.errors()]
+            return JSONResponse(
+                {"detail": errors}, status_code=422, headers={"Cache-Control": "no-store"}
+            )
+        return await request_validation_exception_handler(request, exc)
+
     @app.get("/")
     def index():
         return FileResponse(STATIC / "index.html")
@@ -185,9 +196,27 @@ def create_app(
         background_tasks.add_task(restart_action)
         return {"restarting": True}
 
+    @app.get("/api/federation/settings")
+    async def relay_configuration():
+        return JSONResponse(relay_settings.status(), headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/federation/connect", status_code=202)
+    async def relay_connect(request: RelayConnectRequest):
+        nonlocal federation
+        status = await relay_settings.connect(request)
+        federation = relay_settings.client
+        app.state.federation = federation
+        return JSONResponse(status, status_code=202, headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/federation/disconnect")
+    async def relay_disconnect():
+        return JSONResponse(
+            await relay_settings.disconnect(), headers={"Cache-Control": "no-store"}
+        )
+
     @app.get("/api/federation/nodes")
     async def federation_nodes():
-        if not federation:
+        if not federation or not relay_settings.enabled:
             return {"enabled": False, "relay_online": False, "nodes": []}
         return {
             "enabled": True,

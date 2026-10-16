@@ -485,8 +485,9 @@ test('compact terminal visibility does not depend on a new helper version', () =
   toggle.click(); assert.equal(shortcut.hidden, true);
   toggle.click(); assert.equal(shortcut.hidden, false);
   const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
-  for (const asset of ['app.css', 'app.js', 'card-views.js', 'org-chart.js']) {
-    assert.ok(html.includes(`/static/${asset}?v=compact-terminal-2`));
+  const version = html.match(/app\.js\?v=([^"]+)/)[1];
+  for (const asset of ['app.css', 'app.js', 'card-views.js', 'org-chart.js', 'relay-settings.js']) {
+    assert.ok(html.includes(`/static/${asset}?v=${version}`));
   }
 });
 

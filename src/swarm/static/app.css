@@ -70,3 +70,7 @@ dialog{width:min(520px,calc(100vw - 32px));max-height:90dvh;overflow:auto;backgr
 .agent-card.is-compact .card-controls{grid-column:2;grid-row:1;align-self:start;width:28px}
 .card-terminal{min-width:28px;min-height:24px;padding:0 4px;background:transparent;color:var(--muted);font-size:17px;line-height:1}
 .card-terminal:hover{color:var(--accent)}
+
+/* Local relay settings: credentials are never part of remote workspace state. */
+.settings-button{font-size:12px;white-space:nowrap}.relay-settings-heading{font-size:15px;margin-bottom:7px}#relay-settings-fields{border:0;padding:0;margin:12px 0;min-width:0}#relay-settings-status{display:inline-flex;margin-top:12px}.relay-url-example{margin-top:6px;overflow-wrap:anywhere}.relay-settings-warning{padding:10px 12px;background:#11161e;border:1px solid var(--line);border-radius:7px}#relay-settings-error:empty,#relay-settings-connection-error:empty{display:none}
+@media(max-width:900px){.top-meta{flex-wrap:wrap;justify-content:flex-end;margin-left:auto}.topbar{flex-wrap:wrap;height:auto;min-height:74px;padding-top:10px;padding-bottom:10px}}@media(max-width:650px){.topbar{align-items:center;gap:10px}.top-meta{gap:6px}.settings-button{padding:7px 10px}#settings-dialog{max-height:92dvh}}

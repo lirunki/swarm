@@ -196,3 +196,120 @@ def test_dense_org_chart_layout_and_interactions(static_url, tmp_path, width):
             assert not errors
         finally:
             browser.close()
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_local_relay_settings_dialog_connect_disconnect_and_errors(static_url, width):
+    profile = {
+        "relay_url": "wss://relay.example:9443/v1/connect",
+        "relay_node_id": "demo-a",
+        "relay_name": "Demo A",
+        "has_api_key": False,
+        "enabled": False,
+        "connected": False,
+        "status": "disconnected",
+        "last_error": None,
+    }
+    key = "browser-fixture-key-0123456789-abcdefgh"
+    requests = []
+    with playwright.sync_playwright() as runner:
+        try:
+            browser = runner.chromium.launch(headless=True)
+        except playwright.Error as exc:
+            if "Executable doesn't exist" in str(
+                exc
+            ) or "error while loading shared libraries" in str(exc):
+                pytest.skip("Optional Chromium runtime unavailable")
+            raise
+        try:
+            page = browser.new_page(viewport={"width": width, "height": 1000})
+            errors = []
+            page.on("pageerror", lambda exc: errors.append(str(exc)))
+            page.add_init_script("""window.WebSocket = class {
+                static OPEN = 1;
+                constructor() { this.readyState = 1; setTimeout(() => this.onopen?.(), 0); }
+                close() { this.readyState = 3; }
+                send() {}
+            };""")
+
+            def route_api(route):
+                from urllib.parse import urlsplit
+
+                path = urlsplit(route.request.url).path
+                requests.append((route.request.method, path))
+                status = 200
+                if path == "/api/federation/settings":
+                    value = dict(profile)
+                elif path == "/api/federation/connect":
+                    body = route.request.post_data_json
+                    if not body["relay_url"].startswith("wss://"):
+                        status, value = 400, {"detail": "Relay URL must use wss://"}
+                    else:
+                        assert body["relay_api_key"] == key
+                        profile.update(
+                            {
+                                name: body[name]
+                                for name in ("relay_url", "relay_node_id", "relay_name")
+                            }
+                        )
+                        profile.update(
+                            enabled=True, connected=True, has_api_key=True, status="connected"
+                        )
+                        status, value = 202, dict(profile)
+                elif path == "/api/federation/disconnect":
+                    profile.update(enabled=False, connected=False, status="disconnected")
+                    value = dict(profile)
+                elif path == "/api/federation/nodes":
+                    value = {
+                        "enabled": profile["enabled"],
+                        "relay_online": profile["connected"],
+                        "nodes": [
+                            {"id": "peer-b", "name": "Peer B", "online": True, "capabilities": {}}
+                        ]
+                        if profile["enabled"]
+                        else [],
+                    }
+                else:
+                    value = fixture_state()
+                route.fulfill(
+                    status=status, content_type="application/json", body=json.dumps(value)
+                )
+
+            page.route("**/api/**", route_api)
+            page.goto(static_url)
+            page.locator("#settings-button").click()
+            form = page.locator("#relay-settings-form")
+            playwright.expect(page.locator("#relay-connect")).to_have_text("Connect")
+            playwright.expect(form.locator('[name="relay_node_id"]')).to_have_value("demo-a")
+            assert "wss://swarm-relay.example.com:9443/v1/connect" in form.inner_text()
+            assert form.locator('[name="relay_api_key"]').get_attribute("type") == "password"
+            form.locator('[name="relay_api_key"]').fill(key)
+            page.locator("#relay-connect").click()
+            playwright.expect(page.locator("#relay-settings-status")).to_have_text("Connected")
+            playwright.expect(page.locator("#relay-connect")).to_have_text("Disconnect")
+            playwright.expect(form.locator('[name="relay_api_key"]')).to_have_value("")
+            assert key not in page.evaluate("JSON.stringify(localStorage)")
+            page.locator("#settings-dialog [data-close]").last.click()
+            page.locator("#swarm-selector").select_option("peer-b")
+            page.locator("#settings-button").click()
+            playwright.expect(page.locator("#relay-connect")).to_have_text("Disconnect")
+            page.locator("#relay-connect").click()
+            playwright.expect(page.locator("#swarm-selector")).to_have_value("local")
+            playwright.expect(page.locator("#settings-dialog")).to_be_hidden()
+            page.locator("#settings-button").click()
+            playwright.expect(page.locator("#relay-connect")).to_have_text("Connect")
+            form.locator('[name="relay_url"]').fill("https://relay.example/v1/connect")
+            form.locator('[name="relay_api_key"]').fill(key)
+            page.locator("#relay-connect").click()
+            playwright.expect(page.locator("#relay-settings-error")).to_contain_text("wss://")
+            playwright.expect(page.locator("#relay-connect")).to_be_enabled()
+            playwright.expect(form.locator('[name="relay_api_key"]')).to_have_value("")
+            assert not any("/proxy/api/federation/" in path for _, path in requests)
+            assert any(
+                method == "POST" and path == "/api/federation/disconnect"
+                for method, path in requests
+            )
+            assert page.evaluate("document.body.scrollWidth <= window.innerWidth")
+            assert not errors
+        finally:
+            browser.close()

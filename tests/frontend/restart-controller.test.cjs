@@ -28,7 +28,7 @@ function restartHarness(confirmResult = true, reject = false) {
   return {context, calls, restart};
 }
 
-test('restart control is the rightmost topbar item beside live status', () => {
+test('restart control remains in the topbar beside live status', () => {
   const topMeta = html.slice(html.indexOf('<div class="top-meta">'), html.indexOf('</div>', html.indexOf('<div class="top-meta">')));
   assert.match(topMeta, /id="connection"[^>]*>Connecting…<\/span><button id="restart-controller"/);
   assert.ok(topMeta.indexOf('restart-controller') > topMeta.indexOf('connection'));

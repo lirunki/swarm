@@ -7,18 +7,19 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=compact-terminal-2">
+  <link rel="stylesheet" href="/static/app.css?v=relay-settings-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=compact-terminal-2"></script>
-  <script defer src="/static/org-chart.js?v=compact-terminal-2"></script>
-  <script defer src="/static/app.js?v=compact-terminal-2"></script>
+  <script defer src="/static/card-views.js?v=relay-settings-1"></script>
+  <script defer src="/static/org-chart.js?v=relay-settings-1"></script>
+  <script defer src="/static/relay-settings.js?v=relay-settings-1"></script>
+  <script defer src="/static/app.js?v=relay-settings-1"></script>
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="/" aria-label="Swarm dashboard"><span class="brand-mark">⬡</span>swarm<span class="edition">FEDERATED WORKSPACE</span></a>
     <label id="swarm-switcher" class="swarm-switcher" hidden><span>Swarm</span><select id="swarm-selector" aria-label="Active Swarm"><option value="local">Local</option></select></label>
-    <div class="top-meta"><span id="health"></span><span id="connection" class="connection">Connecting…</span><button id="restart-controller" class="restart-controller" type="button" title="Restart the active Swarm backend controller">↻ Restart backend</button></div>
+    <div class="top-meta"><span id="health"></span><span id="connection" class="connection">Connecting…</span><button id="restart-controller" class="restart-controller" type="button" title="Restart the active Swarm backend controller">↻ Restart backend</button><button id="settings-button" class="settings-button" type="button" aria-haspopup="dialog" aria-controls="settings-dialog">⚙ Settings</button></div>
   </header>
   <nav id="tabs" class="tabs" aria-label="Workspace tabs"><button id="dashboard-tab" class="tab active" type="button">◫ &nbsp;Dashboard</button></nav>
   <main id="dashboard">
@@ -34,6 +35,27 @@
     <footer class="page-footer"><span><i class="tiny-dot"></i> LOCAL-FIRST · FILE-BASED · ALWAYS YOURS</span><code id="home-path">~/.swarm/agents</code></footer>
   </main>
   <section id="terminals" aria-label="Agent terminal workspace" hidden></section>
+
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
+    <form id="relay-settings-form" autocomplete="off">
+      <header class="dialog-head"><div><div class="eyebrow">LOCAL CONTROLLER</div><h2 id="settings-title">Settings</h2></div><button type="button" class="icon-button" data-close aria-label="Close settings">×</button></header>
+      <h3 class="relay-settings-heading">Relay connection</h3>
+      <p class="hint">These settings always configure this local backend, even while viewing another Swarm.</p>
+      <p id="relay-settings-status" class="connection" role="status" aria-live="polite">Disconnected</p>
+      <p id="relay-settings-connection-error" class="form-error" role="status"></p>
+      <fieldset id="relay-settings-fields">
+        <label>Relay URL<input name="relay_url" type="url" required maxlength="2048" spellcheck="false" placeholder="wss://swarm-relay.example.com:9443/v1/connect"></label>
+        <p class="hint relay-url-example">Example: <code>wss://swarm-relay.example.com:9443/v1/connect</code></p>
+        <label>Relay node ID<input name="relay_node_id" required maxlength="64" pattern="[A-Za-z0-9]([A-Za-z0-9._\-]{0,62}[A-Za-z0-9])?" spellcheck="false" placeholder="workstation-a"></label>
+        <label>Relay name<input name="relay_name" required maxlength="120" placeholder="Office workstation"></label>
+        <label>Relay API key<input name="relay_api_key" type="password" maxlength="4096" autocomplete="off" spellcheck="false" placeholder="Relay API key (at least 32 bytes)"></label>
+        <p class="hint">A saved key is never sent back to this form. Leave blank to reuse it; enter a key when changing the relay URL.</p>
+      </fieldset>
+      <p class="hint relay-settings-warning">Connecting joins a fully trusted mesh: peers can read data and control agents. Submit keys only over localhost or HTTPS. Configuration is saved in a protected file on this server; no key is stored in browser storage. Disconnect before editing an active connection.</p>
+      <p id="relay-settings-error" class="form-error" role="alert"></p>
+      <footer class="dialog-footer"><button type="button" data-close>Close</button><button id="relay-connect" class="primary" type="submit">Connect</button></footer>
+    </form>
+  </dialog>
 
   <dialog id="create-dialog">
     <form id="create-form">

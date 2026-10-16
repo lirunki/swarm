@@ -751,6 +751,13 @@ $('#import-grok-form').addEventListener('submit', event => {
 $('#import-grok-button').addEventListener('click', () => { $('#import-grok-form').reset(); $('#grok-session-search').value = ''; $('#grok-roots').textContent = ''; showDialog('#import-grok-dialog'); loadGrokSessions(); });
 $('#refresh-grok-sessions').addEventListener('click', loadGrokSessions);
 $('#grok-session-search').addEventListener('input', renderGrokSessions);
+const relaySettingsDialog = new SwarmRelaySettings.RelaySettingsDialog({
+  api: localApi,
+  onChange: async value => {
+    if (!value.enabled && activeSwarm !== 'local') switchSwarm('local');
+    await loadFederation();
+  },
+});
 for (const el of document.querySelectorAll('[data-close]')) el.addEventListener('click', () => el.closest('dialog').close());
 const createDialog = () => {
   const form = $('#create-form'); form.reset(); loadAgentFolderOptions(); updateWorktreeCreateFields();
