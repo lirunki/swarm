@@ -60,6 +60,76 @@ Run **one controller per registry**, with one Uvicorn worker (the CLI enforces
 the latter). It is a single-user application, not a multi-user server, a sandbox,
 or an authentication boundary against other local processes.
 
+### Automatic HTTPS certificates
+
+Both the dashboard and relay support `--generate-certs-if-absent`. The flag
+requires the **OpenSSL command** on PATH and enables HTTPS/WSS for that server:
+
+```bash
+# Dashboard: https://127.0.0.1:8787
+swarm serve --generate-certs-if-absent --open
+
+# Relay only: https://swarm-relay.example.com:9443
+swarm relay serve --generate-certs-if-absent \
+  --cert-host swarm-relay.example.com \
+  --api-key-file ~/.config/swarm/relay.key
+```
+
+The API key is still required for the relay; certificate generation does not create it.
+You can use `./.venv/bin/swarm` without activating the virtual environment.
+
+Default PEM files are stored under the selected registry (`--home`, `SWARM_HOME`,
+or `~/.swarm`):
+
+- Dashboard: `tls/dashboard/cert.pem` and `tls/dashboard/privkey.pem`.
+- Relay: `tls/relay/cert.pem` and `tls/relay/privkey.pem`.
+
+Use `--certfile /path/to/cert.pem --keyfile /path/to/privkey.pem` together to override
+these paths. Without the generation flag, those options use your existing certificate
+pair. Plain `swarm serve` remains HTTP; the relay always requires TLS.
+
+Generated certificates last **365 days** (`--cert-days N` overrides this), and include
+`localhost`, `127.0.0.1`, `::1`, and the machine hostname. Repeat `--cert-host DNS_OR_IP`
+for each additional hostname or IP clients will use. Binding to `0.0.0.0` does **not**
+automatically discover or certify your LAN/public IP. For example:
+
+```bash
+swarm serve --host 0.0.0.0 --generate-certs-if-absent \
+  --cert-host 192.168.1.50 --cert-host workstation.example.com
+```
+
+Existing pairs are reused unchanged; the flag does not renew expired certificates
+or update their SANs. If only one file exists, startup fails rather than overwriting
+an identity. To change names or renew, stop the server and choose two new file paths
+(or back up and remove both old files), then distribute the new public certificate.
+Private keys are unencrypted for unattended startup and created with mode **0600**.
+Never distribute `privkey.pem`.
+
+**Self-signed certificates are not automatically trusted.** Import the public
+`cert.pem` into the browser/OS trust configuration for dashboard access. For relay
+connections, securely copy the relay's public certificate to each controller and
+start that controller with Python's trust configuration set, for example:
+
+```bash
+SSL_CERT_FILE="$HOME/.config/swarm/relay-cert.pem" \
+  swarm serve --generate-certs-if-absent \
+  --relay-url wss://swarm-relay.example.com:9443/v1/connect \
+  --relay-node-id workstation-a \
+  --relay-api-key-file ~/.config/swarm/relay.key
+
+curl --cacert ~/.config/swarm/relay-cert.pem \
+  https://swarm-relay.example.com:9443/health
+```
+
+Dashboard HTTPS automatically supplies its local certificate to managed agents and
+local federation forwarding through `SWARM_API_CA_FILE`, without disabling TLS
+verification or replacing the relay's trust configuration. For manually invoked
+agent commands, set `SWARM_API_URL=https://127.0.0.1:8787` and
+`SWARM_API_CA_FILE=/absolute/path/to/tls/dashboard/cert.pem` in that shell too.
+
+TLS encrypts traffic; **it does not add dashboard authentication**. The network-mode
+warning above still applies. Prefer a publicly trusted certificate for production relays.
+
 ## Federate multiple Swarms through an Azure relay
 
 A Swarm controller can make one outbound WSS connection to a central relay. Every

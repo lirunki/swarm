@@ -22,6 +22,46 @@ from .store import Store
 from .tool_inputs import retrieve
 
 
+def _tls_arguments(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--certfile", type=Path, help="TLS certificate PEM file")
+    command.add_argument("--keyfile", type=Path, help="TLS private key PEM file")
+    command.add_argument(
+        "--generate-certs-if-absent", action="store_true",
+        help="generate and use self-signed TLS files when both are absent (requires OpenSSL)",
+    )
+    command.add_argument(
+        "--cert-host", action="append", default=[], metavar="DNS_OR_IP",
+        help="extra certificate DNS name or IP (repeatable; includes localhost and machine hostname)",
+    )
+    command.add_argument("--cert-days", type=int, default=365, help="generated validity in days (365)")
+
+
+def _tls_options(args: argparse.Namespace, *, relay: bool = False) -> dict:
+    if bool(args.certfile) != bool(args.keyfile):
+        raise ValueError("--certfile and --keyfile must be supplied together")
+    if args.cert_host and not args.generate_certs_if_absent:
+        raise ValueError("--cert-host requires --generate-certs-if-absent")
+    if not args.certfile and not args.generate_certs_if_absent:
+        if relay:
+            raise ValueError("relay TLS requires --certfile and --keyfile or --generate-certs-if-absent")
+        return {}
+    directory = args.home.expanduser().resolve() / "tls" / ("relay" if relay else "dashboard")
+    cert = (args.certfile or directory / "cert.pem").expanduser().absolute()
+    key = (args.keyfile or directory / "privkey.pem").expanduser().absolute()
+    if args.generate_certs_if_absent:
+        from .certificates import generate_if_absent
+
+        generated = generate_if_absent(
+            cert, key, hosts=[args.host, *args.cert_host], days=args.cert_days
+        )
+        print(f"TLS certificate {'generated' if generated else 'reused'}: {cert}", flush=True)
+        print(
+            "Self-signed certificates must be explicitly trusted by browsers and relay clients. "
+            "TLS does not add authentication.", file=sys.stderr, flush=True,
+        )
+    return {"ssl_certfile": str(cert), "ssl_keyfile": str(key)}
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="swarm", description="A local dashboard for many agents")
     root.add_argument(
@@ -61,6 +101,7 @@ def parser() -> argparse.ArgumentParser:
         help="bind address (default: 127.0.0.1; 0.0.0.0 exposes unauthenticated network access)",
     )
     serve.add_argument("--port", type=int, default=8787)
+    _tls_arguments(serve)
     serve.add_argument("--pi", default=os.environ.get("SWARM_PI", "pi"), help="pi executable path")
     serve.add_argument(
         "--no-recover", action="store_true", help="do not launch saved sessions at startup"
@@ -80,8 +121,7 @@ def parser() -> argparse.ArgumentParser:
     relay_serve = relay_commands.add_parser("serve", help="run the federation relay")
     relay_serve.add_argument("--host", default="0.0.0.0")
     relay_serve.add_argument("--port", type=int, default=9443)
-    relay_serve.add_argument("--certfile", type=Path, required=True)
-    relay_serve.add_argument("--keyfile", type=Path, required=True)
+    _tls_arguments(relay_serve)
     relay_serve.add_argument(
         "--api-key-file", action="append", type=Path, help="one or two key files (repeatable)"
     )
@@ -329,8 +369,7 @@ def main(argv: list[str] | None = None) -> None:
                 port=args.port,
                 workers=1,
                 ws_max_size=1_048_576,
-                ssl_certfile=str(args.certfile.expanduser()),
-                ssl_keyfile=str(args.keyfile.expanduser()),
+                **_tls_options(args, relay=True),
             )
             return
         if args.command == "product":
@@ -374,7 +413,13 @@ def main(argv: list[str] | None = None) -> None:
             browser_host = (
                 "127.0.0.1" if network else ("[::1]" if args.host == "::1" else args.host)
             )
-            url = f"http://{browser_host}:{args.port}"
+            tls = _tls_options(args)
+            scheme = "https" if tls else "http"
+            url = f"{scheme}://{browser_host}:{args.port}"
+            if tls:
+                # Local agents and federation forwarding trust this controller's certificate
+                # without changing trust for the remote relay or disabling verification.
+                os.environ["SWARM_API_CA_FILE"] = tls["ssl_certfile"]
             if federation_config:
                 federation_config = FederationConfig(
                     url=federation_config.url,
@@ -417,6 +462,7 @@ def main(argv: list[str] | None = None) -> None:
                 port=args.port,
                 workers=1,
                 ws_max_size=262144,
+                **tls,
             )
         elif args.command == "list":
             print(

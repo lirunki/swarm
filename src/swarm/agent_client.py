@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
+import ssl
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit, urlunsplit
-from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+from urllib.request import (
+    HTTPRedirectHandler,
+    HTTPSHandler,
+    ProxyHandler,
+    Request,
+    build_opener,
+)
 
 DEFAULT_TIMEOUT = 15.0
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -25,8 +33,8 @@ class _NoRedirects(HTTPRedirectHandler):
 def validate_api_url(value: str) -> str:
     """Return a normalized API origin after enforcing the local-only boundary."""
     parsed = urlsplit(value)
-    if parsed.scheme != "http":
-        raise ValueError("--api-url must use http (not https or another scheme)")
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("--api-url must use http or https (not another scheme)")
     if parsed.username is not None or parsed.password is not None:
         raise ValueError("--api-url must not contain credentials")
     if parsed.query or parsed.fragment:
@@ -50,7 +58,7 @@ def validate_api_url(value: str) -> str:
     if port is not None:
         netloc += f":{port}"
     path = parsed.path.rstrip("/")
-    return urlunsplit(("http", netloc, path, "", ""))
+    return urlunsplit((parsed.scheme, netloc, path, "", ""))
 
 
 class AgentClient:
@@ -58,7 +66,23 @@ class AgentClient:
 
     def __init__(self, api_url: str, *, opener=None):
         self.api_url = validate_api_url(api_url)
-        self._opener = opener or build_opener(ProxyHandler({}), _NoRedirects())
+        self._opener = opener or build_opener(*self._handlers())
+
+    def _handlers(self):
+        # Loopback-only HTTPS for the local controller uses a verifying context that
+        # trusts SWARM_API_CA_FILE; verification is never disabled.
+        handlers = [ProxyHandler({}), _NoRedirects()]
+        if self.api_url.startswith("https://"):
+            handlers.append(HTTPSHandler(context=self._ssl_context()))
+        return handlers
+
+    @staticmethod
+    def _ssl_context() -> ssl.SSLContext:
+        context = ssl.create_default_context()
+        ca_file = os.environ.get("SWARM_API_CA_FILE")
+        if ca_file:
+            context.load_verify_locations(cafile=ca_file)
+        return context
 
     @staticmethod
     def _guidance(operation: str) -> str:

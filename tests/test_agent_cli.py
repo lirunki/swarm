@@ -164,7 +164,7 @@ def test_orchestration_requires_parent_and_absolute_paths(tmp_path, monkeypatch,
     assert "--repository must be an absolute path" in capsys.readouterr().err
 
 
-def test_client_allows_only_loopback_http_and_disables_proxy_redirects(monkeypatch):
+def test_client_allows_only_loopback_http_s_and_disables_proxy_redirects(monkeypatch):
     handlers = []
     monkeypatch.setattr(
         "swarm.agent_client.build_opener", lambda *values: handlers.extend(values) or Opener([])
@@ -173,7 +173,7 @@ def test_client_allows_only_loopback_http_and_disables_proxy_redirects(monkeypat
     AgentClient("http://localhost:8787")
     assert handlers[0].proxies == {}
     assert handlers[1].redirect_request(None, None, 302, "", {}, "http://127.0.0.1") is None
-    for url in ("https://127.0.0.1", "http://example.com", "http://user@localhost:8787"):
+    for url in ("https://example.com", "http://example.com", "http://user@localhost:8787"):
         with pytest.raises(ValueError):
             validate_api_url(url)
 

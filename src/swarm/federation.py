@@ -6,7 +6,9 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import random
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -26,6 +28,20 @@ MAX_RPC_REQUEST = 512 * 1024
 MAX_RPC_RESPONSE = 129 * 1024 * 1024
 RPC_CHUNK = 384 * 1024
 ALLOWED_METHODS = {"GET", "POST", "PATCH", "DELETE"}
+
+
+def _local_ssl_context() -> ssl.SSLContext:
+    """Verifying TLS context scoped to local dashboard connections only.
+
+    Loads SWARM_API_CA_FILE on top of the system trust store; verification is
+    never disabled. This context is deliberately not used for the remote relay
+    (wss://) connection, which keeps using the websockets default handling.
+    """
+    context = ssl.create_default_context()
+    ca_file = os.environ.get("SWARM_API_CA_FILE")
+    if ca_file:
+        context.load_verify_locations(cafile=ca_file)
+    return context
 
 
 @dataclass(frozen=True)
@@ -552,7 +568,11 @@ class FederationClient:
         if data is not None:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=data, method=method, headers=headers)
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        handlers = [urllib.request.ProxyHandler({})]
+        if self.config.local_api_url.lower().startswith("https://"):
+            # Scoped to the loopback dashboard; never used for the remote relay.
+            handlers.append(urllib.request.HTTPSHandler(context=_local_ssl_context()))
+        opener = urllib.request.build_opener(*handlers)
         try:
             response = opener.open(request, timeout=60)
         except urllib.error.HTTPError as exc:
@@ -579,7 +599,15 @@ class FederationClient:
                 "https://", "wss://", 1
             )
             url += f"/ws/terminal/{agent_id}?cols={cols}&rows={rows}"
-            async with connect(url, max_size=1_048_576, compression=None) as local:
+            # The local terminal websocket trusts the local CA only for wss://
+            # loopback; ws:// needs no TLS and the remote relay is unaffected.
+            local_ssl = _local_ssl_context() if url.lower().startswith("wss://") else None
+            async with connect(
+                url,
+                max_size=1_048_576,
+                compression=None,
+                ssl=local_ssl,
+            ) as local:
                 await self._route(sender, {"type": "stream.opened", "stream_id": stream_id})
 
                 async def output():

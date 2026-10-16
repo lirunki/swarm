@@ -90,6 +90,10 @@ class Processes:
             "SWARM_PARENT_ID": str(agent.parent_id) if agent.parent_id else "",
             "TERM": "xterm-256color",
         }
+        # Pass the local controller CA down so child agents can verify an HTTPS dashboard.
+        ca_file = os.environ.get("SWARM_API_CA_FILE")
+        if ca_file:
+            env["SWARM_API_CA_FILE"] = ca_file
         # tmux's server may predate refreshed credentials. Set this session's environment.
         inherited = {
             key: val
