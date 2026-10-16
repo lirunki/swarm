@@ -335,9 +335,9 @@ conservatively blocks while any native Pi has an unknown working folder.
   model context/history and process state are unaffected.
 - **Terminal ↗** (or **↗** on a compact tile) attaches to the real pi TUI using
   xterm.js and a tmux PTY client. Tabs retain scrollback while open, and open tabs
-  are remembered locally. The terminal toolbar keeps **Reconnect**; use the tab's
-  **×** to close it. Wake remains available on the agent card and in the offline
-  terminal overlay, rather than as a redundant toolbar button.
+  are remembered locally. The toolbar has **History** and **Reconnect**; in history
+  mode it offers **Refresh** and **Live input**. Use the tab's **×** to close it.
+  Wake remains available on the agent card and in the offline terminal overlay.
 - **Closing a terminal tab, the browser, or Swarm does not stop agents.**
   No hidden agent launch happens when a tab opens.
 - **Restart backend** in the top-right header confirms, then replaces only the Swarm
@@ -366,6 +366,34 @@ conservatively blocks while any native Pi has an unknown working folder.
 Agents have your user account's filesystem, Git, network and provider access.
 Choose goals and folders accordingly. Pi project trust prompts are left intact;
 if pi is waiting at startup for trust/login/model selection, open its Terminal.
+
+### Mobile terminal scrolling
+
+Swipe vertically on the live terminal, or tap **History**, to read a snapshot of
+retained tmux output. The history panel uses native browser scrolling and text
+selection, including on phones. Taps and horizontal/multi-finger gestures do not
+activate history. Touch swipes never become terminal keystrokes or commands.
+
+- **History** hides the live input surface and blurs its keyboard. Incoming live
+  terminal output still updates in the background; the agent is not paused.
+- **Refresh** captures newer output without abandoning your reading position
+  (unless you were already at the bottom).
+- **Live input**, or **Escape** while the history panel is focused, restores the
+  live terminal and typing. Switching tabs preserves each open tab's view; closing
+  the tab cancels its history request without stopping the agent.
+
+Snapshots read only the Swarm-owned tmux pane: no shared copy mode, mouse-setting
+changes, or injected input. Other attached clients keep their normal view and
+controls. Local and federated terminals use the same UI through the normal API
+proxy. Responses are non-cacheable and bounded to 10,000 lines / 2 MiB per request.
+History text is displayed as literal text, not HTML or executable terminal output.
+
+Only output retained by tmux is available. A stopped pane may still retain it;
+a removed pane or machine reboot may not. Full-screen applications may retain
+only the current screen, not their internal scrollback. This view is not the pi
+JSONL conversation archive, and missing terminal history does not delete or imply
+loss of the saved session. History can contain private terminal output, so keep
+dashboard access restricted just as you would for a live terminal.
 
 ## Advertise agent products
 
@@ -897,6 +925,9 @@ checks, or an external service can call Wake. Endpoints:
 - `GET /api/pi/sessions`, `POST /api/agents/adopt`: discover/adopt inactive sessions.
 - `GET /api/grok/sessions`, `POST /api/agents/import/grok`: discover, convert, and adopt Grok Build history.
 - `WS /ws/terminal/{id}`: attach-only terminal (binary output, JSON input/resize).
+- `GET /api/agents/{id}/terminal-history?lines=10000`: bounded read-only tmux
+  snapshot (`text`, `lines`, `limit`, `truncated`, `captured_at`); `lines` must be
+  1–10,000. Does not launch/wake an agent; unowned observations cannot be captured.
 - `/openapi.json`: generated API schema (no CDN-dependent API explorer).
 
 ## Development
@@ -908,6 +939,7 @@ ruff check src tests
 ruff format --check src tests
 node --check src/swarm/static/app.js
 node --check src/swarm/static/card-views.js
+node --check src/swarm/static/terminal-history.js
 node --check src/swarm/static/org-chart.js
 node --test tests/frontend/*.test.cjs
 ```

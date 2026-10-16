@@ -164,7 +164,10 @@ def test_dense_org_chart_layout_and_interactions(static_url, tmp_path, width):
             assert shortcut_box["y"] >= expand["y"] + expand["height"]
             shortcut.click()
             playwright.expect(page.locator("#terminals")).to_be_visible()
-            assert page.locator(".terminal-header button").all_text_contents() == ["↻ Reconnect"]
+            assert page.locator(".terminal-header button:visible").all_text_contents() == [
+                "History",
+                "↻ Reconnect",
+            ]
             page.locator(".tab-group .tab-close").click()
             playwright.expect(page.locator("#dashboard")).to_be_visible()
             page.locator('[data-agent-id="a0"] .card-toggle').click()
@@ -311,6 +314,102 @@ def test_local_relay_settings_dialog_connect_disconnect_and_errors(static_url, w
                 method == "POST" and path == "/api/federation/disconnect"
                 for method, path in requests
             )
+            assert page.evaluate("document.body.scrollWidth <= window.innerWidth")
+            assert not errors
+        finally:
+            browser.close()
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_touch_terminal_history_scrolling_and_live_input(static_url, width):
+    state = fixture_state()
+    history = "\n".join(f"HISTORY-ROW-{i:04d} <script>literal</script>" for i in range(350))
+    with playwright.sync_playwright() as runner:
+        try:
+            browser = runner.chromium.launch(headless=True)
+        except playwright.Error as exc:
+            if "Executable doesn't exist" in str(
+                exc
+            ) or "error while loading shared libraries" in str(exc):
+                pytest.skip("Optional Chromium runtime unavailable")
+            raise
+        try:
+            page = browser.new_page(
+                viewport={"width": width, "height": 1000}, has_touch=True, is_mobile=width == 390
+            )
+            errors = []
+            page.on("pageerror", lambda exc: errors.append(str(exc)))
+            page.add_init_script("""window.sentFrames = []; window.WebSocket = class {
+                static OPEN = 1;
+                constructor() { this.readyState = 1; setTimeout(() => {
+                    this.onopen?.(); this.onmessage?.({data: new TextEncoder().encode('\\x1b[?1049h\\x1b[?1000h\\x1b[?1006hLIVE VIEW').buffer});
+                }, 0); }
+                close() { this.readyState = 3; }
+                send(data) { window.sentFrames.push(JSON.parse(data)); }
+            };""")
+
+            def respond(route):
+                if "/terminal-history" in route.request.url:
+                    value = {"text": history, "lines": 350, "truncated": False}
+                elif "/api/federation/nodes" in route.request.url:
+                    value = {"enabled": False, "nodes": []}
+                else:
+                    value = state
+                route.fulfill(content_type="application/json", body=json.dumps(value))
+
+            page.route("**/api/**", respond)
+            page.goto(static_url)
+            page.locator('[data-agent-id="a0"] .card-terminal').click()
+            playwright.expect(page.locator(".terminal-screen")).to_be_visible()
+            cdp = page.context.new_cdp_session(page)
+
+            def swipe(x, start, end):
+                cdp.send(
+                    "Input.dispatchTouchEvent",
+                    {"type": "touchStart", "touchPoints": [{"x": x, "y": start}]},
+                )
+                for step in range(1, 7):
+                    cdp.send(
+                        "Input.dispatchTouchEvent",
+                        {
+                            "type": "touchMove",
+                            "touchPoints": [{"x": x, "y": start + (end - start) * step / 6}],
+                        },
+                    )
+                    page.wait_for_timeout(20)
+                cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+
+            screen = page.locator(".terminal-screen").bounding_box()
+            swipe(screen["x"] + 60, screen["y"] + 150, screen["y"] + 280)
+            panel = page.locator(".terminal-history")
+            playwright.expect(panel).to_be_visible()
+            playwright.expect(page.locator(".terminal-history-toggle")).to_have_text("Live input")
+            playwright.expect(page.locator(".terminal-history-status")).to_contain_text("350 lines")
+            assert page.locator(".terminal-history-text").inner_text() == history
+            assert not page.locator(".terminal-history script").count()
+            before = panel.evaluate("e => e.scrollTop")
+            box = panel.bounding_box()
+            swipe(box["x"] + 60, box["y"] + 150, box["y"] + 320)
+            page.wait_for_timeout(150)
+            assert panel.evaluate("e => e.scrollTop") < before
+            page.evaluate("terminals.get('a0').term.input('MUST NOT TYPE', true)")
+            assert not page.evaluate("window.sentFrames.some(frame => frame.type === 'input')")
+            page.locator(".terminal-history-refresh").click()
+            playwright.expect(page.locator(".terminal-history-status")).to_contain_text(
+                "History snapshot"
+            )
+            page.locator(".terminal-history-toggle").click()
+            playwright.expect(page.locator(".terminal-screen")).to_be_visible()
+            playwright.expect(panel).to_be_hidden()
+            page.evaluate("terminals.get('a0').term.input('LIVE TYPING', true)")
+            assert page.evaluate(
+                "window.sentFrames.some(frame => frame.type === 'input' && frame.data === 'LIVE TYPING')"
+            )
+            page.locator(".terminal-history-toggle").click()
+            playwright.expect(panel).to_be_visible()
+            panel.focus()
+            page.keyboard.press("Escape")
+            playwright.expect(panel).to_be_hidden()
             assert page.evaluate("document.body.scrollWidth <= window.innerWidth")
             assert not errors
         finally:

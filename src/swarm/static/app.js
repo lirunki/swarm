@@ -22,8 +22,8 @@ function toast(message, error = false) {
 const apiPath = path => activeSwarm === 'local' ? path : `/api/federation/${encodeURIComponent(activeSwarm)}/proxy${path}`;
 const stateWSPath = () => activeSwarm === 'local' ? '/ws/state' : `/ws/federation/${encodeURIComponent(activeSwarm)}/state`;
 const terminalWSPath = id => activeSwarm === 'local' ? `/ws/terminal/${id}` : `/ws/federation/${encodeURIComponent(activeSwarm)}/terminal/${id}`;
-async function localApi(path, method = 'GET', body) {
-  const response = await fetch(path, {method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+async function localApi(path, method = 'GET', body, options = {}) {
+  const response = await fetch(path, {...options, method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
   let value; try { value = await response.json(); } catch { throw new Error(`Unexpected response (${response.status})`); }
   if (!response.ok) throw new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value));
   return value;
@@ -323,7 +323,7 @@ function activate(id) {
   $('#dashboard-tab').classList.toggle('active', activeTab === 'dashboard');
   for (const [key, t] of terminals) {
     t.pane.hidden = key !== activeTab; t.tab.classList.toggle('active', key === activeTab); t.group.classList.toggle('active', key === activeTab);
-    if (key === activeTab) { initTerminal(t); requestAnimationFrame(() => { t.fit?.fit(); t.term?.focus(); }); }
+    if (key === activeTab) { initTerminal(t); requestAnimationFrame(() => { if (!t.history?.active) { t.fit?.fit(); t.term?.focus(); } }); }
   } remember();
 }
 function openTerminal(id, focus = true) {
@@ -332,13 +332,28 @@ function openTerminal(id, focus = true) {
     const pane = node('div', 'terminal-pane'); pane.hidden = true;
     const header = node('div', 'terminal-header');
     const title = node('strong'), info = node('span', 'hint'), connected = node('span', 'hint', 'Detached');
-    header.append(title, info, connected, button('↻ Reconnect', 'small', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); }));
+    const historyButton = node('button', 'small terminal-history-toggle', 'History'); historyButton.type = 'button';
+    const refreshHistory = node('button', 'small terminal-history-refresh', 'Refresh'); refreshHistory.type = 'button';
+    header.append(title, info, connected, historyButton, refreshHistory, button('↻ Reconnect', 'small', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); }));
     const surface = node('div', 'terminal-surface'), screen = node('div', 'terminal-screen'), overlay = node('div', 'terminal-overlay');
-    surface.append(screen, overlay); pane.append(header, surface); $('#terminals').append(pane);
+    const historyPanel = node('div', 'terminal-history'), historyText = node('pre', 'terminal-history-text'), historyStatus = node('div', 'terminal-history-status');
+    historyPanel.id = `terminal-history-${id}`; historyPanel.append(historyText);
+    surface.append(screen, historyPanel, overlay); pane.append(header, historyStatus, surface); $('#terminals').append(pane);
     const group = node('span', 'tab-group'), tab = button('', 'tab', () => activate(id));
     const tabLabel = node('span', 'tab-label'); tab.append(node('span', '', '›_'), tabLabel);
     group.append(tab, button('×', 'tab-close', () => closeTerminal(id))); $('.tab-close', group).setAttribute('aria-label', 'Close terminal tab'); $('#tabs').append(group);
-    const t = {id, pane, title, info, connected, screen, overlay, group, tab, tabLabel, term: null, fit: null, ws: null, timer: null, closed: false};
+    const t = {id, pane, title, info, connected, screen, overlay, group, tab, tabLabel, historyButton, term: null, fit: null, ws: null, timer: null, closed: false};
+    const historyPath = apiPath(`/api/agents/${encodeURIComponent(id)}/terminal-history`);
+    t.history = new SwarmTerminalHistory.TerminalHistory({screen, panel: historyPanel, text: historyText, status: historyStatus, toggleButton: historyButton, refreshButton: refreshHistory,
+      load: signal => localApi(historyPath, 'GET', undefined, {signal, cache: 'no-store'}),
+      onEnter: () => { t.term?.blur(); t.overlay.hidden = true; },
+      onLive: () => {
+        if (t.closed) return;
+        syncTerminal(t);
+        // Keep focus in the user gesture so iOS can reopen its software keyboard.
+        if (!t.closed && !t.pane.hidden && !t.history.active) { t.fit?.fit(); if (agentById(id)?.alive) t.term?.focus(); }
+      },
+    });
     terminals.set(id, t); syncTerminal(t);
   }
   if (focus) activate(id); else remember();
@@ -348,13 +363,13 @@ function initTerminal(t) {
   if (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined') { toast('Terminal assets are missing. See README vendor instructions.', true); return; }
   t.term = new Terminal({cursorBlink: true, fontSize: 13, fontFamily: 'ui-monospace,Consolas,monospace', scrollback: 10000, theme: {background: '#0d1015', foreground: '#e8ebf1', cursor: '#ffa16a'}});
   t.fit = new FitAddon.FitAddon(); t.term.loadAddon(t.fit); t.term.open(t.screen); t.fit.fit();
-  t.term.onData(data => { if (t.ws?.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({type: 'input', data})); });
+  t.term.onData(data => { if (!t.history?.active && t.ws?.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({type: 'input', data})); });
   t.term.onResize(({cols, rows}) => { if (t.ws?.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({type: 'resize', cols, rows})); });
-  t.observer = new ResizeObserver(() => { if (!t.pane.hidden) t.fit?.fit(); }); t.observer.observe(t.screen);
+  t.observer = new ResizeObserver(() => { if (!t.pane.hidden && !t.history?.active) t.fit?.fit(); }); t.observer.observe(t.screen);
   attachTerminal(t);
 }
 function overlay(t, title, message, actionText, action) {
-  t.overlay.hidden = false; t.overlay.replaceChildren(node('h2', '', title), node('p', '', message));
+  t.overlay.hidden = !!t.history?.active; t.overlay.replaceChildren(node('h2', '', title), node('p', '', message));
   if (action) t.overlay.append(button(actionText, 'primary', action));
 }
 function syncTerminal(t) {
@@ -362,17 +377,19 @@ function syncTerminal(t) {
   t.title.textContent = a.name; t.tabLabel.textContent = a.name;
   t.info.textContent = `${labels[a.status]} · ${a.session_id || 'session pending'} · ${a.folder}`;
   const compacting = compactionBlocked(a);
+  t.historyButton.disabled = !a.managed;
+  if (t.history?.active) { t.overlay.hidden = true; return; }
   if (!a.alive) {
     overlay(t, compacting ? 'Session compaction is running.' : 'This agent is offline.', compacting ? 'The saved session is being updated. It stays stopped afterward; wake it explicitly when the job completes.' : 'Opening a terminal only attaches to a process. Wake the agent explicitly to continue its saved session.', a.managed && !compacting ? 'Wake agent ↗' : '', a.managed && !compacting ? () => wakeAgent(t.id) : null);
   } else if (t.term && (!t.ws || t.ws.readyState > 1) && !t.timer) attachTerminal(t);
 }
 function attachTerminal(t) {
-  if (t.closed || !t.term || t.ws?.readyState < 2) return;
+  if (t.closed || t.history?.active || !t.term || t.ws?.readyState < 2) return;
   if (!agentById(t.id)?.alive) { syncTerminal(t); return; }
   clearTimeout(t.timer); t.timer = null;
   overlay(t, 'Attaching terminal…', 'The agent keeps running independently of this tab.');
   const ws = new WebSocket(wsURL(`${terminalWSPath(t.id)}?cols=${t.term.cols}&rows=${t.term.rows}`)); ws.binaryType = 'arraybuffer'; t.ws = ws;
-  ws.onopen = () => { if (t.ws !== ws || t.closed) { ws.close(); return; } t.overlay.hidden = true; t.connected.textContent = '● Attached'; t.term.reset(); t.fit.fit(); ws.send(JSON.stringify({type: 'resize', cols: t.term.cols, rows: t.term.rows})); };
+  ws.onopen = () => { if (t.ws !== ws || t.closed) { ws.close(); return; } t.overlay.hidden = true; t.connected.textContent = '● Attached'; t.term.reset(); if (!t.history?.active) t.fit.fit(); ws.send(JSON.stringify({type: 'resize', cols: t.term.cols, rows: t.term.rows})); };
   ws.onmessage = event => { if (t.ws === ws && event.data instanceof ArrayBuffer) t.term.write(new Uint8Array(event.data)); };
   ws.onerror = () => ws.close();
   ws.onclose = () => {
@@ -389,7 +406,7 @@ function disconnectTerminal(t) {
 }
 function closeTerminal(id) {
   const t = terminals.get(id); if (!t) return;
-  t.closed = true; disconnectTerminal(t); t.observer?.disconnect(); t.term?.dispose(); t.pane.remove(); t.group.remove(); terminals.delete(id);
+  t.closed = true; t.history?.dispose(); disconnectTerminal(t); t.observer?.disconnect(); t.term?.dispose(); t.pane.remove(); t.group.remove(); terminals.delete(id);
   // Deliberately no stop API call: only the attachment is disposable.
   if (activeTab === id) activate('dashboard'); remember();
 }

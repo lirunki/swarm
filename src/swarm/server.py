@@ -14,7 +14,7 @@ from urllib.parse import quote, urlsplit
 from uuid import UUID
 
 from anyio import CancelScope
-from fastapi import BackgroundTasks, FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -82,6 +82,7 @@ def create_app(
     sessions = Sessions(store, session_roots)
     grok = GrokSessions(store, grok_session_roots)
     listeners: set[asyncio.Queue] = set()
+    history_slots = asyncio.Semaphore(2)
     relay_settings = RelaySettings(store, api_url, lambda: controller.state, federation_config)
     federation = relay_settings.client
 
@@ -261,7 +262,10 @@ def create_app(
         except RuntimeError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=503)
         content = result.get("_body", b"")
-        headers = {"Content-Type": result.get("content_type", "application/octet-stream")}
+        headers = {
+            "Content-Type": result.get("content_type", "application/octet-stream"),
+            "Cache-Control": "no-store",
+        }
         if result.get("content_disposition"):
             headers["Content-Disposition"] = result["content_disposition"]
         return Response(content, status_code=int(result.get("status", 502)), headers=headers)
@@ -292,6 +296,15 @@ def create_app(
         result = await asyncio.to_thread(update)
         await broadcast()
         return result
+
+    @app.get("/api/agents/{agent_id}/terminal-history")
+    async def terminal_history(agent_id: UUID, lines: int = Query(default=10000, ge=1, le=10000)):
+        # Plain-text snapshots travel through the existing bounded federation GET
+        # proxy too. They never change a shared pane's mode or agent process state.
+        async with history_slots:
+            agent = await asyncio.to_thread(store.get, agent_id)
+            snapshot = await asyncio.to_thread(processes.capture_history, agent, lines)
+        return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
 
     @app.post("/api/agents/{agent_id}/product")
     async def publish_product(agent_id: UUID, request: ProductRequest):

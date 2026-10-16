@@ -13,9 +13,12 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from .adapters import SKILL, Adapter, PiAdapter
-from .models import Agent
+from .models import Agent, now
 from .paths import local_path
 from .store import Store
+
+MAX_HISTORY_LINES = 10000
+MAX_HISTORY_BYTES = 2 * 1024 * 1024
 
 
 class Processes:
@@ -185,6 +188,40 @@ class Processes:
     def stop(self, agent: Agent) -> None:
         # Never kill by a PID supplied in a Markdown record (PID reuse after reboot).
         self.run("kill-session", "-t", self.target(agent), check=False)
+
+    def capture_history(self, agent: Agent, lines: int = MAX_HISTORY_LINES) -> dict:
+        """Read retained pane output without entering copy mode or sending agent input."""
+        if not agent.managed:
+            raise ValueError("Terminal history is available only for Swarm-managed terminals.")
+        if type(lines) is not int or not 1 <= lines <= MAX_HISTORY_LINES:
+            raise ValueError("History line count must be between 1 and 10000.")
+        result = self.run(
+            "capture-pane",
+            "-p",
+            "-t",
+            self.target(agent) + ":0.0",
+            "-S",
+            f"-{lines}",
+            "-E",
+            "-",
+            check=False,
+        )
+        if result.returncode:
+            raise RuntimeError("No retained tmux history is available for this agent.")
+        rows = result.stdout.rstrip("\n").split("\n") if result.stdout.rstrip("\n") else []
+        truncated = len(rows) > lines
+        text = "\n".join(rows[-lines:])
+        encoded = text.encode("utf-8")
+        if len(encoded) > MAX_HISTORY_BYTES:
+            text = encoded[-MAX_HISTORY_BYTES:].decode("utf-8", errors="ignore")
+            truncated = True
+        return {
+            "text": text,
+            "lines": len(text.split("\n")) if text else 0,
+            "limit": lines,
+            "truncated": truncated,
+            "captured_at": now().isoformat(),
+        }
 
     def attach_argv(self, agent: Agent) -> list[str]:
         return self.argv("attach-session", "-t", self.target(agent))
