@@ -15,13 +15,14 @@ from uuid import UUID
 
 from anyio import CancelScope
 from fastapi import BackgroundTasks, FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .controller import Controller
 from .discovery import browse_folders, discover_models
+from .federation import MAX_RPC_REQUEST, FederationClient, FederationConfig
 from .importers.grok import GrokImportRequest, GrokSessions
 from .meta_compact import MetaCompactor, MetaCompactRequest, require_not_busy
 from .models import AgentPatch, CreateAgent, WakeRequest
@@ -66,6 +67,7 @@ def create_app(
     grok_session_roots: list[Path] | None = None,
     api_url: str = "http://127.0.0.1:8787",
     restart_action: Callable[[], None] = restart_process,
+    federation_config: FederationConfig | None = None,
 ) -> FastAPI:
     store = Store(home)
     processes = Processes(store, pi, api_url)
@@ -77,12 +79,17 @@ def create_app(
     sessions = Sessions(store, session_roots)
     grok = GrokSessions(store, grok_session_roots)
     listeners: set[asyncio.Queue] = set()
+    federation = (
+        FederationClient(federation_config, lambda: controller.state) if federation_config else None
+    )
 
     async def broadcast() -> None:
         for queue in list(listeners):
             if queue.full():
                 queue.get_nowait()
             queue.put_nowait(controller.state)
+        if federation:
+            federation.queue_state()
 
     async def monitor() -> None:
         while True:
@@ -107,9 +114,13 @@ def create_app(
             else:
                 await asyncio.to_thread(controller.refresh)
             task = asyncio.create_task(monitor())
+            if federation:
+                federation.start()
             try:
                 yield
             finally:
+                if federation:
+                    await federation.close()
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
                 await asyncio.to_thread(meta_compactor.close)
@@ -123,6 +134,7 @@ def create_app(
     app.state.tool_input_compactor = tool_input_compactor
     app.state.sessions = sessions
     app.state.grok_sessions = grok
+    app.state.federation = federation
     app.add_middleware(
         TrustedHostMiddleware, allowed_hosts=allowed_hosts or ["127.0.0.1", "localhost", "[::1]"]
     )
@@ -172,6 +184,58 @@ def create_app(
         # in-place exec keeps the controller PID while tmux-owned agents continue.
         background_tasks.add_task(restart_action)
         return {"restarting": True}
+
+    @app.get("/api/federation/nodes")
+    async def federation_nodes():
+        if not federation:
+            return {"enabled": False, "relay_online": False, "nodes": []}
+        return {
+            "enabled": True,
+            "relay_online": federation.websocket is not None,
+            "nodes": federation.summaries(),
+        }
+
+    @app.api_route(
+        "/api/federation/{node_id}/proxy/{remote_path:path}",
+        methods=["GET", "POST", "PATCH", "DELETE"],
+    )
+    async def federation_proxy(node_id: str, remote_path: str, request: Request):
+        if not federation:
+            return JSONResponse({"detail": "federation is not configured"}, status_code=404)
+        try:
+            declared = int(request.headers.get("content-length", "0"))
+        except ValueError:
+            return JSONResponse({"detail": "invalid Content-Length"}, status_code=400)
+        if declared > MAX_RPC_REQUEST:
+            return JSONResponse({"detail": "federated request exceeds 512 KiB"}, status_code=413)
+        chunks, size = [], 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > MAX_RPC_REQUEST:
+                return JSONResponse(
+                    {"detail": "federated request exceeds 512 KiB"}, status_code=413
+                )
+            chunks.append(chunk)
+        try:
+            result = await federation.request(
+                node_id,
+                request.method,
+                "/" + remote_path.lstrip("/"),
+                request.url.query,
+                b"".join(chunks),
+            )
+        except TimeoutError:
+            return JSONResponse(
+                {"detail": "remote Swarm timed out; mutation outcome may be unknown"},
+                status_code=504,
+            )
+        except RuntimeError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=503)
+        content = result.get("_body", b"")
+        headers = {"Content-Type": result.get("content_type", "application/octet-stream")}
+        if result.get("content_disposition"):
+            headers["Content-Disposition"] = result["content_disposition"]
+        return Response(content, status_code=int(result.get("status", 502)), headers=headers)
 
     @app.get("/api/config/models")
     async def models():
@@ -360,17 +424,7 @@ def create_app(
         await broadcast()
         return result
 
-    @app.websocket("/ws/state")
-    async def state_ws(ws: WebSocket):
-        if not same_origin(ws.headers):
-            await ws.close(code=1008)
-            return
-        await ws.accept()
-        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
-        listeners.add(queue)
-        queue.put_nowait(controller.state)
-
-        # Listen for disconnect even if no agent changes, avoiding idle client leaks.
+    async def queue_websocket(ws: WebSocket, queue: asyncio.Queue) -> None:
         async def sender():
             while True:
                 await ws.send_json(await queue.get())
@@ -389,13 +443,92 @@ def create_app(
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:
-            listeners.discard(queue)
-            # Preserve the host's original cancellation while joining child
-            # tasks, rather than leaking a new CancelledError from gather.
             with CancelScope(shield=True):
                 for task in tasks:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
+
+    @app.websocket("/ws/state")
+    async def state_ws(ws: WebSocket):
+        if not same_origin(ws.headers):
+            await ws.close(code=1008)
+            return
+        await ws.accept()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+        listeners.add(queue)
+        queue.put_nowait(controller.state)
+
+        try:
+            await queue_websocket(ws, queue)
+        finally:
+            listeners.discard(queue)
+
+    @app.websocket("/ws/federation/presence")
+    async def federation_presence_ws(ws: WebSocket):
+        if not same_origin(ws.headers) or not federation:
+            await ws.close(code=1008)
+            return
+        await ws.accept()
+        queue = federation.subscribe_presence()
+        try:
+            await queue_websocket(ws, queue)
+        finally:
+            federation.unsubscribe_presence(queue)
+
+    @app.websocket("/ws/federation/{node_id}/state")
+    async def federation_state_ws(ws: WebSocket, node_id: str):
+        if not same_origin(ws.headers) or not federation:
+            await ws.close(code=1008)
+            return
+        await ws.accept()
+        queue = federation.subscribe_state(node_id)
+        try:
+            await queue_websocket(ws, queue)
+        finally:
+            federation.unsubscribe_state(node_id, queue)
+
+    @app.websocket("/ws/federation/{node_id}/terminal/{agent_id}")
+    async def federation_terminal(
+        ws: WebSocket, node_id: str, agent_id: UUID, cols: int = 120, rows: int = 34
+    ):
+        if not same_origin(ws.headers) or not federation:
+            await ws.close(code=1008)
+            return
+        try:
+            stream = await federation.open_terminal(node_id, str(agent_id), cols, rows)
+        except (OSError, ValueError, RuntimeError, TimeoutError):
+            await ws.close(code=1008, reason="remote terminal is unavailable")
+            return
+        await ws.accept()
+
+        async def output():
+            while True:
+                data = await stream.receive()
+                if data is None:
+                    return
+                await ws.send_bytes(data)
+
+        async def input_():
+            while True:
+                message = await ws.receive()
+                if message["type"] == "websocket.disconnect":
+                    return
+                if message.get("text") is not None:
+                    await stream.send_text(message["text"])
+
+        tasks = [asyncio.create_task(output()), asyncio.create_task(input_())]
+        try:
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                task.result()
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            with CancelScope(shield=True):
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                await stream.close()
 
     @app.websocket("/ws/terminal/{agent_id}")
     async def terminal(ws: WebSocket, agent_id: UUID, cols: int = 120, rows: int = 34):

@@ -6,7 +6,8 @@ const button = (text, cls, action) => { const el = node('button', cls, text); el
 const labels = {running: 'Running', waiting: 'Waiting for input', dormant: 'Dormant', idle: 'Idle', done: 'Done'};
 let state = {agents: [], errors: {}, health: {}, home: ''};
 let filter = 'all', activeTab = 'dashboard', restored = false, stateSocket, reconnectDelay = 1000;
-let restartingController = false, restartTimer;
+let restartingController = false, restartTimer, activeSwarm = 'local', stateGeneration = 0, presenceSocket;
+let federationNodes = new Map(), federationRestored = false;
 let selectedSession = null, sessionData = [], wakeId = null, editId = null;
 let selectedGrokSession = null, grokSessionData = [], grokLoadSequence = 0;
 let folderBrowserPath = null, folderLoadSequence = 0;
@@ -18,8 +19,17 @@ function toast(message, error = false) {
   const el = $('#toast'); el.textContent = message; el.className = `toast${error ? ' error' : ''}`; el.hidden = false;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, error ? 9000 : 4500);
 }
-async function api(path, method = 'GET', body) {
+const apiPath = path => activeSwarm === 'local' ? path : `/api/federation/${encodeURIComponent(activeSwarm)}/proxy${path}`;
+const stateWSPath = () => activeSwarm === 'local' ? '/ws/state' : `/ws/federation/${encodeURIComponent(activeSwarm)}/state`;
+const terminalWSPath = id => activeSwarm === 'local' ? `/ws/terminal/${id}` : `/ws/federation/${encodeURIComponent(activeSwarm)}/terminal/${id}`;
+async function localApi(path, method = 'GET', body) {
   const response = await fetch(path, {method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+  let value; try { value = await response.json(); } catch { throw new Error(`Unexpected response (${response.status})`); }
+  if (!response.ok) throw new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value));
+  return value;
+}
+async function api(path, method = 'GET', body) {
+  const response = await fetch(apiPath(path), {method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
   let value; try { value = await response.json(); } catch { throw new Error(`Unexpected response (${response.status})`); }
   if (!response.ok) throw new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value));
   return value;
@@ -32,7 +42,8 @@ function since(value) {
   const s = Math.max(0, Math.floor(ms / 1000));
   return s < 60 ? 'just now' : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`;
 }
-function remember() { try { localStorage.setItem('swarm.tabs', JSON.stringify({ids: [...terminals.keys()], active: activeTab})); } catch { /* storage may be disabled */ } }
+const tabStorageKey = () => `swarm.tabs.${activeSwarm}`;
+function remember() { try { localStorage.setItem(tabStorageKey(), JSON.stringify({ids: [...terminals.keys()], active: activeTab})); } catch { /* storage may be disabled */ } }
 function applyState(data) {
   if (!Array.isArray(data.agents)) return;
   state = data;
@@ -41,31 +52,103 @@ function applyState(data) {
   if (!restored) {
     restored = true;
     try {
-      const saved = JSON.parse(localStorage.getItem('swarm.tabs') || '{}');
+      const saved = JSON.parse(localStorage.getItem(tabStorageKey()) || '{}');
       for (const id of saved.ids || []) if (agentById(id)) openTerminal(id, false);
       activate(saved.active === 'dashboard' || terminals.has(saved.active) ? saved.active : 'dashboard');
     } catch { /* invalid persisted tabs are ignored */ }
   }
 }
-async function refresh() { try { applyState(await api('/api/state')); } catch (error) { toast(error.message, true); } }
+async function refresh() {
+  const generation = stateGeneration;
+  try { const data = await api('/api/state'); if (generation === stateGeneration) applyState(data); }
+  catch (error) { if (generation === stateGeneration) toast(error.message, true); }
+}
 function connectState() {
   if (stateSocket && stateSocket.readyState < 2) return;
   const el = $('#connection'); el.textContent = 'Connecting…'; el.className = 'connection';
-  const socket = new WebSocket(wsURL('/ws/state')); stateSocket = socket;
+  const generation = stateGeneration;
+  const socket = new WebSocket(wsURL(stateWSPath())); stateSocket = socket;
   socket.onopen = () => {
-    reconnectDelay = 1000; el.textContent = '● Live'; el.className = 'connection live'; refresh();
+    reconnectDelay = 1000; el.textContent = activeSwarm === 'local' ? '● Live' : 'Connected'; el.className = activeSwarm === 'local' ? 'connection live' : 'connection'; refresh();
     if (restartingController) {
       restartingController = false; clearTimeout(restartTimer);
       const restart = $('#restart-controller'); restart.disabled = false; restart.textContent = '↻ Restart backend';
       toast('Swarm backend controller restarted. Agents kept running.');
     }
   };
-  socket.onmessage = event => { try { applyState(JSON.parse(event.data)); } catch (error) { console.warn('Invalid state update', error); } };
-  socket.onclose = () => { el.textContent = 'Reconnecting…'; el.className = 'connection offline'; setTimeout(connectState, reconnectDelay); reconnectDelay = Math.min(15000, reconnectDelay * 2); };
+  socket.onmessage = event => {
+    if (generation !== stateGeneration) return;
+    try {
+      const data = JSON.parse(event.data); applyState(data);
+      el.textContent = data.federation_offline ? 'Remote offline' : '● Live';
+      el.className = data.federation_offline ? 'connection offline' : 'connection live';
+    } catch (error) { console.warn('Invalid state update', error); }
+  };
+  socket.onclose = () => { if (generation !== stateGeneration) return; el.textContent = 'Reconnecting…'; el.className = 'connection offline'; setTimeout(connectState, reconnectDelay); reconnectDelay = Math.min(15000, reconnectDelay * 2); };
   socket.onerror = () => socket.close();
 }
+function updateRestartCapability() {
+  const button = $('#restart-controller');
+  const allowed = activeSwarm === 'local' || federationNodes.get(activeSwarm)?.capabilities?.remote_restart;
+  button.disabled = !allowed || restartingController;
+  button.title = allowed ? 'Restart the active Swarm backend controller' : 'This remote Swarm was not launched with --allow-remote-restart';
+}
+function renderSwarmSelector(data) {
+  const incoming = new Map((data.nodes || []).map(item => [item.id, item]));
+  if (activeSwarm !== 'local' && !incoming.has(activeSwarm) && federationNodes.has(activeSwarm)) {
+    incoming.set(activeSwarm, {...federationNodes.get(activeSwarm), online: false});
+  }
+  federationNodes = incoming;
+  const selector = $('#swarm-selector'), previous = activeSwarm;
+  selector.replaceChildren();
+  const local = document.createElement('option'); local.value = 'local'; local.textContent = 'Local'; selector.append(local);
+  for (const remote of federationNodes.values()) {
+    const option = document.createElement('option'); option.value = remote.id;
+    option.textContent = `${remote.name} (${remote.id})${remote.online === false ? ' — offline' : ''}`;
+    selector.append(option);
+  }
+  selector.value = [...selector.options].some(option => option.value === previous) ? previous : 'local';
+  $('#swarm-switcher').hidden = !data.enabled && !federationNodes.size;
+  if (activeSwarm !== 'local' && federationNodes.get(activeSwarm)?.online === false) {
+    $('#connection').textContent = 'Remote offline'; $('#connection').className = 'connection offline';
+  } else if (restartingController && activeSwarm !== 'local') {
+    restartingController = false; clearTimeout(restartTimer);
+    $('#restart-controller').textContent = '↻ Restart backend';
+    toast('Remote Swarm backend controller restarted. Agents kept running.');
+  }
+  updateRestartCapability();
+  if (!federationRestored) {
+    let saved = 'local'; try { saved = localStorage.getItem('swarm.active') || 'local'; } catch { /* storage may be disabled */ }
+    if (saved === 'local') federationRestored = true;
+    else if (federationNodes.has(saved)) { federationRestored = true; selector.value = saved; setTimeout(() => switchSwarm(saved), 0); }
+  }
+}
+async function loadFederation() {
+  try {
+    const data = await localApi('/api/federation/nodes'); renderSwarmSelector(data);
+    if (!data.enabled || presenceSocket?.readyState < 2) return;
+    const socket = new WebSocket(wsURL('/ws/federation/presence')); presenceSocket = socket;
+    socket.onmessage = event => { try { renderSwarmSelector({enabled: true, ...JSON.parse(event.data)}); } catch (error) { console.warn('Invalid federation presence', error); } };
+    socket.onclose = () => { if (presenceSocket === socket) { presenceSocket = null; setTimeout(loadFederation, 3000); } };
+    socket.onerror = () => socket.close();
+  } catch (error) { console.warn('Federation discovery failed', error); }
+}
+function switchSwarm(nodeId) {
+  if (nodeId === activeSwarm) return;
+  for (const id of [...terminals.keys()]) closeTerminal(id);
+  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+  if (stateSocket) { stateSocket.onclose = null; stateSocket.close(); stateSocket = null; }
+  stateGeneration += 1; reconnectDelay = 1000; restored = false; activeSwarm = nodeId;
+  try { localStorage.setItem('swarm.active', activeSwarm); } catch { /* storage may be disabled */ }
+  state = {agents: [], errors: {}, health: {}, home: ''}; filter = 'all'; $('#search').value = '';
+  $('#swarm-selector').value = activeSwarm;
+  activate('dashboard'); render(); updateRestartCapability(); connectState();
+}
+$('#swarm-selector').addEventListener('change', event => switchSwarm(event.currentTarget.value));
 async function restartController() {
-  if (restartingController || !confirm('Restart the Swarm backend controller?\n\nAgent processes are owned by tmux and will keep running. The dashboard will reconnect automatically.')) return;
+  const allowed = activeSwarm === 'local' || federationNodes.get(activeSwarm)?.capabilities?.remote_restart;
+  if (!allowed) { toast('Remote restart is disabled on this Swarm.', true); return; }
+  if (restartingController || !confirm('Restart the active Swarm backend controller?\n\nAgent processes are owned by tmux and will keep running. The dashboard will reconnect automatically.')) return;
   const restart = $('#restart-controller'); restartingController = true; restart.disabled = true; restart.textContent = 'Restarting…';
   try {
     await api('/api/controller/restart', 'POST');
@@ -113,7 +196,7 @@ function productLink(a) {
     link.title = `Open latest product: ${label}`;
   } else {
     if (typeof product.id !== 'string' || !product.id) return null;
-    link.href = `/api/agents/${encodeURIComponent(a.id)}/products/${encodeURIComponent(product.id)}/download`;
+    link.href = apiPath(`/api/agents/${encodeURIComponent(a.id)}/products/${encodeURIComponent(product.id)}/download`);
     link.download = product.filename || 'product';
     link.title = `Download latest product: ${label}`;
   }
@@ -288,7 +371,7 @@ function attachTerminal(t) {
   if (!agentById(t.id)?.alive) { syncTerminal(t); return; }
   clearTimeout(t.timer); t.timer = null;
   overlay(t, 'Attaching terminal…', 'The agent keeps running independently of this tab.');
-  const ws = new WebSocket(wsURL(`/ws/terminal/${t.id}?cols=${t.term.cols}&rows=${t.term.rows}`)); ws.binaryType = 'arraybuffer'; t.ws = ws;
+  const ws = new WebSocket(wsURL(`${terminalWSPath(t.id)}?cols=${t.term.cols}&rows=${t.term.rows}`)); ws.binaryType = 'arraybuffer'; t.ws = ws;
   ws.onopen = () => { if (t.ws !== ws || t.closed) { ws.close(); return; } t.overlay.hidden = true; t.connected.textContent = '● Attached'; t.term.reset(); t.fit.fit(); ws.send(JSON.stringify({type: 'resize', cols: t.term.cols, rows: t.term.rows})); };
   ws.onmessage = event => { if (t.ws === ws && event.data instanceof ArrayBuffer) t.term.write(new Uint8Array(event.data)); };
   ws.onerror = () => ws.close();
@@ -679,4 +762,4 @@ $('#adopt-button').addEventListener('click', () => { $('#adopt-form').reset(); $
 $('#refresh-sessions').addEventListener('click', loadSessions); $('#session-search').addEventListener('input', renderSessions);
 $('#dashboard-tab').addEventListener('click', () => activate('dashboard')); $('#search').addEventListener('input', render);
 document.addEventListener('keydown', event => { if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && activeTab === 'dashboard' && !document.querySelector('dialog[open]')) { event.preventDefault(); $('#search').focus(); } });
-refresh(); connectState();
+loadFederation(); refresh(); connectState();

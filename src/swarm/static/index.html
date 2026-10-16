@@ -16,8 +16,9 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/" aria-label="Swarm dashboard"><span class="brand-mark">⬡</span>swarm<span class="edition">LOCAL WORKSPACE</span></a>
-    <div class="top-meta"><span id="health"></span><span id="connection" class="connection">Connecting…</span><button id="restart-controller" class="restart-controller" type="button" title="Restart the Swarm backend controller">↻ Restart backend</button></div>
+    <a class="brand" href="/" aria-label="Swarm dashboard"><span class="brand-mark">⬡</span>swarm<span class="edition">FEDERATED WORKSPACE</span></a>
+    <label id="swarm-switcher" class="swarm-switcher" hidden><span>Swarm</span><select id="swarm-selector" aria-label="Active Swarm"><option value="local">Local</option></select></label>
+    <div class="top-meta"><span id="health"></span><span id="connection" class="connection">Connecting…</span><button id="restart-controller" class="restart-controller" type="button" title="Restart the active Swarm backend controller">↻ Restart backend</button></div>
   </header>
   <nav id="tabs" class="tabs" aria-label="Workspace tabs"><button id="dashboard-tab" class="tab active" type="button">◫ &nbsp;Dashboard</button></nav>
   <main id="dashboard">

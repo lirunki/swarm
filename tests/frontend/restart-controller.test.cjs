@@ -13,6 +13,8 @@ function restartHarness(confirmResult = true, reject = false) {
   const context = vm.createContext({
     restartingController: false,
     restartTimer: null,
+    activeSwarm: 'local',
+    federationNodes: new Map(),
     confirm: message => { calls.push(['confirm', message]); return confirmResult; },
     $: selector => { assert.equal(selector, '#restart-controller'); return restart; },
     api: async (url, method) => { calls.push(['api', url, method]); if (reject) throw Error('restart failed'); return {restarting: true}; },

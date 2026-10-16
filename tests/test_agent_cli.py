@@ -196,3 +196,76 @@ def test_serve_passes_public_api_url(tmp_path, monkeypatch):
     monkeypatch.setattr("uvicorn.run", lambda app, **kwargs: captured.update(app=app, run=kwargs))
     main(["--home", str(tmp_path), "serve", "--host", "::1", "--port", "9000"])
     assert captured["api_url"] == "http://[::1]:9000"
+
+
+def test_serve_builds_federation_config_and_remote_restart_capability(tmp_path, monkeypatch):
+    captured = {}
+    secret = tmp_path / "relay.key"
+    secret.write_text("mesh-secret-0123456789-abcdefghijkl\n")
+    secret.chmod(0o600)
+
+    def create_app(home, **kwargs):
+        captured.update(home=home, **kwargs)
+        return object()
+
+    monkeypatch.setattr("swarm.server.create_app", create_app)
+    monkeypatch.setattr("uvicorn.run", lambda app, **kwargs: captured.update(app=app, run=kwargs))
+    main(
+        [
+            "--home",
+            str(tmp_path / "home"),
+            "serve",
+            "--port",
+            "9000",
+            "--relay-url",
+            "wss://relay.example/v1/connect",
+            "--relay-node-id",
+            "desktop-a",
+            "--relay-name",
+            "Desktop A",
+            "--relay-api-key-file",
+            str(secret),
+            "--allow-remote-restart",
+        ]
+    )
+    federation = captured["federation_config"]
+    assert federation.node_id == "desktop-a"
+    assert federation.name == "Desktop A"
+    assert federation.api_key == "mesh-secret-0123456789-abcdefghijkl"
+    assert federation.local_api_url == "http://127.0.0.1:9000"
+    assert federation.allow_remote_restart
+
+
+def test_relay_serve_accepts_two_rotation_key_files(tmp_path, monkeypatch):
+    captured = {}
+    keys = []
+    for number in (1, 2):
+        path = tmp_path / f"key-{number}"
+        path.write_text(f"secret-{number}-0123456789-abcdefghijklmnop\n")
+        path.chmod(0o600)
+        keys.append(path)
+    monkeypatch.setattr(
+        "swarm.relay.create_relay_app",
+        lambda values: captured.update(keys=values) or object(),
+    )
+    monkeypatch.setattr("uvicorn.run", lambda app, **kwargs: captured.update(app=app, run=kwargs))
+    main(
+        [
+            "relay",
+            "serve",
+            "--certfile",
+            str(tmp_path / "cert.pem"),
+            "--keyfile",
+            str(tmp_path / "tls.key"),
+            "--api-key-file",
+            str(keys[0]),
+            "--api-key-file",
+            str(keys[1]),
+        ]
+    )
+    assert captured["keys"] == [
+        "secret-1-0123456789-abcdefghijklmnop",
+        "secret-2-0123456789-abcdefghijklmnop",
+    ]
+    assert captured["run"]["workers"] == 1
+    assert captured["run"]["ssl_certfile"] == str(tmp_path / "cert.pem")

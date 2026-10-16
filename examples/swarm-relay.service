@@ -1,0 +1,28 @@
+# Install as /etc/systemd/system/swarm-relay.service and replace paths/user/hostname.
+[Unit]
+Description=Swarm federation HTTPS/WSS relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=swarm-relay
+Group=swarm-relay
+WorkingDirectory=/opt/swarm
+ExecStart=/opt/swarm/.venv/bin/swarm relay serve --host 0.0.0.0 --port 9443 --certfile /etc/swarm-relay/fullchain.pem --keyfile /etc/swarm-relay/privkey.pem --api-key-file /etc/swarm-relay/api-key.current --api-key-file /etc/swarm-relay/api-key.next
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

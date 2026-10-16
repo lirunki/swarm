@@ -98,7 +98,7 @@ function renderer() {
     agentById: id => context.state.agents.find(a => a.id === id),
     metaCompactingId: null, toolInputCompactingId: null,
     labels: {running: 'Running', waiting: 'Waiting for input', idle: 'Idle', dormant: 'Dormant', done: 'Done'},
-    since: () => 'just now', openTerminal: id => calls.push(['terminal', id]), editAgent: id => calls.push(['edit', id]),
+    since: () => 'just now', apiPath: value => value, openTerminal: id => calls.push(['terminal', id]), editAgent: id => calls.push(['edit', id]),
     wakeAgent: id => calls.push(['wake', id]), stopAgent: id => calls.push(['stop', id]),
   });
   vm.runInContext(source.slice(source.indexOf('const $ ='), source.indexOf('const labels =')) + '\n' + source.slice(source.indexOf('function badge('), source.indexOf('\nfunction render()')), context);

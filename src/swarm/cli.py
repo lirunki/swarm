@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import socket
 import sys
 import threading
 import webbrowser
@@ -65,6 +66,25 @@ def parser() -> argparse.ArgumentParser:
         "--no-recover", action="store_true", help="do not launch saved sessions at startup"
     )
     serve.add_argument("--open", action="store_true", help="open the dashboard in a browser")
+    serve.add_argument("--relay-url", default=os.environ.get("SWARM_RELAY_URL"))
+    serve.add_argument("--relay-node-id", default=os.environ.get("SWARM_RELAY_NODE_ID"))
+    serve.add_argument("--relay-name", default=os.environ.get("SWARM_RELAY_NAME"))
+    serve.add_argument("--relay-api-key-file", type=Path)
+    serve.add_argument(
+        "--allow-remote-restart",
+        action="store_true",
+        help="allow trusted federated Swarms to restart this controller",
+    )
+    relay = commands.add_parser("relay", help="operate the HTTPS/WSS federation relay")
+    relay_commands = relay.add_subparsers(dest="relay_command", required=True)
+    relay_serve = relay_commands.add_parser("serve", help="run the federation relay")
+    relay_serve.add_argument("--host", default="0.0.0.0")
+    relay_serve.add_argument("--port", type=int, default=9443)
+    relay_serve.add_argument("--certfile", type=Path, required=True)
+    relay_serve.add_argument("--keyfile", type=Path, required=True)
+    relay_serve.add_argument(
+        "--api-key-file", action="append", type=Path, help="one or two key files (repeatable)"
+    )
     commands.add_parser("list", help="list agent records as JSON")
     commands.add_parser("doctor", help="check runtime prerequisites")
     commands.add_parser("sessions", help="list adoptable pi sessions as JSON")
@@ -257,6 +277,24 @@ def run_agent_command(args: argparse.Namespace) -> dict:
     raise ValueError("unknown agent command")
 
 
+def _secret(path: Path | None, environment: str) -> str:
+    if path:
+        try:
+            expanded = path.expanduser()
+            value = expanded.read_text(encoding="utf-8").strip()
+            if os.name != "nt" and expanded.stat().st_mode & 0o077:
+                raise ValueError(f"secret file permissions must be 0600: {expanded}")
+        except OSError as exc:
+            raise ValueError(f"cannot read secret file {path}: {exc}") from exc
+    else:
+        value = os.environ.get(environment, "").strip()
+    if not value:
+        raise ValueError(f"a nonempty secret is required via file or {environment}")
+    if len(value.encode()) < 32:
+        raise ValueError("relay API keys must be at least 32 bytes")
+    return value
+
+
 def main(argv: list[str] | None = None) -> None:
     root = parser()
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -264,6 +302,37 @@ def main(argv: list[str] | None = None) -> None:
     if args.command is None:
         args = root.parse_args([*argv, "serve"])
     try:
+        if args.command == "relay":
+            import uvicorn
+
+            from .relay import create_relay_app
+
+            files = args.api_key_file or []
+            if len(files) > 2:
+                raise ValueError("--api-key-file may be supplied at most twice")
+            if files:
+                keys = [_secret(path, "") for path in files]
+            else:
+                keys = [os.environ.get("SWARM_RELAY_API_KEY", "").strip()]
+                rotated = os.environ.get("SWARM_RELAY_API_KEY_NEXT", "").strip()
+                if rotated:
+                    keys.append(rotated)
+            keys = [key for key in keys if key]
+            if not keys:
+                raise ValueError(
+                    "relay needs --api-key-file or SWARM_RELAY_API_KEY; a second key may use "
+                    "SWARM_RELAY_API_KEY_NEXT"
+                )
+            uvicorn.run(
+                create_relay_app(keys),
+                host=args.host,
+                port=args.port,
+                workers=1,
+                ws_max_size=1_048_576,
+                ssl_certfile=str(args.certfile.expanduser()),
+                ssl_keyfile=str(args.keyfile.expanduser()),
+            )
+            return
         if args.command == "product":
             if not args.id:
                 raise ValueError("--id or SWARM_AGENT_ID is required to advertise a product")
@@ -283,13 +352,38 @@ def main(argv: list[str] | None = None) -> None:
         if args.command == "serve":
             import uvicorn
 
+            from .federation import FederationConfig
             from .server import create_app
+
+            federation_config = None
+            if args.relay_url:
+                if not args.relay_node_id:
+                    raise ValueError("--relay-node-id is required with --relay-url")
+                federation_config = FederationConfig(
+                    url=args.relay_url,
+                    node_id=args.relay_node_id,
+                    name=args.relay_name or socket.gethostname(),
+                    api_key=_secret(args.relay_api_key_file, "SWARM_RELAY_API_KEY"),
+                    local_api_url="",  # Filled after the local dashboard URL is known.
+                    allow_remote_restart=args.allow_remote_restart,
+                )
+            elif args.relay_node_id or args.relay_api_key_file or args.allow_remote_restart:
+                raise ValueError("relay node/key/restart options require --relay-url")
 
             network = args.host == "0.0.0.0"
             browser_host = (
                 "127.0.0.1" if network else ("[::1]" if args.host == "::1" else args.host)
             )
             url = f"http://{browser_host}:{args.port}"
+            if federation_config:
+                federation_config = FederationConfig(
+                    url=federation_config.url,
+                    node_id=federation_config.node_id,
+                    name=federation_config.name,
+                    api_key=federation_config.api_key,
+                    local_api_url=url,
+                    allow_remote_restart=federation_config.allow_remote_restart,
+                )
             print(
                 f"Swarm: {url}\nRegistry: {store.home}\nClosing the dashboard does not stop agents.",
                 flush=True,
@@ -317,6 +411,7 @@ def main(argv: list[str] | None = None) -> None:
                     grok_session_roots=args.grok_sessions_dir,
                     allowed_hosts=["*"] if network else None,
                     api_url=url,
+                    federation_config=federation_config,
                 ),
                 host=args.host,
                 port=args.port,

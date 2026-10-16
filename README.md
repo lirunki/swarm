@@ -60,6 +60,94 @@ Run **one controller per registry**, with one Uvicorn worker (the CLI enforces
 the latter). It is a single-user application, not a multi-user server, a sandbox,
 or an authentication boundary against other local processes.
 
+## Federate multiple Swarms through an Azure relay
+
+A Swarm controller can make one outbound WSS connection to a central relay. Every
+connected controller appears in the dashboard's top-level **Swarm** selector. The browser
+continues to connect only to its local controller; that controller multiplexes remote state,
+API calls, downloads and terminal bytes through the relay. Remote machines need no inbound
+port. Switching the selector displays one complete registry at a time.
+
+This is a **fully trusted mesh**. Either relay API key grants terminal and API control over
+every connected controller with that controller user's operating-system permissions. Keep
+keys out of URLs, browser storage, command lines and logs. The relay is stateless: offline
+controllers disappear from presence and requests are not queued or retried.
+
+### 1. Prepare the Azure VM
+
+Create a DNS record such as `swarm-relay.example.com`, allow inbound TCP 9443 in the Azure
+NSG/firewall, install this package in `/opt/swarm`, and obtain a certificate whose SAN matches
+the DNS name. Python terminates TLS directly, so give the relay service account read access
+to a copied/renewed full chain and private key. Restart the service after certificate renewal.
+Do not use a self-signed certificate unless every controller explicitly trusts its CA.
+
+Create one 32-byte-or-longer random mesh key and an optional second rotation key:
+
+```bash
+sudo install -d -o swarm-relay -g swarm-relay -m 0700 /etc/swarm-relay
+openssl rand -base64 48 | sudo tee /etc/swarm-relay/api-key.current >/dev/null
+openssl rand -base64 48 | sudo tee /etc/swarm-relay/api-key.next >/dev/null
+sudo chown swarm-relay:swarm-relay /etc/swarm-relay/api-key.*
+sudo chmod 0600 /etc/swarm-relay/api-key.*
+```
+
+Run the foreground service directly while testing:
+
+```bash
+swarm relay serve \
+  --host 0.0.0.0 --port 9443 \
+  --certfile /etc/swarm-relay/fullchain.pem \
+  --keyfile /etc/swarm-relay/privkey.pem \
+  --api-key-file /etc/swarm-relay/api-key.current \
+  --api-key-file /etc/swarm-relay/api-key.next
+```
+
+`GET https://swarm-relay.example.com:9443/health` reports protocol version and connected-node
+count without disclosing identities. The relay deliberately supports one process/worker;
+live WebSocket ownership is in memory. [`examples/swarm-relay.service`](examples/swarm-relay.service)
+is a hardened systemd starting point. Replace its user and paths, then:
+
+```bash
+sudo cp examples/swarm-relay.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now swarm-relay
+sudo systemctl status swarm-relay
+```
+
+### 2. Connect each Swarm backend
+
+Copy one active mesh key to a mode-0600 file on each backend and choose a unique stable node
+ID (`A-Z`, `a-z`, digits, `.`, `_`, `-`; 1–64 characters):
+
+```bash
+swarm serve \
+  --relay-url wss://swarm-relay.example.com:9443/v1/connect \
+  --relay-node-id workstation-a \
+  --relay-name "Office workstation" \
+  --relay-api-key-file ~/.config/swarm/relay.key
+```
+
+Duplicate live node IDs are rejected instead of silently replacing a connection. Controllers
+reconnect with bounded exponential backoff. State updates and terminal traffic share the
+outbound WSS connection; API responses larger than one frame are chunked with bounded sizes.
+Mutating API operations are never retried after a disconnect because their outcome may be
+unknown.
+
+Remote controller restart is denied by default. Opt in only on controllers where every mesh
+member is allowed to restart that backend:
+
+```bash
+swarm serve ... --allow-remote-restart
+```
+
+The capability is advertised to dashboards, which disable the remote restart button when it
+is absent. Agent processes remain tmux-owned during a controller restart. There is no remote
+Git fetch, pull or push API.
+
+For zero-downtime key rotation: start the relay with old and new key files, update and restart
+controllers one at a time to use the new key, then restart the relay with only the new key.
+The relay accepts at most two keys and compares them in constant time.
+
 ## Windows without WSL (experimental)
 
 From regular Git Bash in this checkout:
