@@ -486,18 +486,17 @@ test('compact terminal visibility does not depend on a new helper version', () =
   toggle.click(); assert.equal(shortcut.hidden, false);
   const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
   const version = html.match(/app\.js\?v=([^"]+)/)[1];
-  for (const asset of ['app.css', 'app.js', 'card-views.js', 'org-chart.js', 'relay-settings.js', 'terminal-history.js']) {
+  for (const asset of ['app.css', 'app.js', 'card-views.js', 'org-chart.js', 'relay-settings.js', 'terminal-touch.js']) {
     assert.ok(html.includes(`/static/${asset}?v=${version}`));
   }
 });
 
-test('terminal toolbar has history and reconnect without redundant Wake or Close tab', () => {
+test('terminal toolbar keeps reconnect but removes redundant Wake and Close tab', () => {
   const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
   const a = fullAgent('running', true), calls = [], panels = new Element('div'), tabs = new Element('div');
   const node = (tag, cls = '', text = '') => { const el = new Element(tag); el.className = cls; if (text) el.textContent = text; return el; };
   const context = vm.createContext({
     node, button: (text, cls, fn) => { const el = node('button', cls, text); el.addEventListener('click', fn); return el; },
-    apiPath: value => value, SwarmTerminalHistory: require('../../src/swarm/static/terminal-history.js'),
     $: (selector, root) => root ? find(root, selector.slice(1)) : selector === '#terminals' ? panels : tabs,
     agentById: id => id === a.id ? a : null, terminals: new Map(), labels: {running: 'Running'},
     compactionBlocked: () => false, remember() {}, activate: id => calls.push(['activate', id]),
@@ -510,7 +509,7 @@ test('terminal toolbar has history and reconnect without redundant Wake or Close
   vm.runInContext(open + '\n' + sync, context);
   context.openTerminal(a.id);
   const t = context.terminals.get(a.id), header = t.pane.childNodes[0];
-  assert.deepEqual(walk(header).filter(el => el.tagName === 'BUTTON').map(el => el.textContent), ['History', 'Refresh', '↻ Reconnect']);
+  assert.deepEqual(walk(header).filter(el => el.tagName === 'BUTTON').map(el => el.textContent), ['↻ Reconnect']);
   assert.equal('wakeButton' in t, false);
   assert.equal(find(t.group, 'tab-close').getAttribute('aria-label'), 'Close terminal tab');
   find(t.group, 'tab-close').click(); assert.ok(calls.some(c => c[0] === 'close' && c[1] === a.id));
