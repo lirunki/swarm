@@ -111,10 +111,15 @@ function fullAgent(status = 'running', alive = true) {
     updated_at: '2026-01-01T00:00:00Z', auto_resume: true, managed: true, notes: 'Next step', last_error: 'Example error', wait_reason: 'Example reason'};
 }
 
-test('compact renderer exposes only summary and toggle, expanded form restores all controls', () => {
+test('compact renderer exposes summary and terminal shortcut, expanded form restores all controls', () => {
   const {render, calls} = renderer();
-  const card = render(fullAgent('done'));
-  const toggle = find(card, 'card-toggle');
+  const a = fullAgent('done'), card = render(a);
+  const toggle = find(card, 'card-toggle'), terminal = find(card, 'card-terminal');
+  assert.equal(terminal.textContent, '↗'); assert.equal(terminal.hidden, false);
+  assert.equal(terminal.getAttribute('aria-label'), 'Open terminal for Researcher');
+  assert.deepEqual(find(card, 'card-controls').childNodes, [toggle, terminal]);
+  terminal.click(); assert.deepEqual(calls, [['terminal', a.id]]); calls.length = 0;
+  assert.equal(card.classList.contains('is-compact'), true);
   assert.equal(toggle.getAttribute('aria-expanded'), 'false');
   assert.match(toggle.getAttribute('aria-label'), /Expand card for Researcher/);
   assert.match(toggle.getAttribute('aria-controls'), /card-details-agent-1 card-actions-agent-1/);
@@ -125,6 +130,7 @@ test('compact renderer exposes only summary and toggle, expanded form restores a
   assert.equal(toggle.getAttribute('aria-describedby'), 'card-activity-agent-1');
   toggle.click();
   assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(terminal.hidden, true);
   assert.match(visibleText(card), /Checking CI/); assert.match(visibleText(card), /\/workspace/);
   assert.match(visibleText(card), /Track the PR/);
   for (const text of ['Terminal ↗', 'Edit', 'Wake', 'Stop']) {
@@ -340,7 +346,7 @@ test('rendered untrusted names/goals remain text and new helper loads before the
   assert.ok(visibleText(card).includes(a.name)); assert.ok(visibleText(card).includes(a.goal));
   assert.equal(walk(card).some(el => ['SCRIPT', 'IMG'].includes(el.tagName)), false);
   const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
-  assert.ok(html.indexOf('src="/static/card-views.js"') < html.indexOf('src="/static/app.js"'));
+  assert.ok(html.indexOf('src="/static/card-views.js?') < html.indexOf('src="/static/app.js?'));
   const css = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.css'), 'utf8');
   assert.ok(css.includes('.agent-grid{align-items:start}'));
 });
@@ -426,7 +432,7 @@ test('Collapse all changes display preferences in one storage write', () => {
 test('org chart integration loads before app and keeps nested-toggle focus', () => {
   const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
   const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
-  assert.ok(html.indexOf('src="/static/org-chart.js"') < html.indexOf('src="/static/app.js"'));
+  assert.ok(html.indexOf('src="/static/org-chart.js?') < html.indexOf('src="/static/app.js?'));
   assert.match(html, /id="agents" class="agent-grid org-chart"/);
   assert.match(html, /id="collapse-all"/);
   assert.match(source, /SwarmOrgChart.buildForest\(state.agents, new Set\(visible.map/);
@@ -464,4 +470,51 @@ test('unsafe product URLs never become card links', () => {
     const a = {...fullAgent('idle', false), product: {kind: 'link', label: 'Unsafe', url}};
     assert.equal(find(render(a), 'product-link'), undefined, url);
   }
+});
+
+
+test('compact terminal visibility does not depend on a new helper version', () => {
+  const {render, context} = renderer();
+  context.SwarmCardViews = {applyCardView: (parts, compact, name) => {
+    assert.equal('terminal' in parts, false);
+    applyCardView(parts, compact, name);
+  }};
+  const card = render(fullAgent('idle', false));
+  const shortcut = find(card, 'card-terminal'), toggle = find(card, 'card-toggle');
+  assert.equal(shortcut.hidden, false);
+  toggle.click(); assert.equal(shortcut.hidden, true);
+  toggle.click(); assert.equal(shortcut.hidden, false);
+  const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
+  for (const asset of ['app.css', 'app.js', 'card-views.js', 'org-chart.js']) {
+    assert.ok(html.includes(`/static/${asset}?v=compact-terminal-2`));
+  }
+});
+
+test('terminal toolbar keeps reconnect but removes redundant Wake and Close tab', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
+  const a = fullAgent('running', true), calls = [], panels = new Element('div'), tabs = new Element('div');
+  const node = (tag, cls = '', text = '') => { const el = new Element(tag); el.className = cls; if (text) el.textContent = text; return el; };
+  const context = vm.createContext({
+    node, button: (text, cls, fn) => { const el = node('button', cls, text); el.addEventListener('click', fn); return el; },
+    $: (selector, root) => root ? find(root, selector.slice(1)) : selector === '#terminals' ? panels : tabs,
+    agentById: id => id === a.id ? a : null, terminals: new Map(), labels: {running: 'Running'},
+    compactionBlocked: () => false, remember() {}, activate: id => calls.push(['activate', id]),
+    closeTerminal: id => calls.push(['close', id]), wakeAgent: id => calls.push(['wake', id]),
+    disconnectTerminal: t => calls.push(['disconnect', t.id]), attachTerminal: t => calls.push(['attach', t.id]),
+    overlay: (...args) => calls.push(['overlay', ...args.slice(1)]),
+  });
+  const open = source.slice(source.indexOf('function openTerminal('), source.indexOf('function initTerminal('));
+  const sync = source.slice(source.indexOf('function syncTerminal('), source.indexOf('function attachTerminal('));
+  vm.runInContext(open + '\n' + sync, context);
+  context.openTerminal(a.id);
+  const t = context.terminals.get(a.id), header = t.pane.childNodes[0];
+  assert.deepEqual(walk(header).filter(el => el.tagName === 'BUTTON').map(el => el.textContent), ['↻ Reconnect']);
+  assert.equal('wakeButton' in t, false);
+  assert.equal(find(t.group, 'tab-close').getAttribute('aria-label'), 'Close terminal tab');
+  find(t.group, 'tab-close').click(); assert.ok(calls.some(c => c[0] === 'close' && c[1] === a.id));
+  a.alive = false; context.syncTerminal(t);
+  assert.equal(calls.at(-1)[3], 'Wake agent ↗');
+  context.compactionBlocked = () => true; context.syncTerminal(t);
+  assert.equal(calls.at(-1)[4], null);
+  assert.equal(calls.filter(c => c[0] === 'wake').length, 0);
 });

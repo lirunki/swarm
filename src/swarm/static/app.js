@@ -135,10 +135,16 @@ function renderCard(a) {
     const compact = !cardViews.isCompact(state.home, a);
     cardViews.setCompact(state.home, a.id, compact);
     SwarmCardViews.applyCardView({card, details, foot, avatar, subtitle, toggle}, compact, a.name);
+    terminal.hidden = !compact;
   });
   toggle.setAttribute('aria-controls', `${details.id} card-actions-${a.id}`);
+  const terminal = button('↗', 'card-terminal', () => openTerminal(a.id));
+  terminal.title = `Open terminal for ${a.name}`;
+  terminal.setAttribute('aria-label', terminal.title);
+  terminal.hidden = true;
+  const controls = node('div', 'card-controls'); controls.append(toggle, terminal);
   const statusBadge = badge(a.status); statusBadge.title = labels[a.status] || a.status;
-  header.append(avatar, identity, statusBadge, toggle);
+  header.append(avatar, identity, statusBadge, controls);
   const goal = node('p', 'goal', a.goal); goal.title = a.goal;
   summary.append(header);
   const product = productLink(a);
@@ -178,7 +184,9 @@ function renderCard(a) {
     if (a.alive || a.auto_resume) actions.append(button('Stop', 'small danger', () => stopAgent(a.id)));
   }
   foot.append(runtime, actions); inside.append(summary, details); card.append(inside, foot);
-  SwarmCardViews.applyCardView({card, details, foot, avatar, subtitle, toggle}, cardViews.isCompact(state.home, a), a.name);
+  const compact = cardViews.isCompact(state.home, a);
+  SwarmCardViews.applyCardView({card, details, foot, avatar, subtitle, toggle}, compact, a.name);
+  terminal.hidden = !compact;
   return card;
 }
 function render() {
@@ -196,7 +204,9 @@ function render() {
   }
   const query = $('#search').value.trim().toLowerCase();
   const visible = state.agents.filter(a => (filter === 'all' || a.status === filter) && [a.name, a.goal, a.activity, a.folder, a.branch].join(' ').toLowerCase().includes(query));
-  const focusedToggle = document.activeElement?.classList.contains('card-toggle') ? document.activeElement.closest('.agent-card')?.dataset.agentId : null;
+  const active = document.activeElement;
+  const controlClass = active?.classList.contains('card-toggle') ? 'card-toggle' : active?.classList.contains('card-terminal') ? 'card-terminal' : null;
+  const focusedControl = controlClass ? {id: active.closest('.agent-card')?.dataset.agentId, selector: `.${controlClass}`} : null;
   const forest = SwarmOrgChart.buildForest(state.agents, new Set(visible.map(a => a.id)));
   const chart = $('#agents'), scrollLeft = chart.scrollLeft;
   chart.replaceChildren(SwarmOrgChart.renderForest(forest.roots, renderCard));
@@ -207,9 +217,9 @@ function render() {
     : `${forest.shownCount} agent${forest.shownCount === 1 ? '' : 's'} · ${forest.roots.length} root${forest.roots.length === 1 ? '' : 's'}`;
   if (forest.issuesCount) $('#hierarchy-summary').textContent += ` · ${forest.issuesCount} missing or invalid parent links`;
   $('#collapse-all').disabled = !state.agents.length;
-  if (focusedToggle) {
-    const replacement = [...chart.querySelectorAll('.agent-card')].find(card => card.dataset.agentId === focusedToggle);
-    if (replacement) $('.card-toggle', replacement)?.focus({preventScroll: true});
+  if (focusedControl) {
+    const replacement = [...chart.querySelectorAll('.agent-card')].find(card => card.dataset.agentId === focusedControl.id);
+    if (replacement) $(focusedControl.selector, replacement)?.focus({preventScroll: true});
   }
   const empty = $('#empty'); empty.hidden = visible.length > 0;
   $('h2', empty).textContent = state.agents.length ? 'No agents match this view.' : 'A little quiet in the swarm.';
@@ -239,14 +249,13 @@ function openTerminal(id, focus = true) {
     const pane = node('div', 'terminal-pane'); pane.hidden = true;
     const header = node('div', 'terminal-header');
     const title = node('strong'), info = node('span', 'hint'), connected = node('span', 'hint', 'Detached');
-    const wakeButton = button('Wake', 'small', () => wakeAgent(id));
-    header.append(title, info, connected, button('↻ Reconnect', 'small', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); }), wakeButton, button('Close tab', 'small', () => closeTerminal(id)));
+    header.append(title, info, connected, button('↻ Reconnect', 'small', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); }));
     const surface = node('div', 'terminal-surface'), screen = node('div', 'terminal-screen'), overlay = node('div', 'terminal-overlay');
     surface.append(screen, overlay); pane.append(header, surface); $('#terminals').append(pane);
     const group = node('span', 'tab-group'), tab = button('', 'tab', () => activate(id));
     const tabLabel = node('span', 'tab-label'); tab.append(node('span', '', '›_'), tabLabel);
     group.append(tab, button('×', 'tab-close', () => closeTerminal(id))); $('.tab-close', group).setAttribute('aria-label', 'Close terminal tab'); $('#tabs').append(group);
-    const t = {id, pane, title, info, connected, wakeButton, screen, overlay, group, tab, tabLabel, term: null, fit: null, ws: null, timer: null, closed: false};
+    const t = {id, pane, title, info, connected, screen, overlay, group, tab, tabLabel, term: null, fit: null, ws: null, timer: null, closed: false};
     terminals.set(id, t); syncTerminal(t);
   }
   if (focus) activate(id); else remember();
@@ -269,7 +278,7 @@ function syncTerminal(t) {
   const a = agentById(t.id); if (!a) return;
   t.title.textContent = a.name; t.tabLabel.textContent = a.name;
   t.info.textContent = `${labels[a.status]} · ${a.session_id || 'session pending'} · ${a.folder}`;
-  const compacting = compactionBlocked(a); t.wakeButton.disabled = compacting; t.wakeButton.title = compacting ? 'Session compaction is running' : '';
+  const compacting = compactionBlocked(a);
   if (!a.alive) {
     overlay(t, compacting ? 'Session compaction is running.' : 'This agent is offline.', compacting ? 'The saved session is being updated. It stays stopped afterward; wake it explicitly when the job completes.' : 'Opening a terminal only attaches to a process. Wake the agent explicitly to continue its saved session.', a.managed && !compacting ? 'Wake agent ↗' : '', a.managed && !compacting ? () => wakeAgent(t.id) : null);
   } else if (t.term && (!t.ws || t.ws.readyState > 1) && !t.timer) attachTerminal(t);

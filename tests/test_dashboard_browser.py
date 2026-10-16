@@ -156,7 +156,19 @@ def test_dense_org_chart_layout_and_interactions(static_url, tmp_path, width):
                 )
                 == "a2"
             )
+            expand = page.locator('[data-agent-id="a0"] .card-toggle').bounding_box()
+            shortcut = page.locator('[data-agent-id="a0"] .card-terminal')
+            shortcut_box = shortcut.bounding_box()
+            assert shortcut.inner_text() == "↗"
+            assert shortcut_box["x"] == expand["x"]
+            assert shortcut_box["y"] >= expand["y"] + expand["height"]
+            shortcut.click()
+            playwright.expect(page.locator("#terminals")).to_be_visible()
+            assert page.locator(".terminal-header button").all_text_contents() == ["↻ Reconnect"]
+            page.locator(".tab-group .tab-close").click()
+            playwright.expect(page.locator("#dashboard")).to_be_visible()
             page.locator('[data-agent-id="a0"] .card-toggle').click()
+            playwright.expect(page.locator('[data-agent-id="a0"] .card-terminal')).to_be_hidden()
             playwright.expect(page.locator('[data-agent-id="a0"] .goal')).to_be_visible()
             assert page.locator('[data-agent-id="a0"]').bounding_box()["width"] > 128
             page.locator("#collapse-all").click()
@@ -173,6 +185,9 @@ def test_dense_org_chart_layout_and_interactions(static_url, tmp_path, width):
             assert "Updated hover task" in page.locator('[data-agent-id="a5"]').get_attribute(
                 "title"
             )
+            page.locator('[data-agent-id="a5"] .card-terminal').focus()
+            page.evaluate("data => applyState(data)", state)
+            playwright.expect(page.locator('[data-agent-id="a5"] .card-terminal')).to_be_focused()
             page.locator("#search").fill("")
             page.locator("#agents").screenshot(path=str(tmp_path / f"org-chart-{width}.png"))
             page.locator("#search").fill("No such agent")

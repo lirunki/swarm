@@ -109,7 +109,8 @@ conservatively blocks while any native Pi has an unknown working folder.
   source folder's branch. Prefer a separate worktree per coding agent to prevent concurrent
   Git edits.
 - **Compact org chart:** agents appear as 128×128 square tiles containing only
-  their name, status and expand arrow, plus their latest product link when one is
+  their name, status, expand arrow and a **↗** terminal shortcut directly beneath
+  the arrow, plus their latest product link when one is
   advertised. Hover over the tile/name to see current
   activity; a red name means a live process, independent of goal status. Cards
   default to compact even when status changes; saved manual expansion choices
@@ -127,8 +128,11 @@ conservatively blocks while any native Pi has an unknown working folder.
   current page. Keyboard users can focus the chart to scroll and use each tile's
   expand button (with its activity description). These are display-only controls:
   model context/history and process state are unaffected.
-- **Terminal** attaches to the real pi TUI using xterm.js and a tmux PTY client.
-  Tabs retain scrollback while open, and open tabs are remembered locally.
+- **Terminal ↗** (or **↗** on a compact tile) attaches to the real pi TUI using
+  xterm.js and a tmux PTY client. Tabs retain scrollback while open, and open tabs
+  are remembered locally. The terminal toolbar keeps **Reconnect**; use the tab's
+  **×** to close it. Wake remains available on the agent card and in the offline
+  terminal overlay, rather than as a redundant toolbar button.
 - **Closing a terminal tab, the browser, or Swarm does not stop agents.**
   No hidden agent launch happens when a tab opens.
 - **Restart backend** in the top-right header confirms, then replaces only the Swarm
