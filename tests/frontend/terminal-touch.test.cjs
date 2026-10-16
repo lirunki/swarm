@@ -148,3 +148,16 @@ test('legacy TouchEvent fallback follows an original row even after it is detach
   row.events.get('touchend').callback(); assert.equal(row.events.size, 0);
   assert.equal(controller.gesture, null);
 });
+
+test('unexpected lost root capture cannot leave a contact that blocks the next swipe', () => {
+  const element = new Element(), captured = new Set(), wheels = [];
+  element.setPointerCapture = id => captured.add(id); element.hasPointerCapture = id => captured.has(id); element.releasePointerCapture = id => captured.delete(id);
+  const controller = new TerminalTouchScroll({element, pointerEvents: true, wheel: direction => wheels.push(direction)});
+  const pointer = (id, y) => ({pointerType: 'touch', pointerId: id, clientX: 40, clientY: y, timeStamp: 10,
+    cancelable: true, preventDefault() {}, stopPropagation() {}});
+  controller.pointerStart(pointer(1, 100)); controller.pointerMove(pointer(1, 130));
+  element.events.get('lostpointercapture').callback({target: element, pointerId: 1});
+  assert.equal(controller.contacts.size, 0); assert.equal(controller.gesture, null);
+  controller.pointerStart(pointer(2, 100)); controller.pointerMove(pointer(2, 160));
+  assert.equal(wheels.length, 3);
+});

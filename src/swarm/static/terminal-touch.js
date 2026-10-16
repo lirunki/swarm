@@ -44,7 +44,7 @@
         ['pointermove', event => this.pointerMove(event), {capture: true, passive: false}],
         ['pointerup', event => this.pointerEnd(event), {capture: true, passive: true}],
         ['pointercancel', event => this.pointerEnd(event), {capture: true, passive: true}],
-        ['lostpointercapture', event => { if (event.target === element && event.pointerId === this.pointerId) this.reset(); }, true],
+        ['lostpointercapture', event => { if (event.target === element && event.pointerId === this.pointerId) { this.contacts.delete(event.pointerId); this.reset(); } }, true],
         ['touchstart', event => { if (event.touches.length > 1) this.reset(); }, {capture: true, passive: true}],
         ['touchmove', event => { if (this.gesture?.scrolling) { if (event.cancelable) event.preventDefault(); event.stopPropagation(); } }, {capture: true, passive: false}],
       ] : [
