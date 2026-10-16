@@ -3,7 +3,8 @@
   'use strict';
 
   class RelaySettingsDialog {
-    constructor({query = selector => document.querySelector(selector), api, onChange = async () => {}, schedule = setTimeout, cancel = clearTimeout}) {
+    // Browser timers require the Window receiver, not this dialog instance.
+    constructor({query = selector => document.querySelector(selector), api, onChange = async () => {}, schedule = (callback, delay) => setTimeout(callback, delay), cancel = timer => clearTimeout(timer)}) {
       this.query = query; this.api = api; this.onChange = onChange;
       this.schedule = schedule; this.cancel = cancel;
       this.dialog = query('#settings-dialog'); this.form = query('#relay-settings-form');

@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const {RelaySettingsDialog} = require('../../src/swarm/static/relay-settings.js');
 const KEY = 'frontend-test-key-0123456789-abcdef';
 
@@ -44,6 +45,38 @@ test('Settings loads local redacted profile with empty password and Connect acti
   assert.equal(t.elements['#relay-settings-fields'].disabled, false);
   assert.equal(t.elements['#relay-settings-status'].textContent, 'Disconnected');
   assert.ok(t.elements['#settings-button'].events.has('click') && t.form.events.has('submit'));
+});
+
+test('Settings click uses native timer defaults without a dialog receiver', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/relay-settings.js'), 'utf8');
+  const scheduled = [], cancelled = [];
+  const sandbox = {
+    module: {exports: {}},
+    setTimeout: function (callback, delay) {
+      'use strict';
+      assert.equal(this, undefined, 'a browser timer must not receive the dialog as this');
+      scheduled.push({callback, delay}); return scheduled.length;
+    },
+    clearTimeout: function (timer) {
+      'use strict';
+      assert.equal(this, undefined, 'a browser timer must not receive the dialog as this');
+      cancelled.push(timer);
+    },
+  };
+  vm.runInNewContext(source, sandbox);
+  const t = fixture();
+  new sandbox.module.exports.RelaySettingsDialog({
+    query: selector => t.elements[selector], api: async () => initial(),
+  });
+  await t.elements['#settings-button'].events.get('click')();
+  assert.equal(t.dialog.open, true);
+  assert.equal(t.form.elements.relay_node_id.value, 'office-a');
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0].delay, 1500);
+  await scheduled[0].callback();
+  assert.equal(scheduled.length, 2, 'polling continues with the default scheduler');
+  t.dialog.close();
+  assert.equal(cancelled.at(-1), 2, 'closing cancels the browser timer');
 });
 
 test('Connect sends config only through local API and immediately clears the password', async () => {

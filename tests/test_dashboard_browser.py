@@ -278,6 +278,8 @@ def test_local_relay_settings_dialog_connect_disconnect_and_errors(static_url, w
             page.route("**/api/**", route_api)
             page.goto(static_url)
             page.locator("#settings-button").click()
+            assert not errors, f"Settings click raised a browser error: {errors}"
+            playwright.expect(page.locator("#settings-dialog")).to_be_visible()
             form = page.locator("#relay-settings-form")
             playwright.expect(page.locator("#relay-connect")).to_have_text("Connect")
             playwright.expect(form.locator('[name="relay_node_id"]')).to_have_value("demo-a")
