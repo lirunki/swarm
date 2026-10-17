@@ -164,7 +164,9 @@ def test_dense_org_chart_layout_and_interactions(static_url, tmp_path, width):
             assert shortcut_box["y"] >= expand["y"] + expand["height"]
             shortcut.click()
             playwright.expect(page.locator("#terminals")).to_be_visible()
-            assert page.locator(".terminal-header button").all_text_contents() == ["↻ Reconnect"]
+            assert page.locator(".terminal-header button:visible").all_text_contents() == [
+                "↻ Reconnect"
+            ]
             page.locator(".tab-group .tab-close").click()
             playwright.expect(page.locator("#dashboard")).to_be_visible()
             page.locator('[data-agent-id="a0"] .card-toggle').click()
@@ -311,6 +313,240 @@ def test_local_relay_settings_dialog_connect_disconnect_and_errors(static_url, w
                 method == "POST" and path == "/api/federation/disconnect"
                 for method, path in requests
             )
+            assert page.evaluate("document.body.scrollWidth <= window.innerWidth")
+            assert not errors
+        finally:
+            browser.close()
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_compact_status_adoption_and_help_controls(static_url, width):
+    state = fixture_state()
+    state["agents"] = state["agents"][:8]
+    statuses = ["running", "waiting", "idle", "done", "dormant", "idle", "running", "idle"]
+    for agent, status in zip(state["agents"], statuses, strict=True):
+        agent.update(status=status, parent_id=None)
+    with playwright.sync_playwright() as runner:
+        try:
+            browser = runner.chromium.launch(headless=True)
+        except playwright.Error as exc:
+            if "Executable doesn't exist" in str(
+                exc
+            ) or "error while loading shared libraries" in str(exc):
+                pytest.skip("Optional Chromium runtime unavailable")
+            raise
+        try:
+            page = browser.new_page(viewport={"width": width, "height": 1000})
+            errors = []
+            page.on("pageerror", lambda exc: errors.append(str(exc)))
+            page.add_init_script("""window.WebSocket = class {
+                static OPEN = 1;
+                constructor() { this.readyState = 1; setTimeout(() => this.onopen?.(), 0); }
+                close() { this.readyState = 3; }
+                send() {}
+            };""")
+
+            def respond(route):
+                url = route.request.url
+                if "/api/federation/nodes" in url:
+                    value = {"enabled": False, "nodes": []}
+                elif "/api/pi/sessions" in url or "/api/grok/sessions" in url:
+                    value = {"sessions": [], "errors": {}, "roots": []}
+                elif "/api/federation/settings" in url:
+                    value = {
+                        "enabled": False,
+                        "status": "disconnected",
+                        "has_api_key": False,
+                        "relay_url": "",
+                        "relay_node_id": "local-node",
+                        "relay_name": "Local",
+                    }
+                else:
+                    value = state
+                route.fulfill(content_type="application/json", body=json.dumps(value))
+
+            page.route("**/api/**", respond)
+            page.goto(static_url)
+            playwright.expect(page.locator(".agent-card")).to_have_count(8)
+            assert not page.locator("#summary").count()
+            if width >= 1000:
+                title = page.locator(".page-head-title").bounding_box()
+                control = page.locator("#status-filter").bounding_box()
+                adopt = page.locator("#adoption-menu-button").bounding_box()
+                assert title["x"] + title["width"] <= control["x"]
+                assert control["x"] + control["width"] <= adopt["x"]
+            page.locator("#status-filter-button").click()
+            playwright.expect(page.locator('[data-status-count="idle"]')).to_have_text("3")
+            playwright.expect(page.locator('[data-status-count="running"]')).to_have_text("2")
+            assert (
+                page.locator('[data-status-count="running"]').evaluate(
+                    "e => getComputedStyle(e).color"
+                )
+                == "rgb(104, 216, 174)"
+            )
+            page.locator('input[data-status="all"]').uncheck()
+            playwright.expect(page.locator("#empty")).to_be_visible()
+            page.locator('input[data-status="running"]').check()
+            page.locator('input[data-status="waiting"]').check()
+            playwright.expect(page.locator(".agent-card")).to_have_count(3)
+            playwright.expect(page.locator("#status-filter-label")).to_have_text("2 states")
+            playwright.expect(page.locator("#status-filter-count")).to_have_text("3")
+            selected = page.locator('input[data-status="waiting"]')
+            selected.focus()
+            state["agents"].append({**state["agents"][1], "id": "new-wait"})
+            page.evaluate("data => applyState(data)", state)
+            playwright.expect(selected).to_be_focused()
+            playwright.expect(page.locator('[data-status-count="waiting"]')).to_have_text("2")
+            playwright.expect(page.locator(".agent-card")).to_have_count(4)
+            page.keyboard.press("Escape")
+            playwright.expect(page.locator("#status-filter-menu")).to_be_hidden()
+            playwright.expect(page.locator("#status-filter-button")).to_be_focused()
+            page.locator("#status-filter-button").click()
+            page.locator('input[data-status="all"]').check()
+            page.keyboard.press("Escape")
+            playwright.expect(page.locator(".agent-card")).to_have_count(9)
+            for item, dialog in (
+                ("#adopt-button", "#adopt-dialog"),
+                ("#import-grok-button", "#import-grok-dialog"),
+            ):
+                page.locator("#adoption-menu-button").click()
+                playwright.expect(page.locator("#adoption-options")).to_be_visible()
+                page.locator(item).click()
+                playwright.expect(page.locator(dialog)).to_be_visible()
+                playwright.expect(page.locator("#adoption-options")).to_be_hidden()
+                page.locator(dialog + " [data-close]").first.click()
+            assert page.locator("#settings-button").inner_text() == "⚙"
+            assert page.locator("#settings-button").get_attribute("aria-label") == "Settings"
+            page.locator("#help-button").click()
+            playwright.expect(page.get_by_role("heading", name="Swarm help")).to_be_visible()
+            assert "Shift" in page.locator("#help-dialog").inner_text()
+            assert "Done copying" in page.locator("#help-dialog").inner_text()
+            page.keyboard.press("Escape")
+            playwright.expect(page.locator("#help-dialog")).to_be_hidden()
+            page.get_by_role("button", name="Settings", exact=True).click()
+            playwright.expect(page.locator("#settings-dialog")).to_be_visible()
+            page.keyboard.press("Escape")
+            assert page.evaluate("document.body.scrollWidth <= window.innerWidth")
+            assert not errors
+        finally:
+            browser.close()
+
+
+@pytest.mark.parametrize("mobile", [True, False])
+def test_native_mobile_copy_overlay_and_unchanged_desktop(static_url, mobile):
+    state = fixture_state()
+    with playwright.sync_playwright() as runner:
+        try:
+            browser = runner.chromium.launch(headless=True)
+        except playwright.Error as exc:
+            if "Executable doesn't exist" in str(
+                exc
+            ) or "error while loading shared libraries" in str(exc):
+                pytest.skip("Optional Chromium runtime unavailable")
+            raise
+        try:
+            context = browser.new_context(
+                viewport={"width": 390 if mobile else 1280, "height": 1000},
+                has_touch=mobile,
+                is_mobile=mobile,
+                permissions=["clipboard-read", "clipboard-write"],
+            )
+            page = context.new_page()
+            errors, requests = [], []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on("request", lambda request: requests.append(request.url))
+            page.add_init_script("""window.sentFrames = []; window.WebSocket = class {
+                static OPEN = 1;
+                constructor(url) { this.readyState = 1; setTimeout(() => {
+                    this.onopen?.();
+                    if (url.includes('/terminal/')) this.onmessage?.({data: new TextEncoder().encode('\\x1b[?1049h\\x1b[?1000h\\x1b[?1006hVISIBLE-ONE <script>literal</script>\\r\\nVISIBLE-TWO\\r\\n').buffer});
+                }, 0); }
+                close() { this.readyState = 3; }
+                send(data) { window.sentFrames.push(JSON.parse(data)); }
+            };""")
+            page.route(
+                "**/api/**",
+                lambda route: route.fulfill(
+                    content_type="application/json",
+                    body=json.dumps(
+                        {"enabled": False, "nodes": []}
+                        if "/api/federation/nodes" in route.request.url
+                        else state
+                    ),
+                ),
+            )
+            page.goto(static_url)
+            page.locator('[data-agent-id="a0"] .card-terminal').click()
+            page.wait_for_function(
+                "terminals.get('a0').term.buffer.active.getLine(0)?.translateToString().includes('VISIBLE-ONE')"
+            )
+            copy = page.locator(".terminal-copy-button")
+            if not mobile:
+                playwright.expect(copy).to_be_hidden()
+                assert page.locator(".terminal-header button:visible").all_text_contents() == [
+                    "↻ Reconnect"
+                ]
+                playwright.expect(page.locator(".terminal-copy-text")).to_be_hidden()
+                box = page.locator(".xterm-screen").bounding_box()
+                cols, rows = page.evaluate(
+                    "[terminals.get('a0').term.cols, terminals.get('a0').term.rows]"
+                )
+                page.keyboard.down("Shift")
+                page.mouse.move(box["x"] + 1, box["y"] + box["height"] / rows / 2)
+                page.mouse.down()
+                page.mouse.move(
+                    box["x"] + box["width"] / cols * 11,
+                    box["y"] + box["height"] / rows / 2,
+                    steps=8,
+                )
+                page.mouse.up()
+                page.keyboard.up("Shift")
+                selected = page.evaluate("terminals.get('a0').term.getSelection()")
+                assert selected.startswith("VISIBLE")
+                page.evaluate("navigator.clipboard.writeText('desktop-copy-sentinel')")
+                assert page.evaluate("document.execCommand('copy')")
+                assert page.evaluate("navigator.clipboard.readText()") == selected
+                playwright.expect(page.locator(".terminal-copy-text")).to_be_hidden()
+            else:
+                playwright.expect(copy).to_have_text("Copy text")
+                expected = page.evaluate("SwarmTerminalCopy.visibleText(terminals.get('a0').term)")
+                copy.click()
+                area = page.locator(".terminal-copy-text")
+                playwright.expect(area).to_be_visible()
+                playwright.expect(area).to_have_value(expected)
+                assert area.evaluate("e => e.readOnly")
+                assert not page.locator(".terminal-copy-text script").count()
+                assert not page.locator("dialog[open]").count()
+                playwright.expect(copy).to_have_text("Done copying")
+                screen_box, copy_box = (
+                    page.locator(".terminal-screen").bounding_box(),
+                    area.bounding_box(),
+                )
+                for key in ("x", "y", "width", "height"):
+                    assert abs(screen_box[key] - copy_box[key]) < 1, (screen_box, copy_box)
+                page.keyboard.type("NOT-EDITABLE")
+                playwright.expect(area).to_have_value(expected)
+                page.evaluate("terminals.get('a0').term.input('NO TERMINAL INPUT', true)")
+                assert not page.evaluate("window.sentFrames.some(value => value.type === 'input')")
+                page.evaluate("terminals.get('a0').term.write('NEW OUTPUT')")
+                playwright.expect(area).to_have_value(expected)
+                area.evaluate("e => { e.focus(); e.setSelectionRange(0, 11); }")
+                selected = expected[:11]
+                page.keyboard.press("Control+C")
+                playwright.expect(area).to_be_hidden()
+                playwright.expect(copy).to_have_text("Copy text")
+                assert page.evaluate("navigator.clipboard.readText()") == selected
+                assert not page.evaluate("window.sentFrames.some(value => value.type === 'input')")
+                copy.click()
+                playwright.expect(area).to_be_visible()
+                copy.click()
+                playwright.expect(area).to_be_hidden()
+                assert area.input_value() == ""
+                page.evaluate("terminals.get('a0').term.input('LIVE INPUT', true)")
+                assert page.evaluate(
+                    "window.sentFrames.some(value => value.type === 'input' && value.data === 'LIVE INPUT')"
+                )
+                assert not any("terminal-history" in url for url in requests)
             assert page.evaluate("document.body.scrollWidth <= window.innerWidth")
             assert not errors
         finally:

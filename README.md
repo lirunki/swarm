@@ -186,7 +186,7 @@ sudo systemctl status swarm-relay
 
 ### 2. Connect each Swarm backend
 
-Use **Settings** at the dashboard's top-right to configure the **local controller**.
+Use the **Settings gear icon** at the dashboard's top-right to configure the **local controller**.
 The dialog remains local even while the Swarm selector displays a remote workspace.
 Enter:
 
@@ -300,7 +300,9 @@ conservatively blocks while any native Pi has an unknown working folder.
 
 - Five explicit goal states: **running**, **waiting for input**, **dormant**,
   **idle** (turn completed), **done** (goal accomplished).
-- Live counts, status filters, search, current activity, activity checklist,
+- A compact **state multiselect** sits beside “Your agents, in sync.”, before the
+  adoption actions. Choose several states together; each entry shows its live count
+  and state color. **All** checks or clears every state. Search, current activity, activity checklist,
   checkpoint, folder, Git worktree/branch, session ID, process ID, and errors.
 - **New agent** starts pi in an existing server-local folder. The folder selector lists
   folders already used by agents; **Browse…** navigates directories visible to the Swarm
@@ -366,6 +368,32 @@ conservatively blocks while any native Pi has an unknown working folder.
 Agents have your user account's filesystem, Git, network and provider access.
 Choose goals and folders accordingly. Pi project trust prompts are left intact;
 if pi is waiting at startup for trust/login/model selection, open its Terminal.
+
+### Mobile terminal copying
+
+On touch-first/mobile browsers, **Copy text** appears beside **Reconnect**. It puts
+only the currently visible xterm screen into a **read-only native textarea covering
+exactly the terminal control**, not a dialog or a separate history view. Select text
+with the phone's normal handles and choose **Copy**. Once the browser's native copy
+action finishes, the layer closes automatically. **Done copying** (the same button)
+or Escape closes it without copying.
+
+Live output continues behind the layer, but the captured text stays unchanged for
+selection. While copying, swipe-to-tmux gestures and terminal keystroke forwarding
+are disabled; normal terminal behavior resumes when the layer closes. The copied
+text is never saved in browser storage or fetched from a new backend API, and the
+layer is cleared when closed/disposed. The implementation uses native selection and
+Copy—not `navigator.clipboard`—so it needs no app clipboard permission and also
+works where automatic clipboard APIs are unavailable on plain LAN HTTP.
+
+Desktop terminals keep their existing toolbar and interaction. Hold **Shift** while
+dragging to select past tmux mouse handling, then use the browser/system Copy action.
+The mobile copy control is hidden on mouse-first desktop browsers.
+
+Use the top-right **?** button for a quick guide to dashboard states, adoption,
+terminal scrolling/copying, process controls and relay safety. The adoption actions
+are grouped under **Adopt session → pi session / Grok session**; their original
+registration/import behavior is unchanged.
 
 ### Mobile terminal gestures
 
@@ -514,7 +542,7 @@ the runtime; an incomplete workspace must be inspected and repaired separately.
 
 Quit the original pi process first (not just its terminal view). Then:
 
-1. Click **Adopt pi session**.
+1. Open **Adopt session → pi session**.
 2. Choose a saved inactive session; optionally edit its name and goal.
 3. Click **Adopt session**. It appears **idle/offline**, with auto-resume off.
 4. Click **Wake** when you want it to continue.
@@ -711,7 +739,7 @@ as `agent.meta_compaction` through the normal state API/WebSocket.
 
 ## Import a Grok Build session into pi
 
-Click **Import Grok session**, choose a saved conversation, check its working
+Open **Adopt session → Grok session**, choose a saved conversation, check its working
 folder, and click **Convert and adopt**. The new agent appears **idle/offline**
 with auto-resume disabled. It runs **pi**, not Grok, when you explicitly Wake it.
 Stop the original Grok worker before waking its imported counterpart.
@@ -933,6 +961,8 @@ ruff format --check src tests
 node --check src/swarm/static/app.js
 node --check src/swarm/static/card-views.js
 node --check src/swarm/static/terminal-touch.js
+node --check src/swarm/static/terminal-copy.js
+node --check src/swarm/static/dashboard-controls.js
 node --check src/swarm/static/org-chart.js
 node --test tests/frontend/*.test.cjs
 ```

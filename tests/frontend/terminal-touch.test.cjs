@@ -90,11 +90,14 @@ test('actual terminal input pipeline forwards generated mouse reports and cleans
   }
   const sent = [], t = {screen: {}, pane: {hidden: false}, ws: {readyState: 1, send: raw => sent.push(JSON.parse(raw))}};
   const context = vm.createContext({Terminal, FitAddon: {FitAddon: class {fit() {}}}, WebSocket: {OPEN: 1}, ResizeObserver: class {observe() {}}, attachTerminal() {},
+    SwarmTerminalCopy: {TerminalCopy: class {constructor() { this.active = false; }}},
     SwarmTerminalTouch: {TerminalTouchScroll: class {constructor(options) { settings = options; }}, supportsScroll: () => true, scrollTerminal: () => inputHandler('\u001b[<64;10;5M')}});
   vm.runInContext(source.slice(source.indexOf('function initTerminal('), source.indexOf('function overlay(')), context);
   context.initTerminal(t); settings.wheel(-1, {x: 20, y: 30});
   assert.equal(sent[0].type, 'input'); assert.equal(sent[0].data, '\u001b[<64;10;5M');
-  assert.equal(settings.canScroll(), true); t.closed = true; assert.equal(settings.canScroll(), false);
+  assert.equal(settings.canScroll(), true);
+  t.copyText.active = true; inputHandler('not while copying'); assert.equal(sent.length, 1); assert.equal(settings.canScroll(), false);
+  t.copyText.active = false; t.closed = true; assert.equal(settings.canScroll(), false);
   assert.match(source, /t\.touchScroll\?\.dispose\(\)/);
   assert.doesNotMatch(source, /terminal-history|SwarmTerminalHistory/);
 });

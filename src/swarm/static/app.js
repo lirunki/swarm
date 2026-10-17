@@ -5,7 +5,7 @@ const node = (tag, cls = '', text = '') => { const el = document.createElement(t
 const button = (text, cls, action) => { const el = node('button', cls, text); el.type = 'button'; el.addEventListener('click', action); return el; };
 const labels = {running: 'Running', waiting: 'Waiting for input', dormant: 'Dormant', idle: 'Idle', done: 'Done'};
 let state = {agents: [], errors: {}, health: {}, home: ''};
-let filter = 'all', activeTab = 'dashboard', restored = false, stateSocket, reconnectDelay = 1000;
+let activeTab = 'dashboard', restored = false, stateSocket, reconnectDelay = 1000;
 let restartingController = false, restartTimer, activeSwarm = 'local', stateGeneration = 0, presenceSocket;
 let federationNodes = new Map(), federationRestored = false;
 let selectedSession = null, sessionData = [], wakeId = null, editId = null;
@@ -140,7 +140,7 @@ function switchSwarm(nodeId) {
   if (stateSocket) { stateSocket.onclose = null; stateSocket.close(); stateSocket = null; }
   stateGeneration += 1; reconnectDelay = 1000; restored = false; activeSwarm = nodeId;
   try { localStorage.setItem('swarm.active', activeSwarm); } catch { /* storage may be disabled */ }
-  state = {agents: [], errors: {}, health: {}, home: ''}; filter = 'all'; $('#search').value = '';
+  state = {agents: [], errors: {}, health: {}, home: ''}; dashboardControls.status.reset(); $('#search').value = '';
   $('#swarm-selector').value = activeSwarm;
   activate('dashboard'); render(); updateRestartCapability(); connectState();
 }
@@ -277,16 +277,9 @@ function render() {
   $('#agent-count').textContent = state.agents.length;
   const health = $('#health'); health.replaceChildren();
   for (const name of ['tmux', 'pi']) health.append(node('span', `health-pill${state.health[name] ? '' : ' bad'}`, `${state.health[name] ? '●' : '○'} ${name}`));
-  const summary = $('#summary'); summary.replaceChildren();
-  for (const status of ['all', ...Object.keys(labels)]) {
-    const count = status === 'all' ? state.agents.length : state.agents.filter(a => a.status === status).length;
-    const stat = button('', `stat${filter === status ? ' active' : ''}`, () => { filter = status; render(); });
-    stat.setAttribute('aria-pressed', String(filter === status));
-    const title = node('span', 'stat-title'); title.append(node('i', `status-dot ${status}`), document.createTextNode(status === 'all' ? 'All agents' : labels[status]));
-    stat.append(title, node('span', `stat-value ${status}`, String(count))); summary.append(stat);
-  }
+  dashboardControls.update(state.agents);
   const query = $('#search').value.trim().toLowerCase();
-  const visible = state.agents.filter(a => (filter === 'all' || a.status === filter) && [a.name, a.goal, a.activity, a.folder, a.branch].join(' ').toLowerCase().includes(query));
+  const visible = state.agents.filter(a => dashboardControls.status.matches(a.status) && [a.name, a.goal, a.activity, a.folder, a.branch].join(' ').toLowerCase().includes(query));
   const active = document.activeElement;
   const controlClass = active?.classList.contains('card-toggle') ? 'card-toggle' : active?.classList.contains('card-terminal') ? 'card-terminal' : null;
   const focusedControl = controlClass ? {id: active.closest('.agent-card')?.dataset.agentId, selector: `.${controlClass}`} : null;
@@ -323,7 +316,7 @@ function activate(id) {
   $('#dashboard-tab').classList.toggle('active', activeTab === 'dashboard');
   for (const [key, t] of terminals) {
     t.pane.hidden = key !== activeTab; t.tab.classList.toggle('active', key === activeTab); t.group.classList.toggle('active', key === activeTab);
-    if (key === activeTab) { initTerminal(t); requestAnimationFrame(() => { t.fit?.fit(); t.term?.focus(); }); }
+    if (key === activeTab) { initTerminal(t); requestAnimationFrame(() => { t.fit?.fit(); if (!t.copyText?.active) t.term?.focus(); }); }
   } remember();
 }
 function openTerminal(id, focus = true) {
@@ -332,13 +325,14 @@ function openTerminal(id, focus = true) {
     const pane = node('div', 'terminal-pane'); pane.hidden = true;
     const header = node('div', 'terminal-header');
     const title = node('strong'), info = node('span', 'hint'), connected = node('span', 'hint', 'Detached');
-    header.append(title, info, connected, button('↻ Reconnect', 'small', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); }));
+    const copyButton = node('button', 'small terminal-copy-button', 'Copy text'); copyButton.type = 'button'; copyButton.hidden = true; copyButton.dataset.agentId = id;
+    header.append(title, info, connected, copyButton, button('↻ Reconnect', 'small', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); }));
     const surface = node('div', 'terminal-surface'), screen = node('div', 'terminal-screen'), overlay = node('div', 'terminal-overlay');
     surface.append(screen, overlay); pane.append(header, surface); $('#terminals').append(pane);
     const group = node('span', 'tab-group'), tab = button('', 'tab', () => activate(id));
     const tabLabel = node('span', 'tab-label'); tab.append(node('span', '', '›_'), tabLabel);
     group.append(tab, button('×', 'tab-close', () => closeTerminal(id))); $('.tab-close', group).setAttribute('aria-label', 'Close terminal tab'); $('#tabs').append(group);
-    const t = {id, pane, title, info, connected, screen, overlay, group, tab, tabLabel, term: null, fit: null, ws: null, timer: null, closed: false};
+    const t = {id, pane, title, info, connected, screen, overlay, group, tab, tabLabel, copyButton, term: null, fit: null, ws: null, timer: null, closed: false};
     terminals.set(id, t); syncTerminal(t);
   }
   if (focus) activate(id); else remember();
@@ -348,13 +342,17 @@ function initTerminal(t) {
   if (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined') { toast('Terminal assets are missing. See README vendor instructions.', true); return; }
   t.term = new Terminal({cursorBlink: true, fontSize: 13, fontFamily: 'ui-monospace,Consolas,monospace', scrollback: 10000, theme: {background: '#0d1015', foreground: '#e8ebf1', cursor: '#ffa16a'}});
   t.fit = new FitAddon.FitAddon(); t.term.loadAddon(t.fit); t.term.open(t.screen); t.fit.fit();
-  t.term.onData(data => { if (t.ws?.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({type: 'input', data})); });
+  t.term.onData(data => { if (!t.copyText?.active && t.ws?.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({type: 'input', data})); });
   t.term.onResize(({cols, rows}) => { if (t.ws?.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({type: 'resize', cols, rows})); });
   t.touchScroll = new SwarmTerminalTouch.TerminalTouchScroll({
     element: t.screen,
-    canScroll: () => !t.closed && t.ws?.readyState === WebSocket.OPEN && SwarmTerminalTouch.supportsScroll(t.term),
+    canScroll: () => !t.closed && !t.copyText?.active && t.ws?.readyState === WebSocket.OPEN && SwarmTerminalTouch.supportsScroll(t.term),
     wheel: (direction, point) => SwarmTerminalTouch.scrollTerminal(t.term, direction, point),
     onGesture: () => t.term.blur(),
+  });
+  t.copyText = new SwarmTerminalCopy.TerminalCopy({term: t.term, screen: t.screen, button: t.copyButton,
+    onOpen: () => { t.touchScroll.reset(); t.term.blur(); },
+    onClose: focus => { if (focus && !t.closed && !t.pane.hidden) t.copyButton.focus({preventScroll: true}); },
   });
   t.observer = new ResizeObserver(() => { if (!t.pane.hidden) t.fit?.fit(); }); t.observer.observe(t.screen);
   attachTerminal(t);
@@ -395,7 +393,7 @@ function disconnectTerminal(t) {
 }
 function closeTerminal(id) {
   const t = terminals.get(id); if (!t) return;
-  t.closed = true; t.touchScroll?.dispose(); disconnectTerminal(t); t.observer?.disconnect(); t.term?.dispose(); t.pane.remove(); t.group.remove(); terminals.delete(id);
+  t.closed = true; t.copyText?.dispose(); t.touchScroll?.dispose(); disconnectTerminal(t); t.observer?.disconnect(); t.term?.dispose(); t.pane.remove(); t.group.remove(); terminals.delete(id);
   // Deliberately no stop API call: only the attachment is disposable.
   if (activeTab === id) activate('dashboard'); remember();
 }
@@ -750,13 +748,14 @@ $('#import-grok-form').addEventListener('submit', event => {
   submit(form, async () => {
     if (!selectedGrokSession) throw new Error('Choose an available Grok session first.');
     await api('/api/agents/import/grok', 'POST', {session_file: selectedGrokSession, name: form.elements.name.value, goal: form.elements.goal.value, folder: form.elements.folder.value});
-    $('#import-grok-dialog').close(); filter = 'all'; $('#search').value = ''; activate('dashboard');
+    $('#import-grok-dialog').close(); dashboardControls.status.reset(); $('#search').value = ''; activate('dashboard');
     toast('Grok history converted and adopted as pi. Wake it when you are ready.'); await refresh();
   });
 });
-$('#import-grok-button').addEventListener('click', () => { $('#import-grok-form').reset(); $('#grok-session-search').value = ''; $('#grok-roots').textContent = ''; showDialog('#import-grok-dialog'); loadGrokSessions(); });
+$('#import-grok-button').addEventListener('click', () => { dashboardControls.adoption.close(true); $('#import-grok-form').reset(); $('#grok-session-search').value = ''; $('#grok-roots').textContent = ''; showDialog('#import-grok-dialog'); loadGrokSessions(); });
 $('#refresh-grok-sessions').addEventListener('click', loadGrokSessions);
 $('#grok-session-search').addEventListener('input', renderGrokSessions);
+const dashboardControls = new SwarmDashboardControls.DashboardControls({onStatusChange: render});
 const relaySettingsDialog = new SwarmRelaySettings.RelaySettingsDialog({
   api: localApi,
   onChange: async value => {
@@ -771,7 +770,7 @@ const createDialog = () => {
   showDialog('#create-dialog'); loadModelOptions();
 };
 $('#create-button').addEventListener('click', createDialog); $('#empty-create').addEventListener('click', createDialog);
-$('#adopt-button').addEventListener('click', () => { $('#adopt-form').reset(); $('#session-search').value = ''; showDialog('#adopt-dialog'); loadSessions(); });
+$('#adopt-button').addEventListener('click', () => { dashboardControls.adoption.close(true); $('#adopt-form').reset(); $('#session-search').value = ''; showDialog('#adopt-dialog'); loadSessions(); });
 $('#refresh-sessions').addEventListener('click', loadSessions); $('#session-search').addEventListener('input', renderSessions);
 $('#dashboard-tab').addEventListener('click', () => activate('dashboard')); $('#search').addEventListener('input', render);
 document.addEventListener('keydown', event => { if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && activeTab === 'dashboard' && !document.querySelector('dialog[open]')) { event.preventDefault(); $('#search').focus(); } });

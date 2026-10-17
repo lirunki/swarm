@@ -7,28 +7,41 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=tmux-touch-2">
+  <link rel="stylesheet" href="/static/app.css?v=copy-controls-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=tmux-touch-2"></script>
-  <script defer src="/static/org-chart.js?v=tmux-touch-2"></script>
-  <script defer src="/static/relay-settings.js?v=tmux-touch-2"></script>
-  <script defer src="/static/terminal-touch.js?v=tmux-touch-2"></script>
-  <script defer src="/static/app.js?v=tmux-touch-2"></script>
+  <script defer src="/static/card-views.js?v=copy-controls-1"></script>
+  <script defer src="/static/org-chart.js?v=copy-controls-1"></script>
+  <script defer src="/static/relay-settings.js?v=copy-controls-1"></script>
+  <script defer src="/static/terminal-touch.js?v=copy-controls-1"></script>
+  <script defer src="/static/terminal-copy.js?v=copy-controls-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=copy-controls-1"></script>
+  <script defer src="/static/app.js?v=copy-controls-1"></script>
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="/" aria-label="Swarm dashboard"><span class="brand-mark">⬡</span>swarm<span class="edition">FEDERATED WORKSPACE</span></a>
     <label id="swarm-switcher" class="swarm-switcher" hidden><span>Swarm</span><select id="swarm-selector" aria-label="Active Swarm"><option value="local">Local</option></select></label>
-    <div class="top-meta"><span id="health"></span><span id="connection" class="connection">Connecting…</span><button id="restart-controller" class="restart-controller" type="button" title="Restart the active Swarm backend controller">↻ Restart backend</button><button id="settings-button" class="settings-button" type="button" aria-haspopup="dialog" aria-controls="settings-dialog">⚙ Settings</button></div>
+    <div class="top-meta"><span id="health"></span><span id="connection" class="connection">Connecting…</span><button id="restart-controller" class="restart-controller" type="button" title="Restart the active Swarm backend controller">↻ Restart backend</button><button id="help-button" class="header-icon" type="button" aria-label="Help" title="Swarm help" aria-haspopup="dialog" aria-controls="help-dialog">?</button><button id="settings-button" class="settings-button header-icon" type="button" aria-label="Settings" title="Settings" aria-haspopup="dialog" aria-controls="settings-dialog">⚙</button></div>
   </header>
   <nav id="tabs" class="tabs" aria-label="Workspace tabs"><button id="dashboard-tab" class="tab active" type="button">◫ &nbsp;Dashboard</button></nav>
   <main id="dashboard">
     <section class="page-head">
-      <div><div class="eyebrow">MISSION CONTROL</div><h1>Your agents, in sync.</h1><p>One workspace. Many independent minds.</p></div>
-      <div class="actions"><button id="adopt-button" type="button">↳ Adopt pi session</button><button id="import-grok-button" type="button">↳ Import Grok session</button><button id="create-button" type="button" class="primary">＋ New agent</button></div>
+      <div class="page-head-title"><div class="eyebrow">MISSION CONTROL</div><h1>Your agents, in sync.</h1><p>One workspace. Many independent minds.</p></div>
+      <div id="status-filter" class="status-filter compact-dropdown">
+        <button id="status-filter-button" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="status-filter-menu"><i id="status-filter-dot" class="status-dot all"></i><span id="status-filter-label">All states</span><span id="status-filter-count" class="count">0</span><span aria-hidden="true">▾</span></button>
+        <div id="status-filter-menu" class="dropdown-panel status-filter-menu" role="dialog" aria-label="Agent states" hidden>
+          <p class="dropdown-caption">Show agent states</p>
+          <label class="status-option"><input type="checkbox" data-status="all" checked><i class="status-dot all"></i><span>All</span><span class="status-count all" data-status-count="all">0</span></label>
+          <label class="status-option"><input type="checkbox" data-status="running" checked><i class="status-dot running"></i><span class="running">Running</span><span class="status-count running" data-status-count="running">0</span></label>
+          <label class="status-option"><input type="checkbox" data-status="waiting" checked><i class="status-dot waiting"></i><span class="waiting">Waiting</span><span class="status-count waiting" data-status-count="waiting">0</span></label>
+          <label class="status-option"><input type="checkbox" data-status="dormant" checked><i class="status-dot dormant"></i><span class="dormant">Dormant</span><span class="status-count dormant" data-status-count="dormant">0</span></label>
+          <label class="status-option"><input type="checkbox" data-status="idle" checked><i class="status-dot idle"></i><span class="idle">Idle</span><span class="status-count idle" data-status-count="idle">0</span></label>
+          <label class="status-option"><input type="checkbox" data-status="done" checked><i class="status-dot done"></i><span class="done">Done</span><span class="status-count done" data-status-count="done">0</span></label>
+        </div>
+      </div>
+      <div class="actions"><div id="adoption-menu" class="compact-dropdown"><button id="adoption-menu-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="adoption-options">↳ Adopt session <span aria-hidden="true">▾</span></button><div id="adoption-options" class="dropdown-panel adoption-options" role="menu" aria-label="Adopt session" hidden><button id="adopt-button" type="button" role="menuitem">pi session</button><button id="import-grok-button" type="button" role="menuitem">Grok session</button></div></div><button id="create-button" type="button" class="primary">＋ New agent</button></div>
     </section>
-    <section id="summary" class="summary" aria-label="Agent status counts"></section>
     <div class="list-toolbar"><div><h2>Agent hierarchy <span id="agent-count" class="count">0</span></h2><span class="hint">Parent → child · Hover for activity</span><p id="hierarchy-summary" class="hint" aria-live="polite"></p></div><div class="fleet-tools"><button id="collapse-all" class="small" type="button">Collapse all</button><label class="search-label"><span>⌕</span><input id="search" type="search" placeholder="Search agents, goals, branches…" aria-label="Search agents"></label></div></div>
     <details id="registry-errors" class="registry-errors" hidden><summary>Registry warnings</summary><div id="error-list"></div></details>
     <section id="agents" class="agent-grid org-chart" aria-label="Agent hierarchy" tabindex="0"></section>
@@ -36,6 +49,18 @@
     <footer class="page-footer"><span><i class="tiny-dot"></i> LOCAL-FIRST · FILE-BASED · ALWAYS YOURS</span><code id="home-path">~/.swarm/agents</code></footer>
   </main>
   <section id="terminals" aria-label="Agent terminal workspace" hidden></section>
+
+  <dialog id="help-dialog" aria-labelledby="help-title">
+    <header class="dialog-head"><div><div class="eyebrow">QUICK GUIDE</div><h2 id="help-title">Swarm help</h2></div><button type="button" class="icon-button" data-close aria-label="Close help">×</button></header>
+    <div class="help-content">
+      <section><h3>Dashboard</h3><p>Each tile is an independent agent. Expand it for goal, activities, checkpoint and controls. Use the state dropdown to show several states together; All checks or clears every state. Counts update live. Search filters names, goals, activities and folders. Dimmed ancestors remain to explain parent → child relationships.</p></section>
+      <section><h3>Agent states</h3><dl><dt class="running">Running</dt><dd>Working toward its goal.</dd><dt class="waiting">Waiting</dt><dd>Needs human input.</dd><dt class="dormant">Dormant</dt><dd>Waiting for an event or timer.</dd><dt class="idle">Idle</dt><dd>Turn complete, goal not yet complete.</dd><dt class="done">Done</dt><dd>Goal accomplished. Process liveness is shown separately.</dd></dl></section>
+      <section><h3>Sessions and controls</h3><p>New agent starts pi. Adopt session offers saved pi conversations or Grok history converted into pi; adopted/imported sessions stay offline until you Wake them. Closing a terminal tab does not stop its agent. Wake resumes; Stop terminates and disables automatic restore. Edit → Forget removes an inactive agent while keeping its saved session history.</p></section>
+      <section><h3>Terminal scrolling and copying</h3><p>On mobile, swipe down for older output and up for newer output. At the bottom, tap to type. Copy text puts the visible screen in a read-only layer directly over the terminal: use native selection handles and Copy. It closes after copying, or tap Done copying. Only the visible screen is captured—scroll first for other text.</p><p>On desktop, hold Shift while dragging to select past tmux mouse handling, then use your browser or system Copy command. Desktop terminals have no extra copy layer.</p></section>
+      <section><h3>Relay and safety</h3><p>The Swarm selector changes workspace. The gear always configures the local relay connection. A relay joins fully trusted controllers: peers can control agents and read data. Keep the dashboard on localhost, HTTPS, or a trusted network. Restart backend reloads the controller, not its tmux-backed agents.</p></section>
+    </div>
+    <footer class="dialog-footer"><button type="button" data-close>Close</button></footer>
+  </dialog>
 
   <dialog id="settings-dialog" aria-labelledby="settings-title">
     <form id="relay-settings-form" autocomplete="off">

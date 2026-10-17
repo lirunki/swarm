@@ -486,7 +486,7 @@ test('compact terminal visibility does not depend on a new helper version', () =
   toggle.click(); assert.equal(shortcut.hidden, false);
   const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
   const version = html.match(/app\.js\?v=([^"]+)/)[1];
-  for (const asset of ['app.css', 'app.js', 'card-views.js', 'org-chart.js', 'relay-settings.js', 'terminal-touch.js']) {
+  for (const asset of ['app.css', 'app.js', 'card-views.js', 'org-chart.js', 'relay-settings.js', 'terminal-touch.js', 'terminal-copy.js', 'dashboard-controls.js']) {
     assert.ok(html.includes(`/static/${asset}?v=${version}`));
   }
 });
@@ -509,7 +509,7 @@ test('terminal toolbar keeps reconnect but removes redundant Wake and Close tab'
   vm.runInContext(open + '\n' + sync, context);
   context.openTerminal(a.id);
   const t = context.terminals.get(a.id), header = t.pane.childNodes[0];
-  assert.deepEqual(walk(header).filter(el => el.tagName === 'BUTTON').map(el => el.textContent), ['↻ Reconnect']);
+  assert.deepEqual(walk(header).filter(el => el.tagName === 'BUTTON' && !el.hidden).map(el => el.textContent), ['↻ Reconnect']);
   assert.equal('wakeButton' in t, false);
   assert.equal(find(t.group, 'tab-close').getAttribute('aria-label'), 'Close terminal tab');
   find(t.group, 'tab-close').click(); assert.ok(calls.some(c => c[0] === 'close' && c[1] === a.id));

@@ -171,7 +171,7 @@ for line in sys.stdin:
                     "id => terminals.get(id).term.input('MOBILE-LIVE\\r', true)", str(agent.id)
                 )
                 for _ in range(100):
-                    if received.exists():
+                    if received.exists() and received.read_text() == "MOBILE-LIVE\n":
                         break
                     time.sleep(0.02)
                 assert received.read_text() == "MOBILE-LIVE\n"
