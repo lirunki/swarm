@@ -370,11 +370,16 @@ def test_compact_status_adoption_and_help_controls(static_url, width):
             playwright.expect(page.locator(".agent-card")).to_have_count(8)
             assert not page.locator("#summary").count()
             if width >= 1000:
-                title = page.locator(".page-head-title").bounding_box()
+                title = page.locator(".page-head-title .eyebrow").bounding_box()
                 control = page.locator("#status-filter").bounding_box()
                 adopt = page.locator("#adoption-menu-button").bounding_box()
-                assert title["x"] + title["width"] <= control["x"]
+                search = page.locator("#search").bounding_box()
+                create = page.locator("#create-button").bounding_box()
+                assert title["x"] == control["x"]
+                assert control["y"] >= title["y"] + title["height"]
                 assert control["x"] + control["width"] <= adopt["x"]
+                assert search["y"] >= adopt["y"] + adopt["height"]
+                assert abs(create["x"] + create["width"] - search["x"] - search["width"]) < 1
             page.locator("#status-filter-button").click()
             playwright.expect(page.locator('[data-status-count="idle"]')).to_have_text("3")
             playwright.expect(page.locator('[data-status-count="running"]')).to_have_text("2")
@@ -549,5 +554,94 @@ def test_native_mobile_copy_overlay_and_unchanged_desktop(static_url, mobile):
                 assert not any("terminal-history" in url for url in requests)
             assert page.evaluate("document.body.scrollWidth <= window.innerWidth")
             assert not errors
+        finally:
+            browser.close()
+
+
+def test_dashboard_reference_layout(static_url, tmp_path):
+    state = fixture_state()
+    state["agents"] = state["agents"][:13]
+    names = [
+        "coordinator",
+        "parser-fix-test-evidence",
+        "workspace-fix-timer-evidence",
+        "build_checks",
+        "Research",
+        "App-Integration",
+        "UTILITIES",
+        "RECOVERY_WORKER",
+        "reviewer",
+        "audit",
+        "FIXER",
+        "deployment",
+        "Caretaker PR #42",
+    ]
+    for i, agent in enumerate(state["agents"]):
+        agent.update(
+            name=names[i],
+            parent_id="a10" if i == 12 else None,
+            status="done"
+            if i == 0
+            else "dormant"
+            if i == 12
+            else "running"
+            if i in (3, 10, 11)
+            else "idle",
+            alive=i in (0, 3, 10, 11, 12),
+        )
+        agent.pop("product", None)
+        if i in (3, 10, 11, 12):
+            agent["product"] = {
+                "id": f"product-{i}",
+                "kind": "link",
+                "label": "PR / report produced",
+                "url": "https://example.invalid/result",
+            }
+    with playwright.sync_playwright() as runner:
+        try:
+            browser = runner.chromium.launch(headless=True)
+        except playwright.Error as exc:
+            if "Executable doesn't exist" in str(
+                exc
+            ) or "error while loading shared libraries" in str(exc):
+                pytest.skip("Optional Chromium runtime unavailable")
+            raise
+        try:
+            page = browser.new_page(viewport={"width": 1450, "height": 762})
+            page.add_init_script("""window.WebSocket = class {
+                static OPEN = 1;
+                constructor() { this.readyState = 1; setTimeout(() => this.onopen?.(), 0); }
+                close() { this.readyState = 3; } send() {}
+            };""")
+
+            def respond(route):
+                payload = (
+                    {"enabled": False, "nodes": []}
+                    if "/api/federation/" in route.request.url
+                    else state
+                )
+                route.fulfill(content_type="application/json", body=json.dumps(payload))
+
+            page.route("**/api/**", respond)
+            page.goto(static_url)
+            playwright.expect(page.locator(".agent-card")).to_have_count(13)
+            dashboard = page.locator("#dashboard").bounding_box()
+            boxes = [page.locator(f'[data-agent-id="a{i}"]').bounding_box() for i in range(13)]
+            assert all(abs(box["y"] - boxes[0]["y"]) < 1 for box in boxes[:10])
+            assert 140 <= boxes[0]["y"] - dashboard["y"] <= 150
+            assert all(box["width"] == 128 and box["height"] == 128 for box in boxes)
+            assert boxes[10]["y"] > boxes[0]["y"] + 128
+            assert boxes[12]["y"] > boxes[10]["y"] + 128
+            assert abs(boxes[10]["x"] - boxes[12]["x"]) < 1
+            assert page.get_by_text("Your agents, in sync.", exact=True).count() == 0
+            assert page.locator("#hierarchy-summary").evaluate(
+                "e => e.classList.contains('sr-only')"
+            )
+            assert page.locator("#agents").bounding_box()["width"] >= 1388
+            footer = page.locator(".page-footer").bounding_box()
+            assert footer["y"] >= boxes[12]["y"] + boxes[12]["height"]
+            assert footer["y"] + footer["height"] <= dashboard["y"] + dashboard["height"]
+            assert page.evaluate("document.body.scrollWidth <= window.innerWidth")
+            page.locator("#dashboard").screenshot(path=str(tmp_path / "dashboard-reference.png"))
         finally:
             browser.close()

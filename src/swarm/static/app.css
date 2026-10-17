@@ -52,7 +52,7 @@ dialog{width:min(520px,calc(100vw - 32px));max-height:90dvh;overflow:auto;backgr
 .agent-card.is-compact .card-summary{flex:1;min-height:0;gap:0}
 .agent-card.is-compact .card-head{display:grid;grid-template-columns:minmax(0,1fr) 28px;grid-template-rows:1fr auto;gap:8px;flex:1;min-height:0}
 .agent-card.is-compact .card-identity{grid-column:1;grid-row:1;align-self:start}
-.agent-card.is-compact .card-identity h3{font-size:12px;line-height:1.35;white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.agent-card.is-compact .card-identity h3{font-size:11px;line-height:1.45;white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
 .agent-card.is-compact .card-toggle{grid-column:2;grid-row:1;align-self:start;min-width:28px;min-height:28px;padding:0 4px;font-size:18px}
 .agent-card.is-compact .badge{grid-column:1 / -1;grid-row:2;justify-self:start;max-width:100%;font-size:9px;padding:2px 6px;gap:4px}
 @media(max-width:650px){.fleet-tools{width:100%;flex-wrap:wrap}.fleet-tools .search-label{min-width:160px}.org-forest{gap:20px 8px}.org-children>.org-node{padding-left:4px;padding-right:4px}}
@@ -83,3 +83,38 @@ dialog{width:min(520px,calc(100vw - 32px));max-height:90dvh;overflow:auto;backgr
 /* Compact title-row menus and explicit, keyboard-accessible popup controls. */
 .page-head-title{flex:1;min-width:0}.compact-dropdown{position:relative;flex-shrink:0}.status-filter{margin-left:auto}#status-filter-button{display:flex;align-items:center;gap:9px;white-space:nowrap;min-width:160px;justify-content:space-between}.dropdown-panel{position:absolute;top:calc(100% + 7px);right:0;z-index:30;background:#171e28;border:1px solid #3c475a;border-radius:10px;box-shadow:0 12px 40px #0009;padding:7px;min-width:205px}.dropdown-caption{padding:5px 8px 8px;color:var(--muted);font-size:10px;letter-spacing:.6px}.status-option{display:flex;align-items:center;gap:9px;margin:0;padding:8px 9px;border-radius:6px;font-size:12px;cursor:pointer;white-space:nowrap}.status-option:hover{background:#263042}.status-option input{width:14px;height:14px;padding:0;margin:0;accent-color:var(--accent);flex-shrink:0}.status-count{margin-left:auto;font-variant-numeric:tabular-nums}.all{color:var(--accent)}.adoption-options{min-width:175px}.adoption-options button{display:block;width:100%;border:0;text-align:left;background:transparent}.adoption-options button:hover,.adoption-options button:focus-visible{background:#263042}.header-icon{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:34px;height:34px;padding:0;font-size:18px;line-height:1}.help-content{display:flex;flex-direction:column;gap:18px;font-size:13px;color:#c3cbd8}.help-content h3{font-size:14px;color:var(--ink);margin-bottom:5px}.help-content p+p{margin-top:8px}.help-content dl{display:grid;grid-template-columns:85px 1fr;gap:5px 10px;margin:0;font-size:12px}.help-content dd{margin:0;color:var(--muted)}
 @media(max-width:1000px){.page-head{gap:16px}#status-filter-button{min-width:145px}}@media(max-width:650px){.page-head{align-items:stretch}.status-filter{margin:0;align-self:flex-start}.page-head>.actions{flex-direction:row;justify-content:flex-start;align-items:center}.status-filter-menu,.adoption-options{right:auto;left:0}.header-icon{width:32px;height:32px;padding:0}.settings-button.header-icon{padding:0}.dropdown-panel{max-width:calc(100vw - 32px)}}
+
+
+/* Screenshot reference: two compact control rows above the full-width fleet. */
+.sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
+#dashboard{display:flex;flex-direction:column;min-height:0;padding:15px 28px 8px}
+#dashboard>section,#dashboard>details,#dashboard>.hierarchy-note,#dashboard>.page-footer{flex-shrink:0}
+.mission-toolbar{display:grid;grid-template-columns:minmax(160px,1fr) auto;grid-template-rows:auto auto;gap:10px 25px;align-items:center;margin-bottom:35px}
+.mission-toolbar .page-head-title{grid-column:1;grid-row:1 / 3;align-self:stretch;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;min-width:0}
+.mission-toolbar .eyebrow{margin:0 0 10px}
+.mission-toolbar .status-filter{margin:0;align-self:auto}
+.mission-toolbar #status-filter-button{min-width:160px;height:41px;font-size:13px}
+.mission-toolbar .status-filter-menu{left:0;right:auto}
+.mission-toolbar>.actions{grid-column:2;grid-row:1;flex-direction:row;justify-content:flex-end;align-items:center;flex-wrap:nowrap}
+.mission-toolbar>.fleet-tools{grid-column:2;grid-row:2;justify-content:flex-end;align-items:center;width:auto;flex-wrap:nowrap}
+.mission-toolbar>.actions>button,.mission-toolbar #adoption-menu-button{height:41px;font-size:13px}
+.mission-toolbar .search-label{flex:none;min-width:0}
+.mission-toolbar .search-label input{width:280px;margin:0;height:38px}
+.hierarchy-note:not(.sr-only){margin:0 0 12px;font-size:11px}
+#dashboard>.page-footer{margin-top:auto;padding-top:30px;align-items:center;min-width:0}
+.page-footer #home-path{max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:650px){
+  #dashboard{padding:16px 14px 10px}
+  .mission-toolbar{grid-template-columns:minmax(0,1fr);gap:14px;margin-bottom:24px}
+  .mission-toolbar .page-head-title{grid-column:1;grid-row:1;flex-direction:row;align-items:center;justify-content:space-between;gap:12px}
+  .mission-toolbar .eyebrow{margin:0}
+  .mission-toolbar #status-filter-button{min-width:145px}
+  .mission-toolbar .status-filter-menu{left:auto;right:0}
+  .mission-toolbar>.actions{grid-column:1;grid-row:2;justify-content:flex-end;gap:8px}
+  .mission-toolbar>.fleet-tools{grid-column:1;grid-row:3;width:100%;gap:8px}
+  .mission-toolbar .search-label{flex:1;min-width:0}
+  .mission-toolbar .search-label input{width:100%}
+  .mission-toolbar #collapse-all{flex-shrink:0}
+  #dashboard>.page-footer{padding-top:24px;gap:8px}
+  .page-footer #home-path{max-width:100%}
+}

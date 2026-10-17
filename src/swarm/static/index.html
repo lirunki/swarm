@@ -7,16 +7,16 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=copy-controls-1">
+  <link rel="stylesheet" href="/static/app.css?v=mission-layout-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=copy-controls-1"></script>
-  <script defer src="/static/org-chart.js?v=copy-controls-1"></script>
-  <script defer src="/static/relay-settings.js?v=copy-controls-1"></script>
-  <script defer src="/static/terminal-touch.js?v=copy-controls-1"></script>
-  <script defer src="/static/terminal-copy.js?v=copy-controls-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=copy-controls-1"></script>
-  <script defer src="/static/app.js?v=copy-controls-1"></script>
+  <script defer src="/static/card-views.js?v=mission-layout-1"></script>
+  <script defer src="/static/org-chart.js?v=mission-layout-1"></script>
+  <script defer src="/static/relay-settings.js?v=mission-layout-1"></script>
+  <script defer src="/static/terminal-touch.js?v=mission-layout-1"></script>
+  <script defer src="/static/terminal-copy.js?v=mission-layout-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=mission-layout-1"></script>
+  <script defer src="/static/app.js?v=mission-layout-1"></script>
 </head>
 <body>
   <header class="topbar">
@@ -26,8 +26,8 @@
   </header>
   <nav id="tabs" class="tabs" aria-label="Workspace tabs"><button id="dashboard-tab" class="tab active" type="button">◫ &nbsp;Dashboard</button></nav>
   <main id="dashboard">
-    <section class="page-head">
-      <div class="page-head-title"><div class="eyebrow">MISSION CONTROL</div><h1>Your agents, in sync.</h1><p>One workspace. Many independent minds.</p></div>
+    <section class="page-head mission-toolbar" aria-label="Dashboard controls">
+      <div class="page-head-title"><h1 class="sr-only">Agent dashboard</h1><div class="eyebrow">MISSION CONTROL</div>
       <div id="status-filter" class="status-filter compact-dropdown">
         <button id="status-filter-button" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="status-filter-menu"><i id="status-filter-dot" class="status-dot all"></i><span id="status-filter-label">All states</span><span id="status-filter-count" class="count">0</span><span aria-hidden="true">▾</span></button>
         <div id="status-filter-menu" class="dropdown-panel status-filter-menu" role="dialog" aria-label="Agent states" hidden>
@@ -40,9 +40,12 @@
           <label class="status-option"><input type="checkbox" data-status="done" checked><i class="status-dot done"></i><span class="done">Done</span><span class="status-count done" data-status-count="done">0</span></label>
         </div>
       </div>
-      <div class="actions"><div id="adoption-menu" class="compact-dropdown"><button id="adoption-menu-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="adoption-options">↳ Adopt session <span aria-hidden="true">▾</span></button><div id="adoption-options" class="dropdown-panel adoption-options" role="menu" aria-label="Adopt session" hidden><button id="adopt-button" type="button" role="menuitem">pi session</button><button id="import-grok-button" type="button" role="menuitem">Grok session</button></div></div><button id="create-button" type="button" class="primary">＋ New agent</button></div>
+      </div>
+      <div class="actions"><div id="adoption-menu" class="compact-dropdown"><button id="adoption-menu-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="adoption-options">↳ Adopt session <span aria-hidden="true">▾</span></button><div id="adoption-options" class="dropdown-panel adoption-options" role="menu" aria-label="Adopt session" hidden><button id="adopt-button" type="button" role="menuitem">pi session</button><button id="import-grok-button" type="button" role="menuitem">Grok session</button></div></div><button id="create-button" type="button" class="primary">+ New agent</button></div>
+      <div class="fleet-tools"><button id="collapse-all" class="small" type="button">Collapse all</button><label class="search-label"><span>⌕</span><input id="search" type="search" placeholder="Search agents, goals, branches…" aria-label="Search agents"></label></div>
     </section>
-    <div class="list-toolbar"><div><h2>Agent hierarchy <span id="agent-count" class="count">0</span></h2><span class="hint">Parent → child · Hover for activity</span><p id="hierarchy-summary" class="hint" aria-live="polite"></p></div><div class="fleet-tools"><button id="collapse-all" class="small" type="button">Collapse all</button><label class="search-label"><span>⌕</span><input id="search" type="search" placeholder="Search agents, goals, branches…" aria-label="Search agents"></label></div></div>
+    <div class="sr-only"><h2>Agent hierarchy <span id="agent-count" class="count">0</span></h2><span>Parent → child · Hover for activity</span></div>
+    <p id="hierarchy-summary" class="hint hierarchy-note sr-only" aria-live="polite"></p>
     <details id="registry-errors" class="registry-errors" hidden><summary>Registry warnings</summary><div id="error-list"></div></details>
     <section id="agents" class="agent-grid org-chart" aria-label="Agent hierarchy" tabindex="0"></section>
     <section id="empty" class="empty" hidden><div class="empty-mark">⬡</div><h2>A little quiet in the swarm.</h2><p>Create an agent, adopt pi history, or import a Grok session.<br>Every agent keeps its own folder, terminal, and conversation history.</p><button id="empty-create" class="primary" type="button">＋ Create your first agent</button></section>

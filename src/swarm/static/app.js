@@ -292,6 +292,7 @@ function render() {
     ? `${forest.matchedCount} ${forest.matchedCount === 1 ? 'match' : 'matches'} · ${forest.ancestorCount} dimmed ancestor${forest.ancestorCount === 1 ? '' : 's'} kept for context`
     : `${forest.shownCount} agent${forest.shownCount === 1 ? '' : 's'} · ${forest.roots.length} root${forest.roots.length === 1 ? '' : 's'}`;
   if (forest.issuesCount) $('#hierarchy-summary').textContent += ` · ${forest.issuesCount} missing or invalid parent links`;
+  $('#hierarchy-summary').classList.toggle('sr-only', !forest.ancestorCount && !forest.issuesCount);
   $('#collapse-all').disabled = !state.agents.length;
   if (focusedControl) {
     const replacement = [...chart.querySelectorAll('.agent-card')].find(card => card.dataset.agentId === focusedControl.id);

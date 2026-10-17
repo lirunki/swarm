@@ -300,10 +300,15 @@ conservatively blocks while any native Pi has an unknown working folder.
 
 - Five explicit goal states: **running**, **waiting for input**, **dormant**,
   **idle** (turn completed), **done** (goal accomplished).
-- A compact **state multiselect** sits beside “Your agents, in sync.”, before the
-  adoption actions. Choose several states together; each entry shows its live count
-  and state color. **All** checks or clears every state. Search, current activity, activity checklist,
-  checkpoint, folder, Git worktree/branch, session ID, process ID, and errors.
+- The dashboard uses a slim, two-row **Mission Control** layout: the state
+  multiselect sits under the label on the left; **Adopt session / New agent** sit
+  above **Collapse all / Search** on the right. The large hero and redundant fleet
+  headings are omitted so tiles start immediately below the controls. Workspace,
+  relay/settings and terminal navigation remain available outside the dashboard.
+- Choose several states together; each entry shows its live count and state color.
+  **All** checks or clears every state. Search and filter matches retain ancestor
+  context; a short explanation appears only when needed. Activity, checkpoints,
+  workspace metadata and errors remain available by expanding a card.
 - **New agent** starts pi in an existing server-local folder. The folder selector lists
   folders already used by agents; **Browse…** navigates directories visible to the Swarm
   server. Research folders need not be Git repositories. The model selector is populated
