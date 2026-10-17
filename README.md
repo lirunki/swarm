@@ -342,12 +342,18 @@ conservatively blocks while any native Pi has an unknown working folder.
   model context/history and process state are unaffected.
 - **Terminal ↗** (or **↗** on a compact tile) attaches to the real pi TUI using
   xterm.js and a tmux PTY client. Tabs retain scrollback while open, and open tabs
-  are remembered locally. The terminal toolbar keeps **Reconnect**; use the tab's
+  are remembered locally. The terminal toolbar is a single 28px row (about half
+  its previous height), with long titles/metadata ellipsized and available on hover.
+  Its buttons retain 24px click targets. It keeps **Reconnect**; use the tab's
   **×** to close it. Wake remains available on the agent card and in the offline
   terminal overlay, rather than as a redundant toolbar button.
 - **Closing a terminal tab, the browser, or Swarm does not stop agents.**
   No hidden agent launch happens when a tab opens.
-- **Restart backend** in the top-right header confirms, then replaces only the Swarm
+- The Swarm picker uses a compact 105px dropdown (30% narrower); long workspace
+  names remain available in the option list and selected-value tooltip. Header
+  controls stay on one line when space permits.
+- **↻ Restart backend** is icon-only in the top-right header, with an accessible
+  label and tooltip (including while restarting). It confirms, then replaces only the Swarm
   controller process and reconnects the dashboard automatically. Agent processes remain
   owned by tmux and continue running throughout the restart.
 - **Wake** resumes an offline session or submits instructions to a live pi editor.

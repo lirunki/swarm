@@ -118,3 +118,19 @@ dialog{width:min(520px,calc(100vw - 32px));max-height:90dvh;overflow:auto;backgr
   #dashboard>.page-footer{padding-top:24px;gap:8px}
   .page-footer #home-path{max-width:100%}
 }
+
+
+/* Compact global controls: fixed picker width is independent of long peer names. */
+.swarm-switcher{width:154px;min-width:154px;flex:0 0 154px;margin:0}
+.swarm-switcher select{width:105px;min-width:105px;max-width:105px;flex:0 0 105px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbar .header-icon{width:32px;height:32px;min-width:32px;padding:0}
+.restart-controller.header-icon{border-radius:8px;font-size:18px;line-height:1}
+.top-meta{gap:8px;flex-wrap:nowrap}
+/* The previous terminal toolbar was ~53px; keep this single line at 28px. */
+.terminal-header{height:28px;min-height:28px;padding:1px 10px;gap:8px;flex-wrap:nowrap;min-width:0;overflow:hidden}
+.terminal-header>strong{min-width:0;max-width:30%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;flex:0 1 auto}
+.terminal-header .terminal-info{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;flex:1 1 auto}
+.terminal-header .terminal-connection{white-space:nowrap;font-size:10px;flex:0 0 auto}
+.terminal-header button{height:24px;min-height:24px;padding:1px 6px;font-size:11px;line-height:1;flex-shrink:0;white-space:nowrap}
+@media(max-width:650px){.top-meta{gap:6px}.terminal-header{padding:1px 6px;gap:6px}}
+.terminal-header button:focus-visible{outline-offset:-2px}

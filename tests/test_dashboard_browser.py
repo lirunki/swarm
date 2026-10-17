@@ -645,3 +645,90 @@ def test_dashboard_reference_layout(static_url, tmp_path):
             page.locator("#dashboard").screenshot(path=str(tmp_path / "dashboard-reference.png"))
         finally:
             browser.close()
+
+
+@pytest.mark.parametrize("width", [1280, 900, 390])
+def test_compact_global_and_terminal_headers(static_url, width):
+    state = fixture_state()
+    state["agents"][0]["name"] = "A long agent name that must remain on one header line " * 2
+    state["agents"][0]["folder"] = "/workspace/" + "very-long-folder/" * 20
+    nodes = {
+        "enabled": True,
+        "nodes": [
+            {
+                "id": "peer-long",
+                "name": "Very long remote Swarm workspace label",
+                "online": True,
+                "capabilities": {"remote_restart": True},
+            }
+        ],
+    }
+    with playwright.sync_playwright() as runner:
+        try:
+            browser = runner.chromium.launch(headless=True)
+        except playwright.Error as exc:
+            if "Executable doesn't exist" in str(
+                exc
+            ) or "error while loading shared libraries" in str(exc):
+                pytest.skip("Optional Chromium runtime unavailable")
+            raise
+        try:
+            context = browser.new_context(
+                viewport={"width": width, "height": 900}, has_touch=width < 650
+            )
+            page = context.new_page()
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.add_init_script("""window.WebSocket = class {
+                static OPEN = 1;
+                constructor() { this.readyState = 1; setTimeout(() => this.onopen?.(), 0); }
+                close() { this.readyState = 3; } send() {}
+            };""")
+
+            def respond(route):
+                payload = nodes if "/api/federation/nodes" in route.request.url else state
+                route.fulfill(content_type="application/json", body=json.dumps(payload))
+
+            page.route("**/api/**", respond)
+            page.goto(static_url)
+            playwright.expect(page.locator(".agent-card")).to_have_count(18)
+            playwright.expect(page.locator("#swarm-selector")).to_be_visible()
+            assert page.locator("#restart-controller").inner_text() == "↻"
+            assert (
+                page.locator("#restart-controller").get_attribute("aria-label") == "Restart backend"
+            )
+            assert page.locator("#swarm-selector").bounding_box()["width"] == 105
+            assert page.locator("#swarm-switcher").bounding_box()["width"] == 154
+            if width >= 900:
+                assert page.locator(".topbar").bounding_box()["height"] <= 74
+            page.locator("#swarm-selector").select_option("peer-long")
+            playwright.expect(page.locator(".agent-card")).to_have_count(18)
+            assert "Very long remote Swarm workspace label" in page.locator(
+                "#swarm-selector"
+            ).get_attribute("title")
+            page.locator('[data-agent-id="a0"] .card-terminal').click()
+            header = page.locator(".terminal-header")
+            playwright.expect(header).to_be_visible()
+            bounds = header.bounding_box()
+            assert bounds["height"] == 28
+            for button in header.locator("button:visible").all():
+                box = button.bounding_box()
+                assert box["height"] >= 24
+                assert (
+                    box["y"] >= bounds["y"]
+                    and box["y"] + box["height"] <= bounds["y"] + bounds["height"]
+                )
+                assert (
+                    box["x"] >= bounds["x"]
+                    and box["x"] + box["width"] <= bounds["x"] + bounds["width"]
+                )
+            assert header.locator("strong").get_attribute("title") == state["agents"][0]["name"]
+            assert (
+                header.locator(".terminal-info")
+                .get_attribute("title")
+                .endswith(state["agents"][0]["folder"])
+            )
+            assert page.evaluate("document.body.scrollWidth <= window.innerWidth")
+            assert not errors
+        finally:
+            browser.close()

@@ -72,7 +72,7 @@ function connectState() {
     reconnectDelay = 1000; el.textContent = activeSwarm === 'local' ? '● Live' : 'Connected'; el.className = activeSwarm === 'local' ? 'connection live' : 'connection'; refresh();
     if (restartingController) {
       restartingController = false; clearTimeout(restartTimer);
-      const restart = $('#restart-controller'); restart.disabled = false; restart.textContent = '↻ Restart backend';
+      updateRestartCapability();
       toast('Swarm backend controller restarted. Agents kept running.');
     }
   };
@@ -91,7 +91,10 @@ function updateRestartCapability() {
   const button = $('#restart-controller');
   const allowed = activeSwarm === 'local' || federationNodes.get(activeSwarm)?.capabilities?.remote_restart;
   button.disabled = !allowed || restartingController;
-  button.title = allowed ? 'Restart the active Swarm backend controller' : 'This remote Swarm was not launched with --allow-remote-restart';
+  button.textContent = '↻';
+  button.setAttribute('aria-label', restartingController ? 'Restarting backend' : 'Restart backend');
+  button.setAttribute('aria-busy', String(restartingController));
+  button.title = restartingController ? 'Restarting backend; waiting to reconnect' : allowed ? 'Restart the active Swarm backend controller' : 'This remote Swarm was not launched with --allow-remote-restart';
 }
 function renderSwarmSelector(data) {
   const incoming = new Map((data.nodes || []).map(item => [item.id, item]));
@@ -108,12 +111,12 @@ function renderSwarmSelector(data) {
     selector.append(option);
   }
   selector.value = [...selector.options].some(option => option.value === previous) ? previous : 'local';
+  selector.title = selector.selectedOptions?.[0]?.textContent || 'Active Swarm';
   $('#swarm-switcher').hidden = !data.enabled && !federationNodes.size;
   if (activeSwarm !== 'local' && federationNodes.get(activeSwarm)?.online === false) {
     $('#connection').textContent = 'Remote offline'; $('#connection').className = 'connection offline';
   } else if (restartingController && activeSwarm !== 'local') {
     restartingController = false; clearTimeout(restartTimer);
-    $('#restart-controller').textContent = '↻ Restart backend';
     toast('Remote Swarm backend controller restarted. Agents kept running.');
   }
   updateRestartCapability();
@@ -142,6 +145,7 @@ function switchSwarm(nodeId) {
   try { localStorage.setItem('swarm.active', activeSwarm); } catch { /* storage may be disabled */ }
   state = {agents: [], errors: {}, health: {}, home: ''}; dashboardControls.status.reset(); $('#search').value = '';
   $('#swarm-selector').value = activeSwarm;
+  $('#swarm-selector').title = $('#swarm-selector').selectedOptions?.[0]?.textContent || 'Active Swarm';
   activate('dashboard'); render(); updateRestartCapability(); connectState();
 }
 $('#swarm-selector').addEventListener('change', event => switchSwarm(event.currentTarget.value));
@@ -149,17 +153,17 @@ async function restartController() {
   const allowed = activeSwarm === 'local' || federationNodes.get(activeSwarm)?.capabilities?.remote_restart;
   if (!allowed) { toast('Remote restart is disabled on this Swarm.', true); return; }
   if (restartingController || !confirm('Restart the active Swarm backend controller?\n\nAgent processes are owned by tmux and will keep running. The dashboard will reconnect automatically.')) return;
-  const restart = $('#restart-controller'); restartingController = true; restart.disabled = true; restart.textContent = 'Restarting…';
+  restartingController = true; updateRestartCapability();
   try {
     await api('/api/controller/restart', 'POST');
     toast('Backend restart requested. Waiting to reconnect…');
     restartTimer = setTimeout(() => {
       if (!restartingController) return;
-      restartingController = false; restart.disabled = false; restart.textContent = '↻ Restart backend';
+      restartingController = false; updateRestartCapability();
       toast('The backend did not reconnect within 20 seconds.', true);
     }, 20000);
   } catch (error) {
-    restartingController = false; restart.disabled = false; restart.textContent = '↻ Restart backend';
+    restartingController = false; updateRestartCapability();
     toast(error.message, true);
   }
 }
@@ -325,7 +329,7 @@ function openTerminal(id, focus = true) {
   if (!terminals.has(id)) {
     const pane = node('div', 'terminal-pane'); pane.hidden = true;
     const header = node('div', 'terminal-header');
-    const title = node('strong'), info = node('span', 'hint'), connected = node('span', 'hint', 'Detached');
+    const title = node('strong'), info = node('span', 'hint terminal-info'), connected = node('span', 'hint terminal-connection', 'Detached');
     const copyButton = node('button', 'small terminal-copy-button', 'Copy text'); copyButton.type = 'button'; copyButton.hidden = true; copyButton.dataset.agentId = id;
     header.append(title, info, connected, copyButton, button('↻ Reconnect', 'small', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); }));
     const surface = node('div', 'terminal-surface'), screen = node('div', 'terminal-screen'), overlay = node('div', 'terminal-overlay');
@@ -364,8 +368,9 @@ function overlay(t, title, message, actionText, action) {
 }
 function syncTerminal(t) {
   const a = agentById(t.id); if (!a) return;
-  t.title.textContent = a.name; t.tabLabel.textContent = a.name;
+  t.title.textContent = a.name; t.title.title = a.name; t.tabLabel.textContent = a.name;
   t.info.textContent = `${labels[a.status]} · ${a.session_id || 'session pending'} · ${a.folder}`;
+  t.info.title = t.info.textContent;
   const compacting = compactionBlocked(a);
   if (!a.alive) {
     overlay(t, compacting ? 'Session compaction is running.' : 'This agent is offline.', compacting ? 'The saved session is being updated. It stays stopped afterward; wake it explicitly when the job completes.' : 'Opening a terminal only attaches to a process. Wake the agent explicitly to continue its saved session.', a.managed && !compacting ? 'Wake agent ↗' : '', a.managed && !compacting ? () => wakeAgent(t.id) : null);
