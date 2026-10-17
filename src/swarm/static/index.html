@@ -7,16 +7,17 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=logo-picker-1">
+  <link rel="stylesheet" href="/static/app.css?v=mobile-keys-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=logo-picker-1"></script>
-  <script defer src="/static/org-chart.js?v=logo-picker-1"></script>
-  <script defer src="/static/relay-settings.js?v=logo-picker-1"></script>
-  <script defer src="/static/terminal-touch.js?v=logo-picker-1"></script>
-  <script defer src="/static/terminal-copy.js?v=logo-picker-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=logo-picker-1"></script>
-  <script defer src="/static/app.js?v=logo-picker-1"></script>
+  <script defer src="/static/card-views.js?v=mobile-keys-1"></script>
+  <script defer src="/static/org-chart.js?v=mobile-keys-1"></script>
+  <script defer src="/static/relay-settings.js?v=mobile-keys-1"></script>
+  <script defer src="/static/terminal-touch.js?v=mobile-keys-1"></script>
+  <script defer src="/static/terminal-copy.js?v=mobile-keys-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=mobile-keys-1"></script>
+  <script defer src="/static/terminal-keys.js?v=mobile-keys-1"></script>
+  <script defer src="/static/app.js?v=mobile-keys-1"></script>
 </head>
 <body>
   <header class="topbar">
@@ -62,7 +63,7 @@
       <section><h3>Dashboard</h3><p>Each tile is an independent agent. Expand it for goal, activities, checkpoint and controls. Use the state dropdown to show several states together; All checks or clears every state. Counts update live. Search filters names, goals, activities and folders. Dimmed ancestors remain to explain parent → child relationships.</p></section>
       <section><h3>Agent states</h3><dl><dt class="running">Running</dt><dd>Working toward its goal.</dd><dt class="waiting">Waiting</dt><dd>Needs human input.</dd><dt class="dormant">Dormant</dt><dd>Waiting for an event or timer.</dd><dt class="idle">Idle</dt><dd>Turn complete, goal not yet complete.</dd><dt class="done">Done</dt><dd>Goal accomplished. Process liveness is shown separately.</dd></dl></section>
       <section><h3>Sessions and controls</h3><p>New agent starts pi. Adopt session offers saved pi conversations or Grok history converted into pi; adopted/imported sessions stay offline until you Wake them. Closing a terminal tab does not stop its agent. Wake resumes; Stop terminates and disables automatic restore. Edit → Forget removes an inactive agent while keeping its saved session history.</p></section>
-      <section><h3>Terminal scrolling and copying</h3><p>On mobile, swipe down for older output and up for newer output. At the bottom, tap to type. Copy text puts the visible screen in a read-only layer directly over the terminal: use native selection handles and Copy. It closes after copying, or tap Done copying. Only the visible screen is captured—scroll first for other text.</p><p>On desktop, hold Shift while dragging to select past tmux mouse handling, then use your browser or system Copy command. Desktop terminals have no extra copy layer.</p></section>
+      <section><h3>Terminal scrolling and copying</h3><p>On mobile, swipe down for older output and up for newer output. At the bottom, tap to type. Copy text puts the visible screen in a read-only layer directly over the terminal: use native selection handles and Copy. It closes after copying, or tap Done copying. Only the visible screen is captured—scroll first for other text.</p><p>While the mobile software keyboard is open, the terminal key bar adds Ctrl, Alt, arrows, Esc and Supr (forward Delete). Ctrl and Alt apply to the next typed key or accessory key, then reset; tap both for a combined shortcut. The bar keeps the keyboard focused and hides when it closes, when you leave the terminal, or while copying.</p><p>On desktop, hold Shift while dragging to select past tmux mouse handling, then use your browser or system Copy command. Desktop terminals have no extra copy layer.</p></section>
       <section><h3>Relay and safety</h3><p>The Swarm selector changes workspace. The gear always configures the local relay connection. A relay joins fully trusted controllers: peers can control agents and read data. Keep the dashboard on localhost, HTTPS, or a trusted network. Restart backend reloads the controller, not its tmux-backed agents.</p></section>
     </div>
     <footer class="dialog-footer"><button type="button" data-close>Close</button></footer>

@@ -381,6 +381,35 @@ Agents have your user account's filesystem, Git, network and provider access.
 Choose goals and folders accordingly. Pi project trust prompts are left intact;
 if pi is waiting at startup for trust/login/model selection, open its Terminal.
 
+### Mobile terminal keyboard
+
+When the **standard software keyboard is open** and the live terminal input is
+focused, a mobile-only accessory bar appears immediately above it:
+
+**Ctrl · Alt · ← · ↑ · ↓ · → · Esc · Supr**
+
+- **Ctrl** and **Alt** toggle a one-shot modifier for the next typed character or
+  accessory key; tap both for a combination. They reset after a key, when the
+  keyboard hides, when focus leaves the terminal, or when the connection is unavailable.
+- Arrow keys respect the terminal's normal/application cursor mode and modifier
+  combinations. **Supr** sends forward Delete (`Delete`), not Backspace.
+- **Esc** and control shortcuts are real terminal input: Ctrl+C can interrupt an
+  application just as it does with a physical keyboard. No keys are queued while offline.
+- Button taps retain input focus, keeping the software keyboard open. The terminal
+  resizes above the key bar rather than being covered by it.
+- Copy text, other forms/dialogs, the dashboard and desktop browsers have no key bar.
+  Native paste and multi-character IME/paste text are not converted into control
+  commands; terminal mouse reports and device replies are passed through unchanged.
+
+Keyboard visibility uses the browser's VirtualKeyboard geometry when available,
+otherwise focused-input plus VisualViewport/resize measurements. Pinch zoom and
+small browser-toolbar changes are not treated as a keyboard. Floating keyboards
+that report neither geometry nor viewport changes may not be detectable; hardware
+keyboards without the software keyboard do not show the accessory bar.
+
+This uses the existing terminal WebSocket/PTY transport, including remote terminals.
+Refresh the page after updating; no backend restart is needed.
+
 ### Mobile terminal copying
 
 On touch-first/mobile browsers, **Copy text** appears beside **Reconnect**. It puts
@@ -973,6 +1002,7 @@ ruff format --check src tests
 node --check src/swarm/static/app.js
 node --check src/swarm/static/card-views.js
 node --check src/swarm/static/terminal-touch.js
+node --check src/swarm/static/terminal-keys.js
 node --check src/swarm/static/terminal-copy.js
 node --check src/swarm/static/dashboard-controls.js
 node --check src/swarm/static/org-chart.js

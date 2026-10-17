@@ -748,3 +748,131 @@ def test_compact_global_and_terminal_headers(static_url, width):
             assert not errors
         finally:
             browser.close()
+
+
+@pytest.mark.parametrize("mobile", [True, False])
+def test_mobile_terminal_keys_follow_keyboard_geometry_and_preserve_focus(static_url, mobile):
+    state = fixture_state()
+    with playwright.sync_playwright() as runner:
+        try:
+            browser = runner.chromium.launch(headless=True)
+        except playwright.Error as exc:
+            if "Executable doesn't exist" in str(
+                exc
+            ) or "error while loading shared libraries" in str(exc):
+                pytest.skip("Optional Chromium runtime unavailable")
+            raise
+        try:
+            page = browser.new_page(
+                viewport={"width": 390 if mobile else 1280, "height": 1000},
+                has_touch=mobile,
+                is_mobile=mobile,
+            )
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.add_init_script("""(() => {
+                let keyboard = 0;
+                const viewport = new EventTarget();
+                Object.defineProperties(viewport, {height: {get: () => innerHeight - keyboard}, width: {get: () => innerWidth}, scale: {value: 1}, offsetTop: {value: 0}, offsetLeft: {value: 0}});
+                Object.defineProperty(window, 'visualViewport', {value: viewport, configurable: true});
+                window.testKeyboard = height => { keyboard = height; viewport.dispatchEvent(new Event('resize')); };
+                window.sentFrames = [];
+                window.WebSocket = class {
+                    static OPEN = 1;
+                    constructor(url) { this.readyState = 1; setTimeout(() => { this.onopen?.(); if (url.includes('/terminal/')) this.onmessage?.({data: new TextEncoder().encode('\\x1b[?1hLIVE TERMINAL').buffer}); }, 0); }
+                    close() { this.readyState = 3; }
+                    send(raw) { window.sentFrames.push(JSON.parse(raw)); }
+                };
+            })();""")
+            page.route(
+                "**/api/**",
+                lambda route: route.fulfill(
+                    content_type="application/json",
+                    body=json.dumps(
+                        {"enabled": False, "nodes": []}
+                        if "/api/federation/nodes" in route.request.url
+                        else state
+                    ),
+                ),
+            )
+            page.goto(static_url)
+            page.locator('[data-agent-id="a0"] .card-terminal').click()
+            page.wait_for_function("terminals.get('a0')?.term.modes.applicationCursorKeysMode")
+            page.evaluate("terminals.get('a0').term.focus()")
+            bar = page.get_by_role("toolbar", name="Mobile terminal keyboard")
+            playwright.expect(bar).to_be_hidden()
+            page.evaluate("testKeyboard(350)")
+            if not mobile:
+                playwright.expect(bar).to_be_hidden()
+                assert page.evaluate("terminals.get('a0').pane.style.bottom") == ""
+            else:
+                playwright.expect(bar).to_be_visible()
+                assert bar.locator("button").all_text_contents() == [
+                    "Ctrl",
+                    "Alt",
+                    "←",
+                    "↑",
+                    "↓",
+                    "→",
+                    "Esc",
+                    "Supr",
+                ]
+                box = bar.bounding_box()
+                assert abs(box["y"] + box["height"] - 650) < 1
+                pane = page.locator(".terminal-pane").bounding_box()
+                assert pane["y"] + pane["height"] <= box["y"] + 1
+                for key in ["up", "down", "left", "right", "delete", "escape"]:
+                    bar.locator(f'[data-key="{key}"]').tap()
+                    assert page.evaluate(
+                        "document.activeElement === terminals.get('a0').term.textarea"
+                    )
+                    playwright.expect(bar).to_be_visible()
+                bar.locator('[data-key="ctrl"]').tap()
+                playwright.expect(bar.locator('[data-key="ctrl"]')).to_have_attribute(
+                    "aria-pressed", "true"
+                )
+                page.keyboard.type("a")
+                playwright.expect(bar.locator('[data-key="ctrl"]')).to_have_attribute(
+                    "aria-pressed", "false"
+                )
+                bar.locator('[data-key="alt"]').tap()
+                page.keyboard.type("x")
+                bar.locator('[data-key="ctrl"]').tap()
+                bar.locator('[data-key="alt"]').tap()
+                page.keyboard.type("c")
+                bar.locator('[data-key="ctrl"]').tap()
+                bar.locator('[data-key="left"]').tap()
+                actual = page.evaluate(
+                    "window.sentFrames.filter(frame => frame.type === 'input').map(frame => frame.data)"
+                )
+                assert actual == [
+                    "\x1bOA",
+                    "\x1bOB",
+                    "\x1bOD",
+                    "\x1bOC",
+                    "\x1b[3~",
+                    "\x1b",
+                    "\x01",
+                    "\x1bx",
+                    "\x1b\x03",
+                    "\x1b[1;5D",
+                ]
+                bar.locator('[data-key="ctrl"]').tap()
+                page.evaluate("testKeyboard(0)")
+                playwright.expect(bar).to_be_hidden()
+                page.evaluate("testKeyboard(350)")
+                playwright.expect(bar).to_be_visible()
+                playwright.expect(bar.locator('[data-key="ctrl"]')).to_have_attribute(
+                    "aria-pressed", "false"
+                )
+                page.locator(".terminal-copy-button").click()
+                playwright.expect(bar).to_be_hidden()
+                page.locator(".terminal-copy-button").click()
+                page.evaluate("terminals.get('a0').term.focus()")
+                playwright.expect(bar).to_be_visible()
+                page.locator("#dashboard-tab").click()
+                playwright.expect(bar).to_be_hidden()
+                assert page.evaluate("document.body.scrollWidth <= innerWidth")
+            assert not errors
+        finally:
+            browser.close()

@@ -186,3 +186,108 @@ for line in sys.stdin:
         finally:
             browser.close()
             processes.run("kill-server", check=False)
+
+
+@pytest.mark.skipif(not shutil.which("tmux"), reason="tmux is required")
+def test_mobile_accessory_keys_reach_real_tmux_application(tmp_path):
+    fake = tmp_path / "fake-pi"
+    received = tmp_path / "key-bytes.bin"
+    fake.write_text(f"""#!{sys.executable}
+import os, sys, tty
+from pathlib import Path
+tty.setraw(sys.stdin.fileno())
+print("KEYS-READY", flush=True)
+while True:
+    data = os.read(sys.stdin.fileno(), 4096)
+    if not data: break
+    with Path({str(received)!r}).open("ab") as output:
+        output.write(data)
+""")
+    fake.chmod(0o700)
+    app = create_app(tmp_path / "home", pi=str(fake), recover=False)
+    processes = app.state.controller.processes
+    with playwright.sync_playwright() as runner:
+        try:
+            browser = runner.chromium.launch(headless=True)
+        except playwright.Error as exc:
+            if "Executable doesn't exist" in str(
+                exc
+            ) or "error while loading shared libraries" in str(exc):
+                pytest.skip("Optional Chromium runtime unavailable")
+            raise
+        try:
+            with running_server(app) as port:
+                base = f"http://127.0.0.1:{port}"
+                request = urllib.request.Request(
+                    base + "/api/agents",
+                    headers={"Content-Type": "application/json"},
+                    data=json.dumps(
+                        {
+                            "name": "Keys",
+                            "goal": "Verify raw terminal keys",
+                            "folder": str(tmp_path),
+                        }
+                    ).encode(),
+                )
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    agent = app.state.controller.store.get(json.load(response)["id"])
+                pid = processes.pid(agent)
+                page = browser.new_page(
+                    viewport={"width": 390, "height": 1000}, has_touch=True, is_mobile=True
+                )
+                page.add_init_script("""(() => {
+                    let keyboard = 0; const viewport = new EventTarget();
+                    Object.defineProperties(viewport, {height: {get: () => innerHeight - keyboard}, width: {get: () => innerWidth}, scale: {value: 1}, offsetTop: {value: 0}, offsetLeft: {value: 0}});
+                    Object.defineProperty(window, 'visualViewport', {value: viewport, configurable: true});
+                    window.testKeyboard = height => { keyboard = height; viewport.dispatchEvent(new Event('resize')); };
+                })();""")
+                page.goto(base)
+                page.locator(f'[data-agent-id="{agent.id}"] .card-terminal').click()
+                page.wait_for_function(
+                    "id => terminals.get(id)?.ws?.readyState === 1", arg=str(agent.id)
+                )
+                page.evaluate("id => terminals.get(id).term.focus()", str(agent.id))
+                page.evaluate("testKeyboard(350)")
+                bar = page.get_by_role("toolbar", name="Mobile terminal keyboard")
+                playwright.expect(bar).to_be_visible()
+                expected = b""
+
+                def expect_bytes(data):
+                    nonlocal expected
+                    expected += data
+                    for _ in range(200):
+                        if received.exists() and received.read_bytes() == expected:
+                            return
+                        time.sleep(0.01)
+                    assert received.read_bytes() == expected
+
+                for key, data in [
+                    ("up", b"\x1b[A"),
+                    ("left", b"\x1b[D"),
+                    ("delete", b"\x1b[3~"),
+                    ("escape", b"\x1b"),
+                ]:
+                    bar.locator(f'[data-key="{key}"]').tap()
+                    expect_bytes(data)
+                    assert page.evaluate(
+                        "id => document.activeElement === terminals.get(id).term.textarea",
+                        str(agent.id),
+                    )
+                bar.locator('[data-key="ctrl"]').tap()
+                page.keyboard.type("a")
+                expect_bytes(b"\x01")
+                bar.locator('[data-key="alt"]').tap()
+                page.keyboard.type("x")
+                expect_bytes(b"\x1bx")
+                bar.locator('[data-key="ctrl"]').tap()
+                page.keyboard.type("c")
+                expect_bytes(
+                    b"\x03"
+                )  # Raw fixture proves Ctrl+C bytes without signaling a real agent.
+                assert processes.pid(agent) == pid and processes.alive(agent)
+                page.get_by_role("button", name="Close terminal tab").click()
+                assert not page.locator(".terminal-keybar").count()
+                assert processes.alive(agent)
+        finally:
+            browser.close()
+            processes.run("kill-server", check=False)

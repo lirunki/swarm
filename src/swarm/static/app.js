@@ -321,6 +321,7 @@ function activate(id) {
   $('#dashboard-tab').classList.toggle('active', activeTab === 'dashboard');
   for (const [key, t] of terminals) {
     t.pane.hidden = key !== activeTab; t.tab.classList.toggle('active', key === activeTab); t.group.classList.toggle('active', key === activeTab);
+    t.mobileKeys?.update();
     if (key === activeTab) { initTerminal(t); requestAnimationFrame(() => { t.fit?.fit(); if (!t.copyText?.active) t.term?.focus(); }); }
   } remember();
 }
@@ -347,7 +348,7 @@ function initTerminal(t) {
   if (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined') { toast('Terminal assets are missing. See README vendor instructions.', true); return; }
   t.term = new Terminal({cursorBlink: true, fontSize: 13, fontFamily: 'ui-monospace,Consolas,monospace', scrollback: 10000, theme: {background: '#0d1015', foreground: '#e8ebf1', cursor: '#ffa16a'}});
   t.fit = new FitAddon.FitAddon(); t.term.loadAddon(t.fit); t.term.open(t.screen); t.fit.fit();
-  t.term.onData(data => { if (!t.copyText?.active && t.ws?.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({type: 'input', data})); });
+  t.term.onData(data => { if (!t.copyText?.active && t.ws?.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({type: 'input', data: t.mobileKeys?.transform(data) ?? data})); });
   t.term.onResize(({cols, rows}) => { if (t.ws?.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({type: 'resize', cols, rows})); });
   t.touchScroll = new SwarmTerminalTouch.TerminalTouchScroll({
     element: t.screen,
@@ -356,8 +357,13 @@ function initTerminal(t) {
     onGesture: () => t.term.blur(),
   });
   t.copyText = new SwarmTerminalCopy.TerminalCopy({term: t.term, screen: t.screen, button: t.copyButton,
-    onOpen: () => { t.touchScroll.reset(); t.term.blur(); },
+    onOpen: () => { t.touchScroll.reset(); t.term.blur(); t.mobileKeys?.update(); },
     onClose: focus => { if (focus && !t.closed && !t.pane.hidden) t.copyButton.focus({preventScroll: true}); },
+  });
+  t.mobileKeys = new SwarmTerminalKeys.TerminalKeys({term: t.term, pane: t.pane,
+    isActive: () => !t.closed && !t.pane.hidden && !t.copyText?.active && !!agentById(t.id)?.alive,
+    ready: () => t.ws?.readyState === WebSocket.OPEN,
+    send: data => t.term.input(data, true),
   });
   t.observer = new ResizeObserver(() => { if (!t.pane.hidden) t.fit?.fit(); }); t.observer.observe(t.screen);
   attachTerminal(t);
@@ -368,6 +374,7 @@ function overlay(t, title, message, actionText, action) {
 }
 function syncTerminal(t) {
   const a = agentById(t.id); if (!a) return;
+  t.mobileKeys?.update();
   t.title.textContent = a.name; t.title.title = a.name; t.tabLabel.textContent = a.name;
   t.info.textContent = `${labels[a.status]} · ${a.session_id || 'session pending'} · ${a.folder}`;
   t.info.title = t.info.textContent;
@@ -382,12 +389,12 @@ function attachTerminal(t) {
   clearTimeout(t.timer); t.timer = null;
   overlay(t, 'Attaching terminal…', 'The agent keeps running independently of this tab.');
   const ws = new WebSocket(wsURL(`${terminalWSPath(t.id)}?cols=${t.term.cols}&rows=${t.term.rows}`)); ws.binaryType = 'arraybuffer'; t.ws = ws;
-  ws.onopen = () => { if (t.ws !== ws || t.closed) { ws.close(); return; } t.overlay.hidden = true; t.connected.textContent = '● Attached'; t.term.reset(); t.fit.fit(); ws.send(JSON.stringify({type: 'resize', cols: t.term.cols, rows: t.term.rows})); };
+  ws.onopen = () => { if (t.ws !== ws || t.closed) { ws.close(); return; } t.overlay.hidden = true; t.connected.textContent = '● Attached'; t.term.reset(); t.fit.fit(); t.mobileKeys?.update(); ws.send(JSON.stringify({type: 'resize', cols: t.term.cols, rows: t.term.rows})); };
   ws.onmessage = event => { if (t.ws === ws && event.data instanceof ArrayBuffer) t.term.write(new Uint8Array(event.data)); };
   ws.onerror = () => ws.close();
   ws.onclose = () => {
     if (t.closed || t.ws !== ws) return;
-    t.connected.textContent = '○ Detached';
+    t.connected.textContent = '○ Detached'; t.mobileKeys?.update();
     if (!agentById(t.id)?.alive) { syncTerminal(t); return; }
     overlay(t, 'Terminal disconnected.', 'Reattaching in a few seconds. The agent is not stopped by a tab disconnect.', 'Reconnect', () => { disconnectTerminal(t); attachTerminal(t); });
     t.timer = setTimeout(() => { t.timer = null; attachTerminal(t); }, 4000);
@@ -396,10 +403,11 @@ function attachTerminal(t) {
 function disconnectTerminal(t) {
   clearTimeout(t.timer); t.timer = null;
   if (t.ws) { const ws = t.ws; t.ws = null; ws.onclose = null; ws.close(); }
+  t.mobileKeys?.update();
 }
 function closeTerminal(id) {
   const t = terminals.get(id); if (!t) return;
-  t.closed = true; t.copyText?.dispose(); t.touchScroll?.dispose(); disconnectTerminal(t); t.observer?.disconnect(); t.term?.dispose(); t.pane.remove(); t.group.remove(); terminals.delete(id);
+  t.closed = true; t.mobileKeys?.dispose(); t.copyText?.dispose(); t.touchScroll?.dispose(); disconnectTerminal(t); t.observer?.disconnect(); t.term?.dispose(); t.pane.remove(); t.group.remove(); terminals.delete(id);
   // Deliberately no stop API call: only the attachment is disposable.
   if (activeTab === id) activate('dashboard'); remember();
 }
