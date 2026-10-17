@@ -120,9 +120,12 @@ dialog{width:min(520px,calc(100vw - 32px));max-height:90dvh;overflow:auto;backgr
 }
 
 
-/* Compact global controls: fixed picker width is independent of long peer names. */
-.swarm-switcher{width:154px;min-width:154px;flex:0 0 154px;margin:0}
-.swarm-switcher select{width:105px;min-width:105px;max-width:105px;flex:0 0 105px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Keep the logo and unlabelled picker together; 136.5px = 1.3 × the previous 105px. */
+.brand-cluster{display:flex;align-items:center;gap:12px;min-width:0;flex:0 1 auto}
+.brand-cluster .brand{flex-shrink:0}
+.brand-cluster .edition{margin-left:4px;padding-left:12px}
+.swarm-switcher{width:136.5px;min-width:136.5px;flex:0 0 136.5px;margin:0}
+.swarm-switcher select{width:136.5px;min-width:136.5px;max-width:136.5px;flex:0 0 136.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .topbar .header-icon{width:32px;height:32px;min-width:32px;padding:0}
 .restart-controller.header-icon{border-radius:8px;font-size:18px;line-height:1}
 .top-meta{gap:8px;flex-wrap:nowrap}

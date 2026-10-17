@@ -349,9 +349,10 @@ conservatively blocks while any native Pi has an unknown working folder.
   terminal overlay, rather than as a redundant toolbar button.
 - **Closing a terminal tab, the browser, or Swarm does not stop agents.**
   No hidden agent launch happens when a tab opens.
-- The Swarm picker uses a compact 105px dropdown (30% narrower); long workspace
-  names remain available in the option list and selected-value tooltip. Header
-  controls stay on one line when space permits.
+- The Swarm picker sits directly beside the main logo, without a redundant small
+  label. Its dropdown is 136.5px wide (1.3× the previous 105px); long workspace names
+  remain available in the option list and selected-value tooltip, with an accessible
+  “Active Swarm” label. Header controls stay on one line when space permits.
 - **↻ Restart backend** is icon-only in the top-right header, with an accessible
   label and tooltip (including while restarting). It confirms, then replaces only the Swarm
   controller process and reconnects the dashboard automatically. Agent processes remain

@@ -707,8 +707,14 @@ def test_compact_global_and_terminal_headers(static_url, width):
             assert (
                 page.locator("#restart-controller").get_attribute("aria-label") == "Restart backend"
             )
-            assert page.locator("#swarm-selector").bounding_box()["width"] == 105
-            assert page.locator("#swarm-switcher").bounding_box()["width"] == 154
+            picker = page.locator("#swarm-selector").bounding_box()
+            logo = page.locator(".brand").bounding_box()
+            assert picker["width"] == 136.5
+            assert page.locator("#swarm-switcher").bounding_box()["width"] == 136.5
+            assert not page.locator("#swarm-switcher > span").count()
+            assert abs(picker["x"] - logo["x"] - logo["width"] - 12) < 1
+            assert abs((picker["y"] + picker["height"] / 2) - (logo["y"] + logo["height"] / 2)) < 1
+            assert page.locator("#swarm-selector").get_attribute("aria-label") == "Active Swarm"
             if width >= 900:
                 assert page.locator(".topbar").bounding_box()["height"] <= 74
             page.locator("#swarm-selector").select_option("peer-long")

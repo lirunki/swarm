@@ -24,3 +24,11 @@ test('federation discovery always uses local backend rather than recursive proxy
   assert.match(source, /localApi\('\/api\/federation\/nodes'\)/);
   assert.match(source, /wsURL\('\/ws\/federation\/presence'\)/);
 });
+
+
+test('Swarm picker follows the logo without a redundant visible label', () => {
+  const group = html.slice(html.indexOf('<div class="brand-cluster">'), html.indexOf('<div class="top-meta">'));
+  assert.match(group, /class="brand"[\s\S]*id="swarm-switcher"[\s\S]*class="edition"/);
+  assert.match(group, /id="swarm-switcher"[^>]*><select id="swarm-selector" aria-label="Active Swarm"/);
+  assert.doesNotMatch(group, /<span>Swarm<\/span>/);
+});
