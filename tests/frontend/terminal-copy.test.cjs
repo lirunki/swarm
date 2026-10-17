@@ -26,7 +26,7 @@ function fixture(mobile = true) {
   doc.defaultView = view;
   const screen = new Element(doc), button = new Element(doc); button.dataset.agentId = 'agent-1';
   const rows = ['not visible', 'older', 'VISIBLE <script>literal</script>', 'second row', 'not yet visible'];
-  const term = {rows: 2, cols: 80, options: {fontFamily: 'monospace', fontSize: 13}, buffer: {active: {viewportY: 2,
+  const term = {rows: 2, cols: 80, options: {fontFamily: 'monospace', fontSize: 13}, element: {querySelector: () => ({getBoundingClientRect: () => ({height: 30})})}, buffer: {active: {viewportY: 2,
     getLine: index => ({translateToString: (trim, start, end) => { assert.equal(trim, true); assert.equal(start, 0); assert.equal(end, 80); return rows[index]; }})}}};
   const copy = new TerminalCopy({term, screen, button, onOpen: () => calls.push('open'), onClose: focus => calls.push(['close', focus])});
   const flush = () => { for (const [id, callback] of [...jobs]) { jobs.delete(id); callback(); } };
@@ -37,7 +37,11 @@ test('captures only the rendered viewport and exposes a mobile read-only native 
   const t = fixture(); assert.equal(visibleText(t.term), 'VISIBLE <script>literal</script>\nsecond row');
   t.copy.open(); assert.equal(t.copy.active, true); assert.equal(t.copy.text.readOnly, true);
   assert.equal(t.copy.text.value, visibleText(t.term)); assert.equal(t.button.textContent, 'Done copying');
-  assert.equal(t.copy.text.getAttribute('inputmode'), 'none'); assert.equal(t.copy.text.style.fontSize, '16px');
+  assert.equal(t.copy.text.getAttribute('inputmode'), 'none'); assert.equal(t.copy.text.style.fontSize, '13px');
+  assert.equal(t.copy.text.style.lineHeight, '15px');
+  assert.equal(t.copy.text.style.fontFamily, 'monospace');
+  assert.equal(t.copy.text.style.fontWeight, 'normal');
+  assert.equal(t.copy.text.style.letterSpacing, '0px');
   assert.equal(t.screen.classes.has('copying-text'), true); assert.equal(t.doc.activeElement, t.copy.text);
   t.rows[2] = 'live output changed'; assert.notEqual(t.copy.text.value, visibleText(t.term));
   assert.equal(t.copy.text.innerHTML, undefined); // Plain .value, never interpreted markup.
@@ -93,4 +97,16 @@ test('copy is client-only, not a history API, clipboard permission request or tm
   assert.match(app, /!t\.copyText\?\.active && t\.ws/);
   assert.match(app, /!t\.copyText\?\.active && t\.ws\?\.readyState/);
   assert.match(app, /t\.copyText\?\.dispose\(\)/);
+});
+
+test('overlay follows custom terminal typography and rendered row stride rather than fixed sizes', () => {
+  const t = fixture();
+  t.term.options = {fontFamily: 'custom-monospace', fontSize: 18, fontWeight: 500, letterSpacing: 1.25};
+  t.term.element = {querySelector: () => ({getBoundingClientRect: () => ({height: 55})})};
+  t.copy.open();
+  assert.equal(t.copy.text.style.fontFamily, 'custom-monospace');
+  assert.equal(t.copy.text.style.fontSize, '18px'); assert.equal(t.copy.text.style.fontWeight, '500');
+  assert.equal(t.copy.text.style.letterSpacing, '1.25px'); assert.equal(t.copy.text.style.lineHeight, '27.5px');
+  assert.equal(t.copy.text.style.fontKerning, 'none'); assert.equal(t.copy.text.style.fontVariantLigatures, 'none');
+  t.copy.close(); t.term.element = undefined; t.copy.open(); assert.equal(t.copy.text.style.lineHeight, 'normal');
 });

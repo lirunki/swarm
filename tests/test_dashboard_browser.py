@@ -529,6 +529,16 @@ def test_native_mobile_copy_overlay_and_unchanged_desktop(static_url, mobile):
                 )
                 for key in ("x", "y", "width", "height"):
                     assert abs(screen_box[key] - copy_box[key]) < 1, (screen_box, copy_box)
+                typography = page.evaluate("""() => {
+                    const term = terminals.get('a0').term;
+                    const style = getComputedStyle(document.querySelector('.terminal-copy-text'));
+                    return {font: parseFloat(style.fontSize), expectedFont: term.options.fontSize,
+                        row: parseFloat(style.lineHeight), expectedRow: term.element.querySelector('.xterm-screen').getBoundingClientRect().height / term.rows,
+                        spacing: parseFloat(style.letterSpacing) || 0, expectedSpacing: term.options.letterSpacing};
+                }""")
+                assert typography["font"] == typography["expectedFont"]
+                assert abs(typography["row"] - typography["expectedRow"]) < 0.01
+                assert typography["spacing"] == typography["expectedSpacing"]
                 page.keyboard.type("NOT-EDITABLE")
                 playwright.expect(area).to_have_value(expected)
                 page.evaluate("terminals.get('a0').term.input('NO TERMINAL INPUT', true)")

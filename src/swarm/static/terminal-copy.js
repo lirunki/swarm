@@ -55,10 +55,16 @@
       if (this.disposed || this.active || !this.media.matches) return;
       this.generation += 1; this.active = true;
       this.text.value = visibleText(this.term);
-      this.text.style.fontFamily = this.term.options.fontFamily;
-      // 16px prevents mobile Safari focus-zoom; the control itself covers the exact terminal rectangle.
-      this.text.style.fontSize = `${Math.max(16, this.term.options.fontSize)}px`;
-      this.text.style.lineHeight = '1.4';
+      const options = this.term.options;
+      this.text.style.fontFamily = options.fontFamily;
+      this.text.style.fontSize = `${options.fontSize}px`;
+      this.text.style.fontWeight = String(options.fontWeight ?? 'normal');
+      this.text.style.letterSpacing = `${options.letterSpacing ?? 0}px`;
+      this.text.style.fontKerning = 'none'; this.text.style.fontVariantLigatures = 'none';
+      // Use the rendered cell stride, including xterm's device-pixel rounding.
+      const grid = this.term.element?.querySelector('.xterm-screen');
+      const rowHeight = grid?.getBoundingClientRect().height / this.term.rows;
+      this.text.style.lineHeight = Number.isFinite(rowHeight) && rowHeight > 0 ? `${rowHeight}px` : 'normal';
       this.render(); this.onOpen();
       this.text.focus({preventScroll: true}); this.text.setSelectionRange(0, 0);
       this.text.scrollTop = 0; this.text.scrollLeft = 0;
