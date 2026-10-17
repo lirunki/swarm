@@ -264,6 +264,9 @@ while True:
                 for key, data in [
                     ("up", b"\x1b[A"),
                     ("left", b"\x1b[D"),
+                    # tmux re-encodes Home/End for its normal-mode application pane.
+                    ("home", b"\x1b[1~"),
+                    ("end", b"\x1b[4~"),
                     ("delete", b"\x1b[3~"),
                     ("escape", b"\x1b"),
                 ]:

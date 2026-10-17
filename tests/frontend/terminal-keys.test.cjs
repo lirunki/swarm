@@ -32,8 +32,8 @@ function fixture({mobile = true, viewport = true} = {}) {
   return {keys, term, pane, input, doc, view, vk, media, sent, state, focus, keyboard};
 }
 
-test('arrows respect application cursor mode and modifiers, Supr is forward Delete', () => {
-  for (const [key, code] of Object.entries({up: 'A', down: 'B', right: 'C', left: 'D'})) {
+test('navigation keys respect application cursor mode and modifiers, Supr is forward Delete', () => {
+  for (const [key, code] of Object.entries({up: 'A', down: 'B', right: 'C', left: 'D', home: 'H', end: 'F'})) {
     assert.equal(encodeKey(key), `\x1b[${code}`);
     assert.equal(encodeKey(key, {}, {applicationCursorKeysMode: true}), `\x1bO${code}`);
     assert.equal(encodeKey(key, {ctrl: true}), `\x1b[1;5${code}`);
@@ -73,7 +73,10 @@ test('navigation keys consume modifiers once without sending modifier keys alone
   const t = fixture(); t.focus(); t.keyboard(650);
   t.keys.press('ctrl'); assert.deepEqual(t.sent, []); t.keys.press('left'); assert.deepEqual(t.sent, ['\x1b[1;5D']);
   assert.equal(t.keys.ctrl, false); t.term.modes.applicationCursorKeysMode = true; t.keys.press('up');
-  assert.equal(t.sent.at(-1), '\x1bOA'); t.keys.press('delete'); assert.equal(t.sent.at(-1), '\x1b[3~');
+  assert.equal(t.sent.at(-1), '\x1bOA'); t.keys.press('home'); assert.equal(t.sent.at(-1), '\x1bOH');
+  t.keys.press('end'); assert.equal(t.sent.at(-1), '\x1bOF');
+  t.keys.press('ctrl'); t.keys.press('home'); assert.equal(t.sent.at(-1), '\x1b[1;5H');
+  t.keys.press('delete'); assert.equal(t.sent.at(-1), '\x1b[3~');
 });
 
 test('mouse/protocol reports and paste/IME words never become control commands', () => {
@@ -84,6 +87,8 @@ test('mouse/protocol reports and paste/IME words never become control commands',
   t.keys.press('alt'); const pasted = '\x1b[200~paste\x1b[201~'; assert.equal(t.keys.transform(pasted), pasted); assert.equal(t.keys.alt, false);
   t.keys.press('ctrl'); t.doc.fire('paste'); assert.equal(t.keys.transform('c'), 'c');
   t.keys.press('alt'); assert.equal(t.keys.transform('\x1b[D'), '\x1b[1;3D'); assert.equal(t.keys.alt, false);
+  t.keys.press('ctrl'); assert.equal(t.keys.transform('\x1b[1~'), '\x1b[1;5H');
+  t.keys.press('alt'); assert.equal(t.keys.transform('\x1bOF'), '\x1b[1;3F');
 });
 
 test('key taps suppress focus loss and connection/copy/tab changes clear modifiers', () => {

@@ -386,13 +386,16 @@ if pi is waiting at startup for trust/login/model selection, open its Terminal.
 When the **standard software keyboard is open** and the live terminal input is
 focused, a mobile-only accessory bar appears immediately above it:
 
-**Ctrl · Alt · ← · ↑ · ↓ · → · Esc · Supr**
+**Ctrl · Alt · ← · ↑ · ↓ · → · Home · End · Esc · Supr**
+
+On narrow screens, the accessory bar can be scrolled horizontally.
 
 - **Ctrl** and **Alt** toggle a one-shot modifier for the next typed character or
   accessory key; tap both for a combination. They reset after a key, when the
   keyboard hides, when focus leaves the terminal, or when the connection is unavailable.
 - Arrow keys respect the terminal's normal/application cursor mode and modifier
-  combinations. **Supr** sends forward Delete (`Delete`), not Backspace.
+  combinations. **Home** and **End** go to the beginning/end of the line in the
+  terminal application. **Supr** sends forward Delete (`Delete`), not Backspace.
 - **Esc** and control shortcuts are real terminal input: Ctrl+C can interrupt an
   application just as it does with a physical keyboard. No keys are queued while offline.
 - Button taps retain input focus, keeping the software keyboard open. The terminal

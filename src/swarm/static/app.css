@@ -140,3 +140,5 @@ dialog{width:min(520px,calc(100vw - 32px));max-height:90dvh;overflow:auto;backgr
 
 /* The software-keyboard accessory sits in the visual viewport, not under the keyboard. */
 .terminal-keybar{position:fixed;z-index:45;left:0;right:auto;display:flex;align-items:center;gap:4px;box-sizing:border-box;min-height:48px;padding:4px 8px;background:#171e29;border-top:1px solid var(--line);box-shadow:0 -3px 14px #0005;overflow-x:auto;touch-action:pan-x}.terminal-keybar button{flex:1 0 32px;min-width:32px;height:40px;padding:4px;font-size:13px;white-space:nowrap;touch-action:manipulation;user-select:none;-webkit-user-select:none}.terminal-keybar button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#23150c}.terminal-keybar button:disabled{opacity:.4}.terminal-keybar button[data-key="ctrl"],.terminal-keybar button[data-key="alt"]{font-weight:650}
+
+.terminal-keybar button[data-key="home"],.terminal-keybar button[data-key="end"]{flex-basis:38px;min-width:38px;font-size:12px;padding:4px 2px}

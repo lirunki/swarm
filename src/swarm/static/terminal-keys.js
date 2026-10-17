@@ -5,6 +5,7 @@
   const baselines = new WeakMap();
   const KEYS = [['ctrl', 'Ctrl', 'Control modifier'], ['alt', 'Alt', 'Alt modifier'],
     ['left', '←', 'Arrow left'], ['up', '↑', 'Arrow up'], ['down', '↓', 'Arrow down'], ['right', '→', 'Arrow right'],
+    ['home', 'Home', 'Beginning of line'], ['end', 'End', 'End of line'],
     ['escape', 'Esc', 'Escape'], ['delete', 'Supr', 'Delete forward']];
 
   function controlCharacter(text) {
@@ -16,8 +17,8 @@
 
   function encodeKey(key, modifiers = {}, modes = {}) {
     const {ctrl = false, alt = false} = modifiers, parameter = 1 + (ctrl ? 4 : 0) + (alt ? 2 : 0);
-    const arrows = {up: 'A', down: 'B', right: 'C', left: 'D'};
-    if (Object.hasOwn(arrows, key)) return parameter > 1 ? `${ESC}[1;${parameter}${arrows[key]}` : `${ESC}${modes.applicationCursorKeysMode ? 'O' : '['}${arrows[key]}`;
+    const navigation = {up: 'A', down: 'B', right: 'C', left: 'D', home: 'H', end: 'F'};
+    if (Object.hasOwn(navigation, key)) return parameter > 1 ? `${ESC}[1;${parameter}${navigation[key]}` : `${ESC}${modes.applicationCursorKeysMode ? 'O' : '['}${navigation[key]}`;
     if (key === 'delete') return parameter > 1 ? `${ESC}[3;${parameter}~` : `${ESC}[3~`;
     if (key === 'escape') return alt ? ESC + ESC : ESC;
     throw new Error('Unsupported terminal accessory key');
@@ -122,7 +123,9 @@
       if (!this.ctrl && !this.alt) return data;
       if (!this.visible || !this.focused() || !this.ready()) { this.clearModifiers(); return data; }
       const shortcuts = {'\x1b[A': 'up', '\x1b[B': 'down', '\x1b[C': 'right', '\x1b[D': 'left',
-        '\x1bOA': 'up', '\x1bOB': 'down', '\x1bOC': 'right', '\x1bOD': 'left', '\x1b[3~': 'delete', '\x1b': 'escape'};
+        '\x1bOA': 'up', '\x1bOB': 'down', '\x1bOC': 'right', '\x1bOD': 'left',
+        '\x1b[H': 'home', '\x1bOH': 'home', '\x1b[1~': 'home', '\x1b[7~': 'home',
+        '\x1b[F': 'end', '\x1bOF': 'end', '\x1b[4~': 'end', '\x1b[8~': 'end', '\x1b[3~': 'delete', '\x1b': 'escape'};
       if (Object.hasOwn(shortcuts, data)) {
         const value = encodeKey(shortcuts[data], {ctrl: this.ctrl, alt: this.alt}, this.term.modes);
         this.clearModifiers(); return value;

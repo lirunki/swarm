@@ -814,6 +814,8 @@ def test_mobile_terminal_keys_follow_keyboard_geometry_and_preserve_focus(static
                     "↑",
                     "↓",
                     "→",
+                    "Home",
+                    "End",
                     "Esc",
                     "Supr",
                 ]
@@ -821,7 +823,7 @@ def test_mobile_terminal_keys_follow_keyboard_geometry_and_preserve_focus(static
                 assert abs(box["y"] + box["height"] - 650) < 1
                 pane = page.locator(".terminal-pane").bounding_box()
                 assert pane["y"] + pane["height"] <= box["y"] + 1
-                for key in ["up", "down", "left", "right", "delete", "escape"]:
+                for key in ["up", "down", "left", "right", "home", "end", "delete", "escape"]:
                     bar.locator(f'[data-key="{key}"]').tap()
                     assert page.evaluate(
                         "document.activeElement === terminals.get('a0').term.textarea"
@@ -850,6 +852,8 @@ def test_mobile_terminal_keys_follow_keyboard_geometry_and_preserve_focus(static
                     "\x1bOB",
                     "\x1bOD",
                     "\x1bOC",
+                    "\x1bOH",
+                    "\x1bOF",
                     "\x1b[3~",
                     "\x1b",
                     "\x01",
