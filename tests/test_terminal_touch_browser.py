@@ -262,6 +262,7 @@ while True:
                     assert received.read_bytes() == expected
 
                 for key, data in [
+                    ("tab", b"\t"),
                     ("up", b"\x1b[A"),
                     ("left", b"\x1b[D"),
                     # tmux re-encodes Home/End for its normal-mode application pane.

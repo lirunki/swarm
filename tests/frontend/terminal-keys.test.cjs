@@ -32,7 +32,7 @@ function fixture({mobile = true, viewport = true} = {}) {
   return {keys, term, pane, input, doc, view, vk, media, sent, state, focus, keyboard};
 }
 
-test('navigation keys respect application cursor mode and modifiers, Supr is forward Delete', () => {
+test('navigation keys respect application cursor mode and modifiers, Sup is forward Delete', () => {
   for (const [key, code] of Object.entries({up: 'A', down: 'B', right: 'C', left: 'D', home: 'H', end: 'F'})) {
     assert.equal(encodeKey(key), `\x1b[${code}`);
     assert.equal(encodeKey(key, {}, {applicationCursorKeysMode: true}), `\x1bO${code}`);
@@ -42,6 +42,7 @@ test('navigation keys respect application cursor mode and modifiers, Supr is for
   }
   assert.equal(encodeKey('delete'), '\x1b[3~'); assert.equal(encodeKey('delete', {ctrl: true}), '\x1b[3;5~');
   assert.equal(encodeKey('escape'), '\x1b'); assert.equal(encodeKey('escape', {alt: true}), '\x1b\x1b');
+  assert.equal(encodeKey('tab'), '\t'); assert.equal(encodeKey('tab', {alt: true}), '\x1b\t');
 });
 
 test('ASCII control mappings are standard and non-ASCII characters are not corrupted', () => {
@@ -110,7 +111,7 @@ test('VirtualKeyboard geometry supports overlays and visual viewport offsets', (
   const t = fixture(); t.focus(); t.vk.boundingRect = {height: 300, top: 700}; t.vk.fire('geometrychange');
   assert.equal(t.keys.bar.hidden, false); assert.equal(t.keys.bar.style.top, '652px');
   t.vk.boundingRect.height = 0; t.view.visualViewport.height = 650; t.view.visualViewport.offsetTop = 40; t.view.visualViewport.offsetLeft = 5;
-  t.view.visualViewport.fire('scroll'); assert.equal(t.keys.bar.style.top, '642px'); assert.equal(t.keys.bar.style.left, '5px');
+  t.view.visualViewport.fire('scroll'); assert.equal(t.keys.bar.style.top, '642px'); assert.equal(t.keys.bar.style.left, '24.5px');
 });
 
 test('resized-layout keyboards share their original baseline across terminal instances', () => {
@@ -133,4 +134,15 @@ test('disposal removes all listeners and restores pane space without sending any
   assert.equal(t.keys.bar.removed, true); assert.equal(t.pane.style.bottom, ''); assert.equal(t.keys.ctrl, false);
   assert.equal(t.doc.events.get('focusin').size, 0); assert.equal(t.view.visualViewport.events.get('resize').size, 0);
   assert.equal(t.sent.length, 0);
+});
+
+test('all eleven keys stay ordered in a centered 90-percent bar and labels fit their cells', () => {
+  const t = fixture(); t.focus(); t.keyboard(650);
+  assert.deepEqual([...t.keys.labels.values()].map(label => label.textContent), ['Esc', 'Tab', 'Ctrl', 'Alt', '←', '↑', '↓', '→', 'Home', 'End', 'Sup']);
+  assert.equal(t.keys.bar.style.width, '351px'); assert.equal(t.keys.bar.style.left, '19.5px');
+  const label = t.keys.labels.get('home'), button = t.keys.buttons.get('home');
+  label.scrollWidth = 40; button.clientWidth = 24; t.keys.fitLabels();
+  assert.equal(label.style.transform, 'scaleX(0.5)');
+  button.clientWidth = 80; t.keys.fitLabels(); assert.equal(label.style.transform, 'scaleX(1)');
+  t.keys.press('tab'); assert.equal(t.sent.at(-1), '\t');
 });

@@ -750,8 +750,10 @@ def test_compact_global_and_terminal_headers(static_url, width):
             browser.close()
 
 
-@pytest.mark.parametrize("mobile", [True, False])
-def test_mobile_terminal_keys_follow_keyboard_geometry_and_preserve_focus(static_url, mobile):
+@pytest.mark.parametrize("mobile,width", [(True, 320), (True, 390), (True, 768), (False, 1280)])
+def test_mobile_terminal_keys_follow_keyboard_geometry_and_preserve_focus(
+    static_url, mobile, width
+):
     state = fixture_state()
     with playwright.sync_playwright() as runner:
         try:
@@ -764,7 +766,7 @@ def test_mobile_terminal_keys_follow_keyboard_geometry_and_preserve_focus(static
             raise
         try:
             page = browser.new_page(
-                viewport={"width": 390 if mobile else 1280, "height": 1000},
+                viewport={"width": width, "height": 1000},
                 has_touch=mobile,
                 is_mobile=mobile,
             )
@@ -808,6 +810,8 @@ def test_mobile_terminal_keys_follow_keyboard_geometry_and_preserve_focus(static
             else:
                 playwright.expect(bar).to_be_visible()
                 assert bar.locator("button").all_text_contents() == [
+                    "Esc",
+                    "Tab",
                     "Ctrl",
                     "Alt",
                     "←",
@@ -816,14 +820,35 @@ def test_mobile_terminal_keys_follow_keyboard_geometry_and_preserve_focus(static
                     "→",
                     "Home",
                     "End",
-                    "Esc",
-                    "Supr",
+                    "Sup",
                 ]
                 box = bar.bounding_box()
+                assert abs(box["width"] - width * 0.9) < 1
+                assert abs(box["x"] - width * 0.05) < 1
+                assert bar.evaluate("e => e.scrollWidth <= e.clientWidth")
+                key_boxes = bar.locator("button").evaluate_all(
+                    "items => items.map(e => ({button:e.getBoundingClientRect().toJSON(),label:e.firstElementChild.getBoundingClientRect().toJSON()}))"
+                )
+                for key_box in key_boxes:
+                    assert abs(key_box["button"]["y"] - key_boxes[0]["button"]["y"]) < 1
+                    assert key_box["button"]["x"] >= box["x"] - 1
+                    assert key_box["button"]["right"] <= box["x"] + box["width"] + 1
+                    assert key_box["label"]["x"] >= key_box["button"]["x"] - 1
+                    assert key_box["label"]["right"] <= key_box["button"]["right"] + 1
                 assert abs(box["y"] + box["height"] - 650) < 1
                 pane = page.locator(".terminal-pane").bounding_box()
                 assert pane["y"] + pane["height"] <= box["y"] + 1
-                for key in ["up", "down", "left", "right", "home", "end", "delete", "escape"]:
+                for key in [
+                    "tab",
+                    "up",
+                    "down",
+                    "left",
+                    "right",
+                    "home",
+                    "end",
+                    "delete",
+                    "escape",
+                ]:
                     bar.locator(f'[data-key="{key}"]').tap()
                     assert page.evaluate(
                         "document.activeElement === terminals.get('a0').term.textarea"
@@ -848,6 +873,7 @@ def test_mobile_terminal_keys_follow_keyboard_geometry_and_preserve_focus(static
                     "window.sentFrames.filter(frame => frame.type === 'input').map(frame => frame.data)"
                 )
                 assert actual == [
+                    "\t",
                     "\x1bOA",
                     "\x1bOB",
                     "\x1bOD",

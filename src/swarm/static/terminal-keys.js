@@ -3,10 +3,10 @@
   'use strict';
   const ESC = '\x1b';
   const baselines = new WeakMap();
-  const KEYS = [['ctrl', 'Ctrl', 'Control modifier'], ['alt', 'Alt', 'Alt modifier'],
+  const KEYS = [['escape', 'Esc', 'Escape'], ['tab', 'Tab', 'Tab'],
+    ['ctrl', 'Ctrl', 'Control modifier'], ['alt', 'Alt', 'Alt modifier'],
     ['left', '←', 'Arrow left'], ['up', '↑', 'Arrow up'], ['down', '↓', 'Arrow down'], ['right', '→', 'Arrow right'],
-    ['home', 'Home', 'Beginning of line'], ['end', 'End', 'End of line'],
-    ['escape', 'Esc', 'Escape'], ['delete', 'Supr', 'Delete forward']];
+    ['home', 'Home', 'Beginning of line'], ['end', 'End', 'End of line'], ['delete', 'Sup', 'Delete forward']];
 
   function controlCharacter(text) {
     const code = text.codePointAt(0);
@@ -21,6 +21,7 @@
     if (Object.hasOwn(navigation, key)) return parameter > 1 ? `${ESC}[1;${parameter}${navigation[key]}` : `${ESC}${modes.applicationCursorKeysMode ? 'O' : '['}${navigation[key]}`;
     if (key === 'delete') return parameter > 1 ? `${ESC}[3;${parameter}~` : `${ESC}[3~`;
     if (key === 'escape') return alt ? ESC + ESC : ESC;
+    if (key === 'tab') return (alt ? ESC : '') + '\t';
     throw new Error('Unsupported terminal accessory key');
   }
 
@@ -52,9 +53,11 @@
       this.bar = document.createElement('div'); this.bar.className = 'terminal-keybar'; this.bar.hidden = true;
       this.bar.setAttribute('role', 'toolbar'); this.bar.setAttribute('aria-label', 'Mobile terminal keyboard');
       this.bar.title = 'Ctrl and Alt apply once to the next key';
-      this.buttons = new Map();
+      this.buttons = new Map(); this.labels = new Map();
       for (const [key, label, description] of KEYS) {
-        const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
+        const button = document.createElement('button'); button.type = 'button';
+        const text = document.createElement('span'); text.className = 'terminal-key-label'; text.textContent = label; button.append(text);
+        this.labels.set(key, text);
         button.dataset.key = key; button.setAttribute('aria-label', description); button.title = description;
         if (key === 'ctrl' || key === 'alt') button.setAttribute('aria-pressed', 'false');
         this.listen(button, 'pointerdown', event => event.preventDefault(), {passive: false});
@@ -68,6 +71,7 @@
       this.listen(document, 'visibilitychange', update);
       this.listen(document, 'paste', () => { if (this.focused()) this.clearModifiers(); }, true);
       this.listen(this.view, 'resize', update); this.listen(this.view, 'orientationchange', update);
+      if (document.fonts?.addEventListener) this.listen(document.fonts, 'loadingdone', update);
       if (this.view.visualViewport) {
         this.listen(this.view.visualViewport, 'resize', update); this.listen(this.view.visualViewport, 'scroll', update);
       }
@@ -92,6 +96,13 @@
 
     clearModifiers() { this.ctrl = false; this.alt = false; this.renderModifiers(); }
 
+    fitLabels() {
+      for (const [key, button] of this.buttons) {
+        const label = this.labels.get(key), available = button.clientWidth - 4, natural = label.scrollWidth;
+        if (available > 0 && natural > 0) label.style.transform = `scaleX(${Math.min(1, available / natural)})`;
+      }
+    }
+
     update() {
       if (this.disposed) return;
       const geometry = metrics(this.view, this.document);
@@ -104,7 +115,8 @@
         if (this.reserved) { this.pane.style.bottom = this.originalBottom; this.reserved = false; }
         return;
       }
-      this.bar.style.left = `${geometry.left}px`; this.bar.style.width = `${geometry.width}px`;
+      this.bar.style.left = `${geometry.left + geometry.width * 0.05}px`; this.bar.style.width = `${geometry.width * 0.9}px`;
+      this.fitLabels();
       const height = this.bar.getBoundingClientRect().height || 48;
       const top = Math.max(geometry.top, geometry.bottom - height);
       this.bar.style.top = `${top}px`;
