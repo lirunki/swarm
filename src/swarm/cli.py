@@ -26,14 +26,20 @@ def _tls_arguments(command: argparse.ArgumentParser) -> None:
     command.add_argument("--certfile", type=Path, help="TLS certificate PEM file")
     command.add_argument("--keyfile", type=Path, help="TLS private key PEM file")
     command.add_argument(
-        "--generate-certs-if-absent", action="store_true",
+        "--generate-certs-if-absent",
+        action="store_true",
         help="generate and use self-signed TLS files when both are absent (requires OpenSSL)",
     )
     command.add_argument(
-        "--cert-host", action="append", default=[], metavar="DNS_OR_IP",
+        "--cert-host",
+        action="append",
+        default=[],
+        metavar="DNS_OR_IP",
         help="extra certificate DNS name or IP (repeatable; includes localhost and machine hostname)",
     )
-    command.add_argument("--cert-days", type=int, default=365, help="generated validity in days (365)")
+    command.add_argument(
+        "--cert-days", type=int, default=365, help="generated validity in days (365)"
+    )
 
 
 def _tls_options(args: argparse.Namespace, *, relay: bool = False) -> dict:
@@ -43,7 +49,9 @@ def _tls_options(args: argparse.Namespace, *, relay: bool = False) -> dict:
         raise ValueError("--cert-host requires --generate-certs-if-absent")
     if not args.certfile and not args.generate_certs_if_absent:
         if relay:
-            raise ValueError("relay TLS requires --certfile and --keyfile or --generate-certs-if-absent")
+            raise ValueError(
+                "relay TLS requires --certfile and --keyfile or --generate-certs-if-absent"
+            )
         return {}
     directory = args.home.expanduser().resolve() / "tls" / ("relay" if relay else "dashboard")
     cert = (args.certfile or directory / "cert.pem").expanduser().absolute()
@@ -57,7 +65,9 @@ def _tls_options(args: argparse.Namespace, *, relay: bool = False) -> dict:
         print(f"TLS certificate {'generated' if generated else 'reused'}: {cert}", flush=True)
         print(
             "Self-signed certificates must be explicitly trusted by browsers and relay clients. "
-            "TLS does not add authentication.", file=sys.stderr, flush=True,
+            "TLS does not add authentication.",
+            file=sys.stderr,
+            flush=True,
         )
     return {"ssl_certfile": str(cert), "ssl_keyfile": str(key)}
 
@@ -183,6 +193,26 @@ def parser() -> argparse.ArgumentParser:
     source.add_argument("--url", help="external HTTP(S) product link")
     source.add_argument("--file", help="local result file to snapshot for download")
     source.add_argument("--clear", action="store_true", help="remove the current product")
+
+    files = commands.add_parser(
+        "file", help="register and browse original-file references on an agent"
+    )
+    files.add_argument(
+        "--id",
+        default=os.environ.get("SWARM_AGENT_ID"),
+        help="agent ID (defaults to SWARM_AGENT_ID)",
+    )
+    file_commands = files.add_subparsers(dest="file_command", required=True)
+    add_file = file_commands.add_parser(
+        "add", help="register an existing local file without copying it"
+    )
+    add_file.add_argument("path", type=Path)
+    add_file.add_argument("--label", default="")
+    file_commands.add_parser("list", help="list registered files and current availability")
+    remove_file = file_commands.add_parser(
+        "remove", help="remove a reference, never the original file"
+    )
+    remove_file.add_argument("file_id")
 
     spawn = commands.add_parser("spawn", help="create or reuse a direct child agent")
     spawn.add_argument("--request-id", required=True, help="stable idempotency slug (max 80)")
@@ -383,6 +413,20 @@ def main(argv: list[str] | None = None) -> None:
             elif args.file:
                 payload["path"] = str(local_path(args.file))
             print(json.dumps(AgentClient(args.api_url).product(args.id, payload), indent=2))
+            return
+        if args.command == "file":
+            if not args.id:
+                raise ValueError("--id or SWARM_AGENT_ID is required for file registration")
+            client = AgentClient(args.api_url)
+            if args.file_command == "add":
+                result = client.add_file(
+                    args.id, {"path": str(local_path(args.path)), "label": args.label}
+                )
+            elif args.file_command == "list":
+                result = client.files(args.id)
+            else:
+                result = client.remove_file(args.id, args.file_id)
+            print(json.dumps(result, indent=2))
             return
         if args.command in {"spawn", "agent"}:
             print(json.dumps(run_agent_command(args), indent=2))

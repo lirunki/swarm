@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .adapters import resume_prompt, session_header
 from .discovery import sibling_worktree_path
+from .files import AgentFiles
 from .meta_compact import busy, require_not_busy
 from .models import Agent, CreateAgent, Status, now
 from .paths import local_path
@@ -44,6 +45,7 @@ class Controller:
         self.store = store
         self.processes = processes
         self.lock = threading.RLock()
+        self.files = AgentFiles(store)
         self.state: dict = {}
         self.fingerprint = ""
         self.snapshot_fingerprint = ""
@@ -271,11 +273,23 @@ class Controller:
     def refresh(self) -> bool:
         with self.lock:
             agents = self.store.scan()
+            entries, errors = [], dict(self.store.errors)
+            for agent in agents:
+                try:
+                    files = self.files.summary(agent.id)
+                except (OSError, ValueError):
+                    files = {
+                        "file_count": 0,
+                        "files_version": None,
+                        "files_error": "File references could not be read",
+                    }
+                    errors[f"files/{agent.id}.json"] = files["files_error"]
+                entries.append(
+                    agent.model_dump(mode="json") | {"alive": self.processes.alive(agent)} | files
+                )
             self.state = {
-                "agents": [
-                    a.model_dump(mode="json") | {"alive": self.processes.alive(a)} for a in agents
-                ],
-                "errors": dict(self.store.errors),
+                "agents": entries,
+                "errors": errors,
                 "home": str(self.store.home),
                 "health": self.processes.health(),
             }

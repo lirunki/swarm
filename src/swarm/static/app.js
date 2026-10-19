@@ -185,6 +185,11 @@ function canRevertToolInputs(a) {
   return !!(job?.archive && job.source_sha256 && job.replacement_sha256 &&
     (['completed', 'unchanged'].includes(job.status) || (job.status === 'failed' && job.operation === 'revert')));
 }
+function openAgentFiles(id) {
+  const agent = agentById(id); if (!agent) return;
+  const workspace = activeSwarm === 'local' ? 'Local Swarm' : federationNodes.get(activeSwarm)?.name || activeSwarm;
+  agentFilesDialog.open(agent, apiPath(`/api/agents/${encodeURIComponent(id)}/files`), workspace);
+}
 function productLink(a) {
   const product = a.product;
   if (!product || !['link', 'file'].includes(product.kind)) return null;
@@ -235,7 +240,16 @@ function renderCard(a) {
   const goal = node('p', 'goal', a.goal); goal.title = a.goal;
   summary.append(header);
   const product = productLink(a);
-  if (product) { summary.append(product); card.classList.toggle('has-product', true); }
+  if (product) card.classList.toggle('has-product', true);
+  const count = Number.isInteger(a.file_count) && a.file_count >= 0 ? a.file_count : 0;
+  if (count || a.files_error) {
+    const library = node('div', 'card-product-files');
+    const files = button(a.files_error ? 'Files !' : `Files ${count}`, 'card-files', () => openAgentFiles(a.id));
+    files.title = a.files_error || `${count} registered file${count === 1 ? '' : 's'}`;
+    files.setAttribute('aria-label', `Files for ${a.name}`);
+    if (product) library.append(product);
+    library.append(files); summary.append(library); card.classList.toggle('has-files', true);
+  } else if (product) summary.append(product);
   const activity = node('div', 'activity'); activity.style.borderColor = `var(--${a.status})`;
   activity.id = `card-activity-${a.id}`;
   toggle.setAttribute('aria-describedby', activity.id);
@@ -310,6 +324,7 @@ function render() {
   for (const terminal of terminals.values()) syncTerminal(terminal);
   if ($('#edit-dialog').open) updateEditAvailability();
   if ($('#wake-dialog').open) updateWakeAvailability();
+  agentFilesDialog.sync(agentById(agentFilesDialog.agentId));
 }
 $('#collapse-all').addEventListener('click', () => {
   cardViews.setAllCompact(state.home, state.agents, true);
@@ -332,7 +347,7 @@ function openTerminal(id, focus = true) {
     const header = node('div', 'terminal-header');
     const title = node('strong'), info = node('span', 'hint terminal-info'), connected = node('span', 'hint terminal-connection', 'Detached');
     const copyButton = node('button', 'small terminal-copy-button', 'Copy text'); copyButton.type = 'button'; copyButton.hidden = true; copyButton.dataset.agentId = id;
-    header.append(title, info, connected, copyButton, button('↻ Reconnect', 'small', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); }));
+    header.append(title, info, connected, copyButton, button('Files', 'small terminal-files', () => openAgentFiles(id)), button('↻ Reconnect', 'small', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); }));
     const surface = node('div', 'terminal-surface'), screen = node('div', 'terminal-screen'), overlay = node('div', 'terminal-overlay');
     surface.append(screen, overlay); pane.append(header, surface); $('#terminals').append(pane);
     const group = node('span', 'tab-group'), tab = button('', 'tab', () => activate(id));
@@ -769,6 +784,7 @@ $('#import-grok-form').addEventListener('submit', event => {
 $('#import-grok-button').addEventListener('click', () => { dashboardControls.adoption.close(true); $('#import-grok-form').reset(); $('#grok-session-search').value = ''; $('#grok-roots').textContent = ''; showDialog('#import-grok-dialog'); loadGrokSessions(); });
 $('#refresh-grok-sessions').addEventListener('click', loadGrokSessions);
 $('#grok-session-search').addEventListener('input', renderGrokSessions);
+const agentFilesDialog = new SwarmAgentFiles.AgentFilesDialog({api: localApi, onChange: refresh});
 const dashboardControls = new SwarmDashboardControls.DashboardControls({onStatusChange: render});
 const relaySettingsDialog = new SwarmRelaySettings.RelaySettingsDialog({
   api: localApi,

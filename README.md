@@ -465,6 +465,76 @@ After updating, refresh the mobile page to load the new frontend assets. No back
 restart is needed for this touch-to-wheel implementation; it uses the same input
 transport as existing keyboard/mouse support, including through the federation relay.
 
+## Agent Files library (original-file references)
+
+Agents can register **multiple files** without copying payloads into Swarm. This is
+separate from the single latest-product advertisement below: adding another file
+never replaces earlier references or the featured product.
+
+```bash
+# Inside a managed agent, using its existing SWARM_AGENT_ID/API URL:
+"$SWARM_PYTHON" -m swarm file add /tmp/chart.png --label 'Experiment chart'
+"$SWARM_PYTHON" -m swarm file add /absolute/project/artifacts/report.pdf --label 'Research report'
+"$SWARM_PYTHON" -m swarm file list
+"$SWARM_PYTHON" -m swarm file remove FILE_UUID
+
+# Operator targeting a particular agent:
+swarm file --id AGENT_UUID list
+```
+
+A **Files N** button appears on compact/expanded cards with registered entries;
+**Files** beside **Reconnect** in each terminal opens the same browser. The terminal
+need not be awake. The list shows labels, filenames, sizes/types and availability,
+with Open, Download and Remove reference actions. Raster images and PDFs open in a
+new browser tab; other/active formats such as HTML and SVG download rather than
+execute inside Swarm. Download always forces a download. **Remove reference never
+deletes the original file.**
+
+### On-demand behavior and lifetime
+
+- Registration only resolves/stats the original and stores private path metadata
+  under `$SWARM_HOME/files/<agent-uuid>.json` (mode 0600 on POSIX). No source bytes,
+  base64 or payload snapshot are saved, and no payload is read when opening a list.
+- Dashboard/relay state advertises only count/revision, not original paths or bytes.
+  File contents are read **only when the user opens/downloads an entry**. Local
+  responses stream binary; remote access uses the existing bounded base64/chunked
+  federation transport, decoded back to binary HTTP for the browser. No LLM turn,
+  agent wake or base64 tool-output dump is involved.
+- References use resolved local paths. Updated originals are what the next click
+  receives; there is no version archive. Registering the same resolved path updates
+  that entry. Use distinct filenames if several versions should remain available.
+- Deleted/moved files stay listed as unavailable; restoring the regular file at the
+  same registered path makes it usable again. Replacement symlinks/devices are
+  refused. Finish writing before publishing; changing a file during transfer may
+  fail the read. Keep durable results in a workspace artifacts directory rather
+  than a temp directory that will be cleaned up.
+- A remote controller must be online to fetch its original file; there is no
+  receiving-node disk cache. Browser responses are marked `no-store`.
+- References survive controller restarts, but forgetting an agent removes its
+  reference index (not originals, worktrees or pi session files).
+
+Limits are **64 entries per agent** and **128 MiB per file**. Only regular local
+files can be registered. Requests serve validated agent/file UUIDs, never arbitrary
+browser-provided paths. Safe preview MIME is detected from the content on fetch;
+unknown/active content stays download-only. This is a fully trusted same-user mesh,
+not a sandbox against peers/agents with filesystem access. Never register private
+configuration, credentials, keys or unrelated data. Protect user-profile ACLs on
+Windows too.
+
+The local backend API is:
+
+- `GET /api/agents/{id}/files`: metadata/current availability, no file payload.
+- `POST /api/agents/{id}/files`: `{ "path": "/local/file", "label": "Result" }`.
+- `DELETE /api/agents/{id}/files/{file_id}`: unregister only.
+- `GET /api/agents/{id}/files/{file_id}/content`: current bytes, safe inline preview
+  or download; `?download=true` always downloads.
+
+For a federated workspace the existing `/api/federation/{node}/proxy/...` route
+handles the same URLs. After updating Python code, restart the controller once
+(and refresh the browser) to load these new API routes. Restarting the controller
+leaves tmux-backed agents running. An older controller displays a clear Files API
+unavailable/update message rather than silently showing an empty repository.
+
 ## Advertise agent products
 
 Agents can publish their latest deliverable as a link on both compact and expanded
@@ -865,6 +935,7 @@ Default storage (`SWARM_HOME` overrides `~/.swarm`):
   sessions/*.jsonl    # exact session files for agents created by Swarm
   sessions/imports/   # converted foreign sessions (currently Grok Build)
   state.json         # atomically persisted last-good dashboard snapshot
+  files/<uuid>.json  # private original-file reference metadata; no payload copies
   relay-settings.json # protected relay profile/key and connection intent (if configured)
   locks/             # cross-process report/adoption locks
   controller.lock    # single-controller lock

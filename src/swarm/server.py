@@ -25,6 +25,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .controller import Controller
 from .discovery import browse_folders, discover_models
 from .federation import MAX_RPC_REQUEST, FederationConfig
+from .files import FileRequest, FileUnavailable
 from .importers.grok import GrokImportRequest, GrokSessions
 from .meta_compact import MetaCompactor, MetaCompactRequest, require_not_busy
 from .models import AgentPatch, CreateAgent, WakeRequest
@@ -261,7 +262,10 @@ def create_app(
         except RuntimeError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=503)
         content = result.get("_body", b"")
-        headers = {"Content-Type": result.get("content_type", "application/octet-stream")}
+        headers = {
+            "Content-Type": result.get("content_type", "application/octet-stream"),
+            "Cache-Control": "no-store",
+        }
         if result.get("content_disposition"):
             headers["Content-Disposition"] = result["content_disposition"]
         return Response(content, status_code=int(result.get("status", 502)), headers=headers)
@@ -292,6 +296,73 @@ def create_app(
         result = await asyncio.to_thread(update)
         await broadcast()
         return result
+
+    @app.exception_handler(FileUnavailable)
+    async def file_unavailable(request: Request, exc: FileUnavailable):
+        return JSONResponse(
+            {"detail": str(exc)}, status_code=exc.status, headers={"Cache-Control": "no-store"}
+        )
+
+    @app.get("/api/agents/{agent_id}/files")
+    def list_agent_files(agent_id: UUID):
+        # Original-file stats must not hold the global controller lock.
+        return JSONResponse(controller.files.list(agent_id), headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/agents/{agent_id}/files", status_code=201)
+    async def register_agent_file(agent_id: UUID, request: FileRequest):
+        def register():
+            with controller.lock:
+                result = controller.files.add(agent_id, request)
+                controller.refresh()
+                return result
+
+        result = await asyncio.to_thread(register)
+        await broadcast()
+        return result
+
+    @app.delete("/api/agents/{agent_id}/files/{file_id}")
+    async def unregister_agent_file(agent_id: UUID, file_id: UUID):
+        def unregister():
+            with controller.lock:
+                result = controller.files.remove(agent_id, file_id)
+                controller.refresh()
+                return result
+
+        result = await asyncio.to_thread(unregister)
+        await broadcast()
+        return result
+
+    @app.get("/api/agents/{agent_id}/files/{file_id}/content")
+    async def agent_file_content(agent_id: UUID, file_id: UUID, download: bool = False):
+        ref, stream, size, kind = await asyncio.to_thread(controller.files.open, agent_id, file_id)
+
+        def content():
+            remaining = size
+            try:
+                while remaining:
+                    block = stream.read(min(65536, remaining))
+                    if not block:
+                        raise RuntimeError(
+                            "Original file changed during download; retry when writing is finished"
+                        )
+                    remaining -= len(block)
+                    yield block
+            finally:
+                stream.close()
+
+        inline = kind != "application/octet-stream" and not download
+        return StreamingResponse(
+            content(),
+            media_type=kind if inline else "application/octet-stream",
+            headers={
+                "Content-Disposition": ("inline" if inline else "attachment")
+                + "; filename*=UTF-8''"
+                + quote(ref.filename, safe=""),
+                "Content-Length": str(size),
+                "Cache-Control": "no-store",
+            },
+            background=BackgroundTask(stream.close),
+        )
 
     @app.post("/api/agents/{agent_id}/product")
     async def publish_product(agent_id: UUID, request: ProductRequest):
@@ -416,6 +487,10 @@ def create_app(
     async def forget(agent_id: UUID):
         agent = await asyncio.to_thread(controller.forget, str(agent_id))
         await asyncio.to_thread(products.collect)
+        try:
+            await asyncio.to_thread(controller.files.forget, agent.id)
+        except (OSError, ValueError):
+            log.warning("Could not clear forgotten agent's file reference metadata")
         await broadcast()
         return {"id": str(agent.id), "forgotten": True, "session_file": agent.session_file}
 

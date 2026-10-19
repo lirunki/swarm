@@ -118,6 +118,36 @@ unrelated files. Card viewers can download the advertised content. Prefer concis
 labels; the product remains directly accessible on a collapsed tile. A parent can
 inspect a child's product in `swarm agent status CHILD_ID`.
 
+## Register files for the user's Files library
+
+Keep reusable file references separately from the single latest product. Register an
+image, PDF, report, archive or other finished local file on your own agent card:
+
+```bash
+"$SWARM_PYTHON" -m swarm file add /tmp/chart.png --label 'Experiment results'
+"$SWARM_PYTHON" -m swarm file list
+"$SWARM_PYTHON" -m swarm file remove FILE_ID
+```
+
+The ID defaults to SWARM_AGENT_ID; an operator may use `swarm file --id AGENT_ID ...`.
+Swarm stores **only a resolved path and metadata**, not file bytes or a snapshot.
+The user opens Files from your card or beside Reconnect in the terminal. Contents
+are read locally or fetched from your Swarm on demand, without waking you. Do not
+print base64 into the conversation: the transport handles remote binary encoding.
+
+Finish writing before registration. Keep the original in place for as long as the
+user needs it; a deleted/moved temp file becomes unavailable. Later changes at the
+registered path are what the user receives. Use a stable workspace artifacts folder
+instead of a short-lived temp location for longer-lived results. The controller must
+be online for remote access. Removing a reference never deletes the original.
+
+At most 64 files per agent and 128 MiB per file are supported. Registering the same
+resolved path updates that entry rather than duplicating it. Raster images/PDFs may
+open inline; unknown or active types (including HTML/SVG) download only. Never
+register credentials, API keys, private configuration or unrelated data. Do not edit
+the controller's private file-reference index yourself. File registration does not
+change your task status or replace the advertised latest product.
+
 ## Orchestrating direct children
 
 A managed agent may create and control only its **direct children** through the local

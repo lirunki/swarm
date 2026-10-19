@@ -165,7 +165,8 @@ def test_dense_org_chart_layout_and_interactions(static_url, tmp_path, width):
             shortcut.click()
             playwright.expect(page.locator("#terminals")).to_be_visible()
             assert page.locator(".terminal-header button:visible").all_text_contents() == [
-                "↻ Reconnect"
+                "Files",
+                "↻ Reconnect",
             ]
             page.locator(".tab-group .tab-close").click()
             playwright.expect(page.locator("#dashboard")).to_be_visible()
@@ -489,7 +490,8 @@ def test_native_mobile_copy_overlay_and_unchanged_desktop(static_url, mobile):
             if not mobile:
                 playwright.expect(copy).to_be_hidden()
                 assert page.locator(".terminal-header button:visible").all_text_contents() == [
-                    "↻ Reconnect"
+                    "Files",
+                    "↻ Reconnect",
                 ]
                 playwright.expect(page.locator(".terminal-copy-text")).to_be_hidden()
                 box = page.locator(".xterm-screen").bounding_box()

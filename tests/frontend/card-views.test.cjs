@@ -96,6 +96,7 @@ function renderer() {
     document: {createElement: tag => new Element(tag), createTextNode: value => new Text(value)}, URL,
     state: {home, agents: []}, cardViews: new CardViews(() => storage), SwarmCardViews: {applyCardView},
     agentById: id => context.state.agents.find(a => a.id === id),
+    activeSwarm: 'local', federationNodes: new Map(), agentFilesDialog: {open: (a, base, workspace) => calls.push(['files', a.id, base, workspace])},
     metaCompactingId: null, toolInputCompactingId: null,
     labels: {running: 'Running', waiting: 'Waiting for input', idle: 'Idle', dormant: 'Dormant', done: 'Done'},
     since: () => 'just now', apiPath: value => value, openTerminal: id => calls.push(['terminal', id]), editAgent: id => calls.push(['edit', id]),
@@ -486,7 +487,7 @@ test('compact terminal visibility does not depend on a new helper version', () =
   toggle.click(); assert.equal(shortcut.hidden, false);
   const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
   const version = html.match(/app\.js\?v=([^"]+)/)[1];
-  for (const asset of ['app.css', 'app.js', 'card-views.js', 'org-chart.js', 'relay-settings.js', 'terminal-touch.js', 'terminal-copy.js', 'dashboard-controls.js', 'terminal-keys.js']) {
+  for (const asset of ['app.css', 'app.js', 'card-views.js', 'org-chart.js', 'relay-settings.js', 'terminal-touch.js', 'terminal-copy.js', 'dashboard-controls.js', 'terminal-keys.js', 'agent-files.js']) {
     assert.ok(html.includes(`/static/${asset}?v=${version}`));
   }
 });
@@ -509,7 +510,7 @@ test('terminal toolbar keeps reconnect but removes redundant Wake and Close tab'
   vm.runInContext(open + '\n' + sync, context);
   context.openTerminal(a.id);
   const t = context.terminals.get(a.id), header = t.pane.childNodes[0];
-  assert.deepEqual(walk(header).filter(el => el.tagName === 'BUTTON' && !el.hidden).map(el => el.textContent), ['↻ Reconnect']);
+  assert.deepEqual(walk(header).filter(el => el.tagName === 'BUTTON' && !el.hidden).map(el => el.textContent), ['Files', '↻ Reconnect']);
   assert.equal('wakeButton' in t, false);
   assert.equal(find(t.group, 'tab-close').getAttribute('aria-label'), 'Close terminal tab');
   find(t.group, 'tab-close').click(); assert.ok(calls.some(c => c[0] === 'close' && c[1] === a.id));
@@ -518,4 +519,16 @@ test('terminal toolbar keeps reconnect but removes redundant Wake and Close tab'
   context.compactionBlocked = () => true; context.syncTerminal(t);
   assert.equal(calls.at(-1)[4], null);
   assert.equal(calls.filter(c => c[0] === 'wake').length, 0);
+});
+
+test('file library count is directly accessible on compact and expanded cards', () => {
+  const {render, context, calls} = renderer();
+  const a = {...fullAgent('idle'), file_count: 3, files_version: 1,
+    product: {kind: 'link', label: 'Latest result', url: 'https://example.com/result'}};
+  context.state.agents = [a];
+  const card = render(a), files = find(card, 'card-files');
+  assert.equal(files.textContent, 'Files 3'); assert.ok(visibleText(card).includes('Files 3'));
+  files.click(); assert.deepEqual(calls.at(-1), ['files', a.id, `/api/agents/${a.id}/files`, 'Local Swarm']);
+  find(card, 'card-toggle').click(); assert.ok(visibleText(card).includes('Files 3'));
+  assert.ok(find(card, 'product-link'));
 });

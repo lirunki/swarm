@@ -152,6 +152,27 @@ class AgentClient:
             operation="publish product",
         )
 
+    def files(self, agent_id: str) -> dict[str, Any]:
+        return self.request(
+            "GET", f"/api/agents/{quote(agent_id, safe='')}/files", operation="list files"
+        )
+
+    def add_file(self, agent_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.request(
+            "POST",
+            f"/api/agents/{quote(agent_id, safe='')}/files",
+            body=payload,
+            expected=201,
+            operation="register file",
+        )
+
+    def remove_file(self, agent_id: str, file_id: str) -> dict[str, Any]:
+        return self.request(
+            "DELETE",
+            f"/api/agents/{quote(agent_id, safe='')}/files/{quote(file_id, safe='')}",
+            operation="remove file reference",
+        )
+
     @staticmethod
     def _children(parent_id: str) -> str:
         return f"/api/agents/{quote(parent_id, safe='')}/children"
