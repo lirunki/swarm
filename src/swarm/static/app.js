@@ -188,6 +188,14 @@ function canRevertToolInputs(a) {
   return !!(job?.archive && job.source_sha256 && job.replacement_sha256 &&
     (['completed', 'unchanged'].includes(job.status) || (job.status === 'failed' && job.operation === 'revert')));
 }
+function agentFileCount(agent) {
+  return Number.isInteger(agent?.file_count) && agent.file_count >= 0 ? agent.file_count : 0;
+}
+function syncFilesButton(control, agent) {
+  const count = agentFileCount(agent);
+  control.classList.toggle('has-files', count > 0);
+  control.title = agent.files_error || `${count} registered file${count === 1 ? '' : 's'}`;
+}
 function openAgentFiles(id) {
   const agent = agentById(id); if (!agent) return;
   const workspace = activeSwarm === 'local' ? 'Local Swarm' : federationNodes.get(activeSwarm)?.name || activeSwarm;
@@ -244,11 +252,11 @@ function renderCard(a) {
   summary.append(header);
   const product = productLink(a);
   if (product) card.classList.toggle('has-product', true);
-  const count = Number.isInteger(a.file_count) && a.file_count >= 0 ? a.file_count : 0;
+  const count = agentFileCount(a);
   if (count || a.files_error) {
     const library = node('div', 'card-product-files');
     const files = button(a.files_error ? 'Files !' : `Files ${count}`, 'card-files', () => openAgentFiles(a.id));
-    files.title = a.files_error || `${count} registered file${count === 1 ? '' : 's'}`;
+    syncFilesButton(files, a);
     files.setAttribute('aria-label', `Files for ${a.name}`);
     if (product) library.append(product);
     library.append(files); summary.append(library); card.classList.toggle('has-files', true);
@@ -350,13 +358,14 @@ function openTerminal(id, focus = true) {
     const header = node('div', 'terminal-header');
     const title = node('strong'), info = node('span', 'hint terminal-info'), connected = node('span', 'hint terminal-connection', 'Detached');
     const copyButton = node('button', 'small terminal-copy-button', 'Copy text'); copyButton.type = 'button'; copyButton.hidden = true; copyButton.dataset.agentId = id;
-    header.append(title, info, connected, copyButton, button('Files', 'small terminal-files', () => openAgentFiles(id)), button('↻ Reconnect', 'small', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); }));
+    const filesButton = button('Files', 'small terminal-files', () => openAgentFiles(id));
+    header.append(title, info, connected, copyButton, filesButton, button('↻ Reconnect', 'small', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); }));
     const surface = node('div', 'terminal-surface'), screen = node('div', 'terminal-screen'), overlay = node('div', 'terminal-overlay');
     surface.append(screen, overlay); pane.append(header, surface); $('#terminals').append(pane);
     const group = node('span', 'tab-group'), tab = button('', 'tab', () => activate(id));
     const tabLabel = node('span', 'tab-label'); tab.append(node('span', '', '›_'), tabLabel);
     group.append(tab, button('×', 'tab-close', () => closeTerminal(id))); $('.tab-close', group).setAttribute('aria-label', 'Close terminal tab'); $('#tabs').append(group);
-    const t = {id, pane, title, info, connected, screen, overlay, group, tab, tabLabel, copyButton, term: null, fit: null, ws: null, timer: null, closed: false};
+    const t = {id, pane, title, info, connected, screen, overlay, group, tab, tabLabel, copyButton, filesButton, term: null, fit: null, ws: null, timer: null, closed: false};
     terminals.set(id, t); syncTerminal(t);
   }
   if (focus) activate(id); else remember();
@@ -392,6 +401,7 @@ function overlay(t, title, message, actionText, action) {
 }
 function syncTerminal(t) {
   const a = agentById(t.id); if (!a) return;
+  syncFilesButton(t.filesButton, a);
   t.mobileKeys?.update();
   t.title.textContent = a.name; t.title.title = a.name; t.tabLabel.textContent = a.name;
   t.info.textContent = `${labels[a.status]} · ${a.session_id || 'session pending'} · ${a.folder}`;

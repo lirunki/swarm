@@ -213,3 +213,65 @@ def test_browser_upload_download_and_explicit_insert(tmp_path, width):
                 assert not errors
         finally:
             browser.close()
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_files_button_colors_follow_live_library_count(tmp_path, width):
+    image = tmp_path / "result.png"
+    image.write_bytes(PNG)
+    app = create_app(tmp_path / "colors-home", recover=False)
+    ctl = app.state.controller
+    agent = ctl.store.create(
+        Agent(
+            name="File color check", goal="Share results", folder=str(tmp_path), auto_resume=False
+        )
+    )
+    with playwright.sync_playwright() as runner:
+        try:
+            browser = runner.chromium.launch(headless=True)
+        except playwright.Error as exc:
+            if "Executable doesn't exist" in str(
+                exc
+            ) or "error while loading shared libraries" in str(exc):
+                pytest.skip("Optional Chromium runtime unavailable")
+            raise
+        try:
+            with running_server(app) as port:
+                page = browser.new_page(
+                    viewport={"width": width, "height": 1000},
+                    has_touch=width == 390,
+                    is_mobile=width == 390,
+                )
+                errors, requests = [], []
+                page.on("pageerror", lambda exc: errors.append(str(exc)))
+                page.on("request", lambda request: requests.append(request.url))
+                page.goto(f"http://127.0.0.1:{port}")
+                card = page.locator(f'[data-agent-id="{agent.id}"]')
+                playwright.expect(card.locator(".card-files")).to_have_count(0)
+                card.locator(".card-terminal").click()
+                terminal_files = page.locator(".terminal-files")
+                playwright.expect(terminal_files).to_have_css("color", "rgb(232, 235, 241)")
+
+                # The existing state channel updates an already-open terminal.
+                ctl.files.add(agent.id, FileRequest(path=str(image), label="Result"))
+                playwright.expect(terminal_files).to_have_css("color", "rgb(243, 201, 107)")
+                playwright.expect(terminal_files).to_have_attribute("title", "1 registered file")
+                assert not any(f"/api/agents/{agent.id}/files" in request for request in requests)
+                page.locator("#dashboard-tab").click()
+                files = card.locator(".card-files")
+                playwright.expect(files).to_have_text("Files 1")
+                playwright.expect(files).to_have_css("color", "rgb(243, 201, 107)")
+                card.locator(".card-toggle").click()
+                playwright.expect(files).to_have_css("color", "rgb(243, 201, 107)")
+
+                files.click()
+                page.once("dialog", lambda event: event.accept())
+                page.get_by_role("button", name="Remove reference", exact=True).click()
+                playwright.expect(page.locator(".agent-file-row")).to_have_count(0)
+                playwright.expect(terminal_files).to_have_css("color", "rgb(232, 235, 241)")
+                playwright.expect(card.locator(".card-files")).to_have_count(0)
+                assert image.exists()
+                assert not any("/content" in request for request in requests)
+                assert not errors
+        finally:
+            browser.close()

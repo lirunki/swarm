@@ -507,11 +507,20 @@ test('terminal toolbar keeps reconnect but removes redundant Wake and Close tab'
   });
   const open = source.slice(source.indexOf('function openTerminal('), source.indexOf('function initTerminal('));
   const sync = source.slice(source.indexOf('function syncTerminal('), source.indexOf('function attachTerminal('));
-  vm.runInContext(open + '\n' + sync, context);
+  const filesState = source.slice(source.indexOf('function agentFileCount('), source.indexOf('function openAgentFiles('));
+  vm.runInContext(filesState + '\n' + open + '\n' + sync, context);
   context.openTerminal(a.id);
   const t = context.terminals.get(a.id), header = t.pane.childNodes[0];
   assert.deepEqual(walk(header).filter(el => el.tagName === 'BUTTON' && !el.hidden).map(el => el.textContent), ['Files', '↻ Reconnect']);
   assert.equal('wakeButton' in t, false);
+  assert.equal(t.filesButton, find(header, 'terminal-files'));
+  assert.equal(t.filesButton.classList.contains('has-files'), false);
+  a.file_count = 2; context.syncTerminal(t);
+  assert.equal(t.filesButton.classList.contains('has-files'), true);
+  assert.equal(t.filesButton.title, '2 registered files');
+  a.file_count = 0; context.syncTerminal(t);
+  assert.equal(t.filesButton.classList.contains('has-files'), false);
+  assert.equal(t.filesButton.textContent, 'Files');
   assert.equal(find(t.group, 'tab-close').getAttribute('aria-label'), 'Close terminal tab');
   find(t.group, 'tab-close').click(); assert.ok(calls.some(c => c[0] === 'close' && c[1] === a.id));
   a.alive = false; context.syncTerminal(t);
@@ -528,7 +537,35 @@ test('file library count is directly accessible on compact and expanded cards', 
   context.state.agents = [a];
   const card = render(a), files = find(card, 'card-files');
   assert.equal(files.textContent, 'Files 3'); assert.ok(visibleText(card).includes('Files 3'));
+  assert.equal(files.classList.contains('has-files'), true);
   files.click(); assert.deepEqual(calls.at(-1), ['files', a.id, `/api/agents/${a.id}/files`, 'Local Swarm']);
   find(card, 'card-toggle').click(); assert.ok(visibleText(card).includes('Files 3'));
   assert.ok(find(card, 'product-link'));
+});
+
+
+test('Files color state follows valid live counts and clears for empty or older peers', () => {
+  const {context, render, calls} = renderer(), control = new Element('button');
+  control.className = 'small terminal-files';
+  for (const count of [1, 3, 64]) {
+    context.syncFilesButton(control, {file_count: count});
+    assert.equal(control.classList.contains('has-files'), true);
+    assert.equal(control.title, `${count} registered file${count === 1 ? '' : 's'}`);
+  }
+  for (const count of [0, undefined, null, -1, '2', 1.5, NaN, Infinity]) {
+    context.syncFilesButton(control, {file_count: 1});
+    context.syncFilesButton(control, {file_count: count});
+    assert.equal(control.classList.contains('has-files'), false, String(count));
+    assert.equal(control.classList.contains('terminal-files'), true);
+  }
+  const unavailable = {...fullAgent('idle', false), file_count: 0, files_error: 'Index unavailable'};
+  const files = find(render(unavailable), 'card-files');
+  assert.equal(files.textContent, 'Files !');
+  assert.equal(files.title, 'Index unavailable');
+  assert.equal(files.classList.contains('has-files'), false);
+  assert.equal(find(render({...fullAgent('idle'), file_count: 0}), 'card-files'), undefined);
+  assert.deepEqual(calls, []); // Color changes never fetch contents or wake the agent.
+  const css = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.css'), 'utf8');
+  assert.match(css, /\.card-files,\.terminal-files\{color:var\(--ink\)\}/);
+  assert.match(css, /\.card-files\.has-files,\.terminal-files\.has-files\{color:var\(--waiting\)\}/);
 });

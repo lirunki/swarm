@@ -483,7 +483,9 @@ swarm file --id AGENT_UUID list
 ```
 
 A **Files N** button appears on compact/expanded cards with registered entries;
-**Files** beside **Reconnect** in each terminal opens the same browser. The terminal
+**Files** beside **Reconnect** in each terminal opens the same browser. Its text is
+white when the library is empty and yellow when it has registered files; both
+controls update with live file counts without fetching file contents. The terminal
 need not be awake. The list shows labels, filenames, sizes/types and availability,
 with Open, Download, Insert and removal actions. Raster images and PDFs open in a
 new browser tab; other/active formats such as HTML and SVG download rather than
