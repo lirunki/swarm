@@ -124,3 +124,92 @@ def test_files_browser_card_terminal_preview_and_reference_removal(tmp_path, wid
                 assert not errors
         finally:
             browser.close()
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_browser_upload_download_and_explicit_insert(tmp_path, width):
+    import json
+    from pathlib import Path
+
+    from test_file_uploads import FakeProcesses
+
+    app = create_app(tmp_path / "upload-home", recover=False)
+    app.state.controller.processes = FakeProcesses()
+    app.state.uploads.temp_root = tmp_path / "server-tmp"
+    agent = app.state.controller.store.create(
+        Agent(
+            name="Upload reader",
+            goal="Read later",
+            folder=str(tmp_path),
+            managed=True,
+            auto_resume=False,
+            status="idle",
+        )
+    )
+    original = b"Uploaded from browser\x00\xff\r\n" * 40000
+    with playwright.sync_playwright() as runner:
+        try:
+            browser = runner.chromium.launch(headless=True)
+        except playwright.Error as exc:
+            if "Executable doesn't exist" in str(
+                exc
+            ) or "error while loading shared libraries" in str(exc):
+                pytest.skip("Optional Chromium runtime unavailable")
+            raise
+        try:
+            with running_server(app) as port:
+                page = browser.new_page(
+                    viewport={"width": width, "height": 1000},
+                    has_touch=width == 390,
+                    is_mobile=width == 390,
+                )
+                errors = []
+                page.on("pageerror", lambda e: errors.append(str(e)))
+                page.add_init_script("""window.WebSocket = class {
+                    static OPEN = 1;
+                    constructor() { this.readyState = 1; setTimeout(() => this.onopen?.(), 0); }
+                    close() { this.readyState = 3; } send() {}
+                };""")
+                page.goto(f"http://127.0.0.1:{port}")
+                card = page.locator(f'[data-agent-id="{agent.id}"]')
+                card.locator(".card-terminal").click()
+                page.locator(".terminal-files").click()
+                dialog = page.locator("#files-dialog")
+                with page.expect_file_chooser() as selected:
+                    page.locator("#upload-agent-file").click()
+                selected.value.set_files(
+                    {
+                        "name": "client notes.bin",
+                        "mimeType": "application/octet-stream",
+                        "buffer": original,
+                    }
+                )
+                playwright.expect(page.locator(".agent-file-row")).to_have_count(1, timeout=30000)
+                playwright.expect(
+                    page.get_by_role("button", name="Insert", exact=True)
+                ).to_be_enabled()
+                assert not app.state.controller.processes.pastes
+                dialog.screenshot(path=str(tmp_path / f"files-upload-insert-{width}.png"))
+                with page.expect_download() as downloading:
+                    page.locator(".file-download").click()
+                copied = tmp_path / "download-copy.bin"
+                downloading.value.save_as(copied)
+                assert copied.read_bytes() == original
+                page.get_by_role("button", name="Insert", exact=True).click()
+                playwright.expect(dialog).to_be_hidden()
+                assert len(app.state.controller.processes.pastes) == 1
+                id, pasted = app.state.controller.processes.pastes[0]
+                assert id == str(agent.id) and "\n" not in pasted and "\r" not in pasted
+                server_path = Path(json.loads(pasted))
+                assert server_path.is_relative_to(app.state.uploads.temp_root)
+                assert server_path.read_bytes() == original
+                assert app.state.controller.processes.draft == "Please read " + pasted
+                page.locator(".terminal-files").click()
+                page.once("dialog", lambda event: event.accept())
+                page.get_by_role("button", name="Remove upload", exact=True).click()
+                playwright.expect(page.locator(".agent-file-row")).to_have_count(0)
+                assert not server_path.exists() and copied.read_bytes() == original
+                assert page.evaluate("document.body.scrollWidth <= innerWidth")
+                assert not errors
+        finally:
+            browser.close()

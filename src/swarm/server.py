@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -37,6 +38,7 @@ from .sessions import AdoptRequest, Sessions
 from .store import Store
 from .terminal import bridge
 from .tool_inputs import RevertToolInputsRequest, ToolInputCompactor
+from .uploads import MAX_CHUNK_BODY, UploadChunk, UploadRequest, Uploads
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -78,6 +80,7 @@ def create_app(
     controller = Controller(store, processes)
     orchestration = Orchestrator(controller)
     products = Products(controller)
+    uploads = Uploads(controller)
     meta_compactor = MetaCompactor(controller, pi)
     tool_input_compactor = ToolInputCompactor(meta_compactor)
     sessions = Sessions(store, session_roots)
@@ -109,6 +112,10 @@ def create_app(
     async def lifespan(app: FastAPI):
         with store.controller_lock():
             await asyncio.to_thread(products.collect)
+            try:
+                await asyncio.to_thread(uploads.cleanup, True)
+            except (OSError, ValueError, RuntimeError):
+                log.exception("Could not clean expired upload sessions")
             await asyncio.to_thread(orchestration.recover)
             await asyncio.to_thread(tool_input_compactor.recover)
             await asyncio.to_thread(meta_compactor.recover)
@@ -131,6 +138,7 @@ def create_app(
     app.state.controller = controller
     app.state.orchestration = orchestration
     app.state.products = products
+    app.state.uploads = uploads
     app.state.meta_compactor = meta_compactor
     app.state.tool_input_compactor = tool_input_compactor
     app.state.sessions = sessions
@@ -320,11 +328,55 @@ def create_app(
         await broadcast()
         return result
 
+    async def bounded_upload_json(request: Request, model, limit: int):
+        body = bytearray()
+        async for block in request.stream():
+            if len(body) + len(block) > limit:
+                raise FileUnavailable("Upload request exceeds the chunk size limit", 413)
+            body.extend(block)
+        try:
+            return model.model_validate(json.loads(body))
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Invalid upload request metadata or chunk encoding") from exc
+
+    @app.post("/api/agents/{agent_id}/files/uploads", status_code=201)
+    async def begin_file_upload(agent_id: UUID, request: Request):
+        options = await bounded_upload_json(request, UploadRequest, 4096)
+        return await asyncio.to_thread(uploads.begin, str(agent_id), options)
+
+    @app.post("/api/agents/{agent_id}/files/uploads/{upload_id}/chunks")
+    async def append_file_upload(agent_id: UUID, upload_id: UUID, request: Request):
+        chunk = await bounded_upload_json(request, UploadChunk, MAX_CHUNK_BODY)
+        return await asyncio.to_thread(uploads.chunk, str(agent_id), str(upload_id), chunk)
+
+    @app.post("/api/agents/{agent_id}/files/uploads/{upload_id}/finish")
+    async def finish_file_upload(agent_id: UUID, upload_id: UUID):
+        result = await asyncio.to_thread(uploads.finish, str(agent_id), str(upload_id))
+        await broadcast()
+        return result
+
+    @app.delete("/api/agents/{agent_id}/files/uploads/{upload_id}")
+    async def cancel_file_upload(agent_id: UUID, upload_id: UUID):
+        return await asyncio.to_thread(uploads.cancel, str(agent_id), str(upload_id))
+
+    @app.post("/api/agents/{agent_id}/files/{file_id}/insert")
+    async def insert_agent_file(agent_id: UUID, file_id: UUID):
+        return await asyncio.to_thread(
+            controller.insert_file_reference, str(agent_id), str(file_id)
+        )
+
     @app.delete("/api/agents/{agent_id}/files/{file_id}")
     async def unregister_agent_file(agent_id: UUID, file_id: UUID):
         def unregister():
             with controller.lock:
-                result = controller.files.remove(agent_id, file_id)
+                ref = next(
+                    (r for r in controller.files.read(agent_id).files if r.id == file_id), None
+                )
+                result = (
+                    uploads.remove_upload(str(agent_id), str(file_id))
+                    if ref and ref.uploaded
+                    else controller.files.remove(agent_id, file_id)
+                )
                 controller.refresh()
                 return result
 
@@ -488,6 +540,7 @@ def create_app(
         agent = await asyncio.to_thread(controller.forget, str(agent_id))
         await asyncio.to_thread(products.collect)
         try:
+            await asyncio.to_thread(uploads.forget, str(agent.id))
             await asyncio.to_thread(controller.files.forget, agent.id)
         except (OSError, ValueError):
             log.warning("Could not clear forgotten agent's file reference metadata")

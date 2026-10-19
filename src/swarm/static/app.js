@@ -25,7 +25,10 @@ const terminalWSPath = id => activeSwarm === 'local' ? `/ws/terminal/${id}` : `/
 async function localApi(path, method = 'GET', body) {
   const response = await fetch(path, {method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
   let value; try { value = await response.json(); } catch { throw new Error(`Unexpected response (${response.status})`); }
-  if (!response.ok) throw new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value));
+  if (!response.ok) {
+    const error = new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value));
+    error.status = response.status; throw error;
+  }
   return value;
 }
 async function api(path, method = 'GET', body) {
@@ -784,7 +787,16 @@ $('#import-grok-form').addEventListener('submit', event => {
 $('#import-grok-button').addEventListener('click', () => { dashboardControls.adoption.close(true); $('#import-grok-form').reset(); $('#grok-session-search').value = ''; $('#grok-roots').textContent = ''; showDialog('#import-grok-dialog'); loadGrokSessions(); });
 $('#refresh-grok-sessions').addEventListener('click', loadGrokSessions);
 $('#grok-session-search').addEventListener('input', renderGrokSessions);
-const agentFilesDialog = new SwarmAgentFiles.AgentFilesDialog({api: localApi, onChange: refresh});
+const agentFilesDialog = new SwarmAgentFiles.AgentFilesDialog({
+  api: localApi,
+  onChange: refresh,
+  onInsert: (id, base) => {
+    if (!agentById(id) || apiPath(`/api/agents/${encodeURIComponent(id)}/files`) !== base) return;
+    $('#files-dialog').close(); openTerminal(id);
+    terminals.get(id)?.mobileKeys?.clearModifiers();
+    toast('File reference inserted. Not submitted.');
+  },
+});
 const dashboardControls = new SwarmDashboardControls.DashboardControls({onStatusChange: render});
 const relaySettingsDialog = new SwarmRelaySettings.RelaySettingsDialog({
   api: localApi,

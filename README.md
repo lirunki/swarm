@@ -465,7 +465,7 @@ After updating, refresh the mobile page to load the new frontend assets. No back
 restart is needed for this touch-to-wheel implementation; it uses the same input
 transport as existing keyboard/mouse support, including through the federation relay.
 
-## Agent Files library (original-file references)
+## Agent Files library (references and browser uploads)
 
 Agents can register **multiple files** without copying payloads into Swarm. This is
 separate from the single latest-product advertisement below: adding another file
@@ -485,14 +485,59 @@ swarm file --id AGENT_UUID list
 A **Files N** button appears on compact/expanded cards with registered entries;
 **Files** beside **Reconnect** in each terminal opens the same browser. The terminal
 need not be awake. The list shows labels, filenames, sizes/types and availability,
-with Open, Download and Remove reference actions. Raster images and PDFs open in a
+with Open, Download, Insert and removal actions. Raster images and PDFs open in a
 new browser tab; other/active formats such as HTML and SVG download rather than
 execute inside Swarm. Download always forces a download. **Remove reference never
-deletes the original file.**
+deletes an existing server original.** Browser uploads instead offer **Remove
+upload**, which explicitly deletes their owned temporary copy (never the original
+on your browser's computer).
+
+### Send a browser-local file to an agent
+
+1. Open **Files** beside Reconnect in the agent's terminal (available even when its
+   library is empty), or use the card's Files button.
+2. Click **Upload** and select a file on the browser's computer. Swarm copies it
+   into a private subdirectory of the **selected agent machine's system temporary
+   folder** and registers it in that agent's Files library. It does **not** paste,
+   submit a prompt, or wake the agent.
+3. Click **Download** to retrieve the uploaded copy later.
+4. Click **Insert** when you want to refer to it in your conversation. Swarm pastes
+   a quoted absolute path into that agent's existing tmux input, preserving your
+   draft and **never pressing Enter**. The dialog closes and its terminal opens;
+   continue typing and submit yourself when ready. Native Windows Pi receives a
+   translated Windows path, not a controller-only POSIX path.
+
+Insert works for previously registered server files too, requires a live managed
+agent, and is blocked while it is stopping or compacting. It does not read file
+contents or start an LLM turn. If delivery cannot be confirmed, inspect the
+terminal before retrying—Insert is never automatically retried.
+
+Uploads and insertion route to the selected local or federated Swarm, not the
+browser machine or whichever peer is selected later. Files are transferred as
+bounded 192 KiB chunks, below the relay's 512 KiB request limit. No file bytes are
+stored in browser storage or the receiving proxy's disk cache. Progress and cancel
+controls are shown; closing/switching the dialog cancels unfinished work where
+possible. A completed registration survives a lost response and cannot be deleted
+by a late upload-cancel request. The browser remembers only pending upload IDs and
+captured API paths in session storage to retry cleanup after reload.
+
+Limits: 128 MiB per file, 64 references per agent, 8 active transfers per controller,
+and 1 GiB of owned temporary uploads. Safe plain filenames are required. Unregistered
+partial uploads expire after ten minutes of inactivity (cleaned when another
+upload starts) and are canceled on controller restart; completed uploads remain.
+Metadata is bounded to 4,096 records and 256 cancellation/expiry tombstones.
+**Remove upload** reclaims its temporary bytes and reference; forgetting the agent
+also removes owned uploaded copies, not other registered originals or session
+history. This keeps the quota reclaimable through the UI. The copies live under
+`<system-temp>/swarm-uploads-<registry-hash>/<agent-id>/<upload-id>/` and may also be
+removed by OS temp cleanup. Move important results into durable workspace storage
+before relying on them long-term. These are ordinary live files: later edits by
+the agent are reflected by Download. Treat uploaded content as user-supplied data,
+not instructions to execute merely because it was inserted.
 
 ### On-demand behavior and lifetime
 
-- Registration only resolves/stats the original and stores private path metadata
+- Registering an existing server file only resolves/stats the original and stores private path metadata
   under `$SWARM_HOME/files/<agent-uuid>.json` (mode 0600 on POSIX). No source bytes,
   base64 or payload snapshot are saved, and no payload is read when opening a list.
 - Dashboard/relay state advertises only count/revision, not original paths or bytes.
@@ -511,7 +556,8 @@ deletes the original file.**
 - A remote controller must be online to fetch its original file; there is no
   receiving-node disk cache. Browser responses are marked `no-store`.
 - References survive controller restarts, but forgetting an agent removes its
-  reference index (not originals, worktrees or pi session files).
+  reference index and owned browser-upload copies (not other originals, worktrees
+  or pi session files).
 
 Limits are **64 entries per agent** and **128 MiB per file**. Only regular local
 files can be registered. Requests serve validated agent/file UUIDs, never arbitrary
@@ -525,7 +571,17 @@ The local backend API is:
 
 - `GET /api/agents/{id}/files`: metadata/current availability, no file payload.
 - `POST /api/agents/{id}/files`: `{ "path": "/local/file", "label": "Result" }`.
-- `DELETE /api/agents/{id}/files/{file_id}`: unregister only.
+- `DELETE /api/agents/{id}/files/{file_id}`: unregister an original; for an owned
+  browser upload, also delete that temporary copy.
+- `POST /api/agents/{id}/files/{file_id}/insert`: paste its agent-native quoted path,
+  without Enter/wake; returns `inserted`, `file_id`, `path` and `text`.
+- `POST /api/agents/{id}/files/uploads`: `{upload_id: UUID, filename, size}` starts
+  an idempotent transfer, returning the current offset and maximum chunk size.
+- `POST /api/agents/{id}/files/uploads/{upload_id}/chunks`: `{offset, data}` with
+  Base64 chunk bytes; exact duplicate chunks are accepted, mismatched offsets fail.
+- `POST /api/agents/{id}/files/uploads/{upload_id}/finish`: register a complete upload.
+- `DELETE /api/agents/{id}/files/uploads/{upload_id}`: cancel an unregistered upload;
+  completed registrations are retained.
 - `GET /api/agents/{id}/files/{file_id}/content`: current bytes, safe inline preview
   or download; `?download=true` always downloads.
 

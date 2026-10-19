@@ -36,6 +36,7 @@ class FileReference(BaseModel):
     label: str = Field(min_length=1, max_length=120)
     size: int = Field(ge=0)
     media_type: str
+    uploaded: bool = False
     created_at: datetime = Field(default_factory=now)
 
     @model_validator(mode="after")
@@ -168,7 +169,7 @@ class AgentFiles:
             "revision": index.revision,
         }
 
-    def add(self, agent_id: str | UUID, request: FileRequest) -> dict:
+    def add(self, agent_id: str | UUID, request: FileRequest, *, uploaded: bool = False) -> dict:
         agent = self.store.get(agent_id)
         raw = request.path
         absolute = Path(raw).expanduser().is_absolute() or PureWindowsPath(raw).is_absolute()
@@ -193,6 +194,7 @@ class AgentFiles:
                 size=info.st_size,
                 media_type=mimetypes.guess_type(source.name)[0] or "application/octet-stream",
                 created_at=previous.created_at if previous else now(),
+                uploaded=uploaded or bool(previous and previous.uploaded),
             )
             values = (
                 [ref if old.id == ref.id else old for old in index.files]
@@ -222,6 +224,18 @@ class AgentFiles:
         with self.store.lock(agent_id):
             self.path(agent_id).unlink(missing_ok=True)
             self.cache.pop(str(agent_id), None)
+
+    def reference(self, agent_id: str | UUID, file_id: str | UUID) -> FileReference:
+        """Resolve a registered reference for explicit insertion, without reading its bytes."""
+        self.store.get(agent_id)
+        with self.store.lock(agent_id):
+            ref = next((r for r in self.read(agent_id).files if r.id == UUID(str(file_id))), None)
+            if ref is None:
+                raise FileNotFoundError("File is not registered for this agent")
+            info = self.info(ref, check=True)
+            if not info["available"]:
+                raise FileUnavailable(info["error"])
+            return ref
 
     def open(
         self, agent_id: str | UUID, file_id: str | UUID

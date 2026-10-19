@@ -167,6 +167,10 @@ class Processes:
         return self.pid(agent)
 
     def send_prompt(self, agent: Agent, message: str) -> None:
+        self.paste_text(agent, message, submit=True)
+
+    def paste_text(self, agent: Agent, message: str, *, submit: bool = False) -> None:
+        """Insert literal text into the owned pane; Enter is never implicit."""
         if not self.alive(agent):
             raise ValueError("agent is not running")
         buffer = f"swarm-{uuid4()}"
@@ -177,7 +181,8 @@ class Processes:
             self.run("load-buffer", "-b", buffer, name)
             # Bracketed paste prevents multiline prompts being submitted as separate turns.
             self.run("paste-buffer", "-d", "-p", "-b", buffer, "-t", self.target(agent) + ":0.0")
-            self.run("send-keys", "-t", self.target(agent) + ":0.0", "Enter")
+            if submit:
+                self.run("send-keys", "-t", self.target(agent) + ":0.0", "Enter")
         finally:
             Path(name).unlink(missing_ok=True)
             self.run("delete-buffer", "-b", buffer, check=False)

@@ -13,7 +13,7 @@ from .discovery import sibling_worktree_path
 from .files import AgentFiles
 from .meta_compact import busy, require_not_busy
 from .models import Agent, CreateAgent, Status, now
-from .paths import local_path
+from .paths import agent_path, local_path
 from .processes import Processes
 from .store import Store
 
@@ -185,6 +185,30 @@ class Controller:
                 self._launch(agent, prompt)
             self.refresh()
             return self.store.get(agent.id)
+
+    def insert_file_reference(self, agent_id: str, file_id: str) -> dict:
+        # Original files may live on slow mounts; stat/map outside the global controller lock.
+        ref = self.files.reference(agent_id, file_id)
+        path = agent_path(ref.path)
+        if any(ord(c) < 32 or ord(c) in (127, 0x2028, 0x2029) for c in path):
+            raise ValueError("File path contains terminal control characters")
+        text = " " + json.dumps(path, ensure_ascii=False) + " "
+        with self.lock:
+            agent = self.store.get(agent_id)
+            require_not_busy(agent)
+            if not agent.managed or not self.processes.alive(agent):
+                raise RuntimeError(
+                    "Agent is stopped or unmanaged; open/wake it explicitly before Insert"
+                )
+            if getattr(agent, "stop_pending", False) or getattr(agent, "orchestration_stop", None):
+                raise RuntimeError("Agent is stopping; reference was not inserted")
+            if not any(
+                current.id == ref.id and current.path == ref.path
+                for current in self.files.read(agent_id).files
+            ):
+                raise FileNotFoundError("File reference was removed before insertion")
+            self.processes.paste_text(agent, text)
+            return {"inserted": True, "file_id": str(ref.id), "path": path, "text": text}
 
     def stop(self, agent_id: str) -> Agent:
         with self.lock:
