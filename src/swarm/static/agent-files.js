@@ -22,21 +22,41 @@
     for (let offset = 0; offset < value.length; offset += 8192) binary += String.fromCharCode(...value.subarray(offset, offset + 8192));
     return root.btoa(binary);
   }
+  const clipboardTypes = new Map([
+    ['image/png', 'png'], ['image/jpeg', 'jpg'], ['image/webp', 'webp'], ['image/gif', 'gif'],
+    ['image/bmp', 'bmp'], ['image/tiff', 'tiff'], ['image/avif', 'avif'], ['image/svg+xml', 'svg'],
+    ['application/pdf', 'pdf'], ['application/octet-stream', 'bin'],
+  ]);
+  function clipboardFile(blob) {
+    if (typeof blob.name === 'string' && blob.name.trim()) return blob;
+    const extension = clipboardTypes.get(blob.type) || 'bin';
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    return new root.File([blob], `clipboard-${stamp}.${extension}`, {type: blob.type});
+  }
+  function clipboardFiles(data) {
+    const files = Array.from(data?.files || []);
+    return files.length ? files : Array.from(data?.items || [])
+      .filter(item => item.kind === 'file').map(item => item.getAsFile()).filter(Boolean);
+  }
   function canInsert(agent) {
     const compacting = agent?.meta_compaction?.status === 'running' || agent?.tool_input_compaction?.status === 'running' || agent?.compaction?.status === 'running' || agent?.compaction === true;
     return agent?.alive === true && agent?.managed === true && !compacting && !agent.stop_pending && !agent.orchestration_stop;
   }
 
   class AgentFilesDialog {
-    constructor({query = selector => document.querySelector(selector), api, onChange = async () => {}, onInsert = () => {}, confirm = text => root.confirm(text), create = element}) {
-      Object.assign(this, {query, api, onChange, onInsert, confirm, create});
+    constructor({query = selector => document.querySelector(selector), api, onChange = async () => {}, onInsert = () => {}, confirm = text => root.confirm(text), create = element,
+      readClipboard = () => {
+        if (!root.navigator?.clipboard?.read) throw Error('Clipboard button access is unavailable on this browser or connection.');
+        return root.navigator.clipboard.read();
+      }}) {
+      Object.assign(this, {query, api, onChange, onInsert, confirm, create, readClipboard});
       this.dialog = query('#files-dialog'); this.list = query('#agent-file-list'); this.input = query('#agent-file-upload-input');
       this.generation = 0; this.loading = false; this.refreshPending = false; this.files = []; this.revision = null; this.agentId = null;
-      this.uploading = null; this.inserting = null; this.insertionEnabled = false; this.recovering = false;
+      this.uploading = null; this.inserting = null; this.insertionEnabled = false; this.recovering = false; this.clipboardRead = null;
       query('#refresh-agent-files').addEventListener('click', () => this.refresh());
       this.pickerGeneration = null;
       query('#upload-agent-file').addEventListener('click', () => {
-        if (!this.dialog.open || this.uploading) return;
+        if (!this.dialog.open || this.uploading || this.inserting || this.clipboardRead) return;
         this.pickerGeneration = this.generation; this.input.click();
       });
       this.input.addEventListener('change', event => {
@@ -45,14 +65,16 @@
         if (file && generation === this.generation && this.dialog.open) void this.upload(file);
       });
       query('#cancel-agent-file-upload').addEventListener('click', () => this.cancelUpload(true));
+      query('#paste-agent-file').addEventListener('click', () => this.pasteClipboard());
+      this.dialog.addEventListener('paste', event => this.handlePaste(event));
       void this.cleanupPending();
       this.dialog.addEventListener('close', () => {
-        this.generation += 1; this.loading = false; this.refreshPending = false; this.cancelUpload(false);
+        this.generation += 1; this.clipboardRead = null; this.loading = false; this.refreshPending = false; this.cancelUpload(false);
       });
     }
 
     async open(agent, basePath, workspace) {
-      this.cancelUpload(false); this.uploading = null;
+      this.cancelUpload(false); this.uploading = null; this.clipboardRead = null;
       this.generation += 1; this.agentId = agent.id; this.base = basePath; this.insertionEnabled = canInsert(agent); this.inserting = null;
       this.revision = agent.files_version ?? null; this.loading = false; this.refreshPending = false; this.files = [];
       this.query('#files-title').textContent = `Files · ${agent.name}`;
@@ -61,6 +83,58 @@
       this.setUploadStatus('', null, false); this.updateUploadControls(); this.dialog.showModal();
       void this.cleanupPending();
       await this.refresh();
+    }
+
+    clipboardError(message) {
+      this.query('#agent-files-error').textContent = message;
+    }
+
+    async handlePaste(event) {
+      if (!this.dialog.open || event.target?.isContentEditable || event.target?.closest?.('input, textarea, [contenteditable]')) return;
+      const generation = this.generation;
+      let files;
+      try { files = clipboardFiles(event.clipboardData); }
+      catch { this.clipboardError('Could not read the clipboard file. Use Upload instead.'); return; }
+      if (!files.length) {
+        this.clipboardError('Clipboard has no readable image or file. Text, URLs and copied paths are not uploaded; use Upload for files the browser cannot paste.');
+        return;
+      }
+      event.preventDefault(); event.stopPropagation();
+      if (this.uploading || this.inserting || this.clipboardRead) {
+        this.clipboardError('Wait for the current operation before pasting another file.'); return;
+      }
+      if (files.length !== 1) { this.clipboardError('Paste one image or file at a time.'); return; }
+      try { await this.upload(clipboardFile(files[0])); }
+      catch { if (generation === this.generation && this.dialog.open) this.clipboardError('Could not prepare the clipboard file. Use Upload instead.'); }
+    }
+
+    async pasteClipboard() {
+      if (!this.dialog.open || this.uploading || this.inserting || this.clipboardRead) return;
+      if (this.files.length >= MAX_FILES) { this.clipboardError(`This library already has the maximum of ${MAX_FILES} files.`); return; }
+      const job = {generation: this.generation, base: this.base};
+      const current = () => job.generation === this.generation && job.base === this.base && this.dialog.open;
+      this.clipboardRead = job; this.clipboardError(''); this.render();
+      try {
+        // Invoked directly from the button gesture, never on open/refresh or a timer.
+        const items = await this.readClipboard();
+        if (!current()) return;
+        const readable = Array.from(items).map(item => ({item,
+          type: [...clipboardTypes.keys()].find(type => item.types.includes(type))})).filter(v => v.type);
+        if (!readable.length) {
+          this.clipboardError('Clipboard has no readable image or file. Text, URLs and copied paths are not uploaded; try Ctrl+V / ⌘V here or use Upload.'); return;
+        }
+        if (readable.length !== 1) { this.clipboardError('Paste one image or file at a time.'); return; }
+        const blob = await readable[0].item.getType(readable[0].type);
+        if (!current()) return;
+        const file = clipboardFile(blob);
+        this.clipboardRead = null;
+        await this.upload(file);
+      } catch (error) {
+        if (current()) this.clipboardError(`Clipboard access failed or was denied. Try Ctrl+V / ⌘V inside Files, allow clipboard access on HTTPS/localhost, or use Upload. ${error?.message || ''}`);
+      } finally {
+        if (this.clipboardRead === job) this.clipboardRead = null;
+        if (current()) this.render();
+      }
     }
 
     pendingUploads() {
@@ -98,10 +172,14 @@
     }
 
     updateUploadControls() {
-      const busy = !!this.uploading;
+      const busy = !!this.uploading || !!this.inserting || !!this.clipboardRead;
+      const paste = this.query('#paste-agent-file');
+      paste.disabled = busy || this.files.length >= MAX_FILES;
+      paste.textContent = this.clipboardRead ? 'Reading…' : 'Paste';
+      paste.ariaBusy = String(!!this.clipboardRead);
       this.query('#upload-agent-file').disabled = busy || this.files.length >= MAX_FILES;
       this.input.disabled = busy || this.files.length >= MAX_FILES;
-      this.query('#cancel-agent-file-upload').disabled = !busy || this.uploading?.phase === 'finishing' || this.uploading?.cancelled;
+      this.query('#cancel-agent-file-upload').disabled = !this.uploading || this.uploading.phase === 'finishing' || this.uploading.cancelled;
     }
 
     setUploadStatus(message, percent = null, cancel = false) {
@@ -169,23 +247,23 @@
           const download = this.create('a', 'file-download', 'Download');
           download.href = `${open.href}?download=true`; download.download = file.filename || 'file';
           const insert = this.create('button', 'small file-insert', 'Insert'); insert.type = 'button';
-          insert.disabled = !this.insertionEnabled || !!this.inserting || !!this.uploading;
+          insert.disabled = !this.insertionEnabled || !!this.inserting || !!this.uploading || !!this.clipboardRead;
           insert.title = this.insertionEnabled ? 'Insert a reference into the live agent terminal' : 'Insert requires a live managed agent that is not stopping or compacting';
           insert.addEventListener('click', () => this.insert(file, insert));
           actions.append(open, download, insert);
         } else info.append(this.create('span', 'file-unavailable', file.error || 'File is unavailable'));
         if (typeof file.id === 'string' && uuid.test(file.id)) {
           const remove = this.create('button', 'small danger', file.uploaded ? 'Remove upload' : 'Remove reference'); remove.type = 'button';
-          remove.disabled = !!this.inserting || !!this.uploading; remove.addEventListener('click', () => this.remove(file, remove)); actions.append(remove);
+          remove.disabled = !!this.inserting || !!this.uploading || !!this.clipboardRead; remove.addEventListener('click', () => this.remove(file, remove)); actions.append(remove);
         }
         row.append(info, actions); this.list.append(row);
       }
     }
 
     async insert(file, button) {
-      if (!this.insertionEnabled || this.inserting || this.uploading) return;
+      if (!this.insertionEnabled || this.inserting || this.uploading || this.clipboardRead) return;
       const base = this.base, generation = this.generation, agentId = this.agentId;
-      this.inserting = file.id; button.disabled = true; button.textContent = 'Inserting…';
+      this.inserting = file.id; button.disabled = true; button.textContent = 'Inserting…'; this.updateUploadControls();
       this.query('#agent-files-error').textContent = ''; this.query('#agent-files-insert-status').textContent = '';
       try {
         const value = await this.api(`${base}/${encodeURIComponent(file.id)}/insert`, 'POST', {});
@@ -203,7 +281,7 @@
     }
 
     async upload(file) {
-      if (this.uploading) return;
+      if (!this.dialog.open || this.uploading || this.inserting || this.clipboardRead) return;
       this.query('#agent-files-error').textContent = '';
       if (!Number.isFinite(file.size) || file.size < 0 || file.size > MAX_FILE_BYTES) {
         this.query('#agent-files-error').textContent = `Choose a file no larger than ${bytes(MAX_FILE_BYTES)}.`; return;
@@ -276,7 +354,7 @@
     }
 
     async remove(file, button) {
-      if (this.uploading || this.inserting) return;
+      if (this.uploading || this.inserting || this.clipboardRead) return;
       const question = file.uploaded
         ? `Remove ${file.label || file.filename} and delete its uploaded temporary copy? The file on your browser's computer is NOT deleted. Paths already inserted into the agent will stop working.`
         : `Remove the reference to ${file.label || file.filename}? The original file will NOT be deleted.`;
@@ -292,7 +370,7 @@
       } finally { button.disabled = false; }
     }
   }
-  const api = {AgentFilesDialog, bytes, canInsert, encodeChunk};
+  const api = {AgentFilesDialog, bytes, canInsert, encodeChunk, clipboardFile, clipboardFiles};
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.SwarmAgentFiles = api;
 })(globalThis);

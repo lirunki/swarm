@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {AgentFilesDialog, canInsert} = require('../../src/swarm/static/agent-files.js');
+const {AgentFilesDialog, canInsert, clipboardFile, clipboardFiles} = require('../../src/swarm/static/agent-files.js');
 const ID = '11111111-1111-4111-8111-111111111111';
 class Element {
   constructor(tag = 'div') { this.tag = tag; this.children = []; this.events = new Map(); this.open = false; this.hidden = false; this.disabled = false; this.value = ''; this.files = []; }
@@ -14,7 +14,7 @@ class Element {
 const flatten = element => [element, ...element.children.filter(item => item instanceof Element).flatMap(flatten)];
 function fixture(api, options = {}) {
   const ids = ['files-dialog', 'agent-file-list', 'refresh-agent-files', 'files-title', 'files-workspace', 'agent-files-error', 'agent-file-count',
-    'agent-file-upload-input', 'upload-agent-file', 'cancel-agent-file-upload', 'agent-file-upload-status', 'agent-file-upload-progress', 'agent-file-upload-message', 'agent-files-insert-status'];
+    'agent-file-upload-input', 'upload-agent-file', 'paste-agent-file', 'cancel-agent-file-upload', 'agent-file-upload-status', 'agent-file-upload-progress', 'agent-file-upload-message', 'agent-files-insert-status'];
   const elements = Object.fromEntries(ids.map(id => [`#${id}`, new Element(id.includes('input') ? 'input' : id.includes('progress') ? 'progress' : 'div')]));
   const calls = [], changed = [], inserted = [];
   const controller = new AgentFilesDialog({
@@ -23,7 +23,7 @@ function fixture(api, options = {}) {
     api: async (...args) => { calls.push(args); return api(...args); },
     onChange: async () => changed.push(true),
     onInsert: (id, base) => inserted.push([id, base]),
-    confirm: options.confirm || (() => true),
+    confirm: options.confirm || (() => true), readClipboard: options.readClipboard,
   });
   return {controller, elements, calls, changed, inserted};
 }
@@ -250,4 +250,107 @@ test('pending upload cleanup uses saved target, not current workspace, and ignor
   } finally {
     if (previous) Object.defineProperty(globalThis, 'sessionStorage', previous); else delete globalThis.sessionStorage;
   }
+});
+
+
+function pasteEvent(files, options = {}) {
+  return {clipboardData: {files, items: options.items || []}, target: options.target || {},
+    prevented: false, stopped: false,
+    preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; }};
+}
+
+test('native clipboard file paste reuses upload only and does not duplicate file representations', async () => {
+  let reads = 0;
+  const t = fixture(async () => ({files: [], revision: 1}), {readClipboard: async () => { reads++; return []; }});
+  await t.controller.open(agent, '/api/federation/beta/proxy/api/agents/a/files', 'Beta');
+  assert.equal(reads, 0);
+  const file = makeFile('copied.pdf', [1,2,3]);
+  const event = pasteEvent([file], {items: [{kind: 'file', getAsFile: () => file}]});
+  let selected; t.controller.upload = async value => { selected = value; };
+  await t.controller.handlePaste(event);
+  assert.equal(selected, file); assert.equal(reads, 0);
+  assert.equal(event.prevented, true); assert.equal(event.stopped, true);
+  assert.deepEqual(t.inserted, []);
+  assert.deepEqual(clipboardFiles({items: [{kind: 'file', getAsFile: () => file}]}), [file]);
+});
+
+test('paste is scoped to Files and never turns text or copied paths into uploads', async () => {
+  const t = fixture(async () => ({files: [], revision: 1}));
+  let uploads = 0; t.controller.upload = async () => { uploads++; };
+  await t.controller.open(agent, '/api/agents/a/files', 'Local');
+  const editable = pasteEvent([makeFile('x.png', [1])], {target: {closest: () => ({})}});
+  await t.controller.handlePaste(editable);
+  assert.equal(editable.prevented, false);
+  const text = pasteEvent([], {items: [{kind: 'string', getAsString: () => { throw Error('text must not be read'); }}]});
+  await t.controller.handlePaste(text);
+  assert.equal(text.prevented, false);
+  assert.match(t.elements['#agent-files-error'].textContent, /Text, URLs and copied paths are not uploaded/);
+  t.elements['#files-dialog'].close();
+  const outside = pasteEvent([makeFile('outside.png', [1])]);
+  await t.controller.handlePaste(outside);
+  assert.equal(outside.prevented, false); assert.equal(uploads, 0);
+});
+
+test('clipboard button chooses one image representation and generates a safe filename', async () => {
+  const png = new Blob([Uint8Array.from([1,2,3])], {type: 'image/png'});
+  const requested = [];
+  const t = fixture(async () => ({files: [], revision: 1}), {readClipboard: async () => [{types: ['text/html','image/webp','image/png'], getType: async type => { requested.push(type); return png; }}]});
+  await t.controller.open(agent, '/api/agents/a/files', 'Local');
+  let selected; t.controller.upload = async file => { selected = file; };
+  await t.elements['#paste-agent-file'].click();
+  assert.deepEqual(requested, ['image/png']);
+  assert.match(selected.name, /^clipboard-[A-Za-z0-9-]+\.png$/);
+  assert.deepEqual([...new Uint8Array(await selected.arrayBuffer())], [1,2,3]);
+  assert.deepEqual(t.inserted, []); assert.equal(t.elements['#paste-agent-file'].disabled, false);
+  assert.equal(clipboardFile(makeFile('keep-name.zip', [1])).name, 'keep-name.zip');
+});
+
+test('clipboard permission denial and unsupported/text-only contents make no upload requests', async () => {
+  for (const readClipboard of [async () => { throw Error('Permission denied'); }, async () => [{types: ['text/plain','text/html'], getType: () => { throw Error('never read text'); }}]]) {
+    const t = fixture(async () => ({files: [], revision: 1}), {readClipboard});
+    await t.controller.open(agent, '/api/agents/a/files', 'Local');
+    await t.controller.pasteClipboard();
+    assert.equal(t.calls.filter(c => c[1] === 'POST').length, 0);
+    assert.match(t.elements['#agent-files-error'].textContent, /Upload/);
+    assert.equal(t.elements['#paste-agent-file'].disabled, false);
+  }
+});
+
+test('clipboard completion cannot upload to a newly selected agent or reopen a closed dialog', async () => {
+  for (const closeOnly of [false, true]) {
+    let resolve, getType = 0, uploads = 0;
+    const t = fixture(async () => ({files: [], revision: 1}), {readClipboard: () => new Promise(done => { resolve = done; })});
+    await t.controller.open(agent, '/api/federation/old/proxy/api/agents/a/files', 'Old');
+    t.controller.upload = async () => { uploads++; };
+    const pending = t.controller.pasteClipboard();
+    assert.equal(t.elements['#paste-agent-file'].disabled, true);
+    assert.equal(t.elements['#upload-agent-file'].disabled, true);
+    if (closeOnly) t.elements['#files-dialog'].close();
+    else await t.controller.open({...agent, id: 'b'}, '/api/federation/new/proxy/api/agents/b/files', 'New');
+    resolve([{types: ['image/png'], getType: async () => { getType++; return new Blob(['x'], {type:'image/png'}); }}]);
+    await pending;
+    assert.equal(getType, 0); assert.equal(uploads, 0);
+  }
+});
+
+test('late clipboard blob extraction cannot cross workspace and duplicate paste is blocked', async () => {
+  let resolve;
+  const t = fixture(async () => ({files: [], revision: 1}), {readClipboard: async () => [{types: ['image/png'], getType: () => new Promise(done => { resolve = done; })}]});
+  await t.controller.open(agent, '/api/agents/a/files', 'Local');
+  let uploads = 0; t.controller.upload = async () => { uploads++; };
+  const pending = t.controller.pasteClipboard(); await tick();
+  const repeated = pasteEvent([makeFile('image.png', [1])]);
+  await t.controller.handlePaste(repeated);
+  assert.match(t.elements['#agent-files-error'].textContent, /Wait for the current operation/);
+  await t.controller.open({...agent, id:'b'}, '/api/agents/b/files', 'New');
+  resolve(new Blob(['x'], {type:'image/png'})); await pending;
+  assert.equal(uploads, 0);
+});
+
+test('multiple clipboard files are rejected explicitly rather than silently dropped', async () => {
+  const t = fixture(async () => ({files: [], revision: 1}));
+  await t.controller.open(agent, '/api/agents/a/files', 'Local');
+  await t.controller.handlePaste(pasteEvent([makeFile('a.pdf', [1]), makeFile('b.pdf', [2])]));
+  assert.match(t.elements['#agent-files-error'].textContent, /one image or file at a time/);
+  assert.equal(t.calls.filter(c => c[1] === 'POST').length, 0);
 });

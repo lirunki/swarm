@@ -502,12 +502,26 @@ on your browser's computer).
    into a private subdirectory of the **selected agent machine's system temporary
    folder** and registers it in that agent's Files library. It does **not** paste,
    submit a prompt, or wake the agent.
+   You can also copy an image/file and press **Ctrl+V / ⌘V inside Files**, or click
+   **Paste**. The clipboard item uses the same upload flow; it does not insert or
+   submit anything to the agent. Nameless clipboard images receive a timestamped
+   filename such as `clipboard-<timestamp>.png`.
 3. Click **Download** to retrieve the uploaded copy later.
 4. Click **Insert** when you want to refer to it in your conversation. Swarm pastes
    a quoted absolute path into that agent's existing tmux input, preserving your
    draft and **never pressing Enter**. The dialog closes and its terminal opens;
    continue typing and submit yourself when ready. Native Windows Pi receives a
    translated Windows path, not a controller-only POSIX path.
+
+Clipboard upload accepts **one image/file at a time**, only after an explicit
+paste gesture. The Paste button requires browser clipboard-read support and usually
+HTTPS/localhost plus permission; keyboard paste is an alternative when the button
+is unavailable. Browsers may convert copied images to PNG. Some browsers expose
+Explorer/Finder copies only as text paths rather than file bytes—use Upload in that
+case. Plain-text, URL and HTML clipboard formats are not turned into uploads or
+fetched automatically (a copied text/HTML file is still a file). Normal
+pasting into text fields or the terminal outside Files is unchanged. Closing Files
+or switching agents/workspaces while permission is pending discards the stale read.
 
 Insert works for previously registered server files too, requires a live managed
 agent, and is blocked while it is stopping or compacting. It does not read file

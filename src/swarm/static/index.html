@@ -7,18 +7,18 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=files-button-colors-1">
+  <link rel="stylesheet" href="/static/app.css?v=clipboard-files-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=files-button-colors-1"></script>
-  <script defer src="/static/org-chart.js?v=files-button-colors-1"></script>
-  <script defer src="/static/relay-settings.js?v=files-button-colors-1"></script>
-  <script defer src="/static/terminal-touch.js?v=files-button-colors-1"></script>
-  <script defer src="/static/terminal-copy.js?v=files-button-colors-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=files-button-colors-1"></script>
-  <script defer src="/static/terminal-keys.js?v=files-button-colors-1"></script>
-  <script defer src="/static/agent-files.js?v=files-button-colors-1"></script>
-  <script defer src="/static/app.js?v=files-button-colors-1"></script>
+  <script defer src="/static/card-views.js?v=clipboard-files-1"></script>
+  <script defer src="/static/org-chart.js?v=clipboard-files-1"></script>
+  <script defer src="/static/relay-settings.js?v=clipboard-files-1"></script>
+  <script defer src="/static/terminal-touch.js?v=clipboard-files-1"></script>
+  <script defer src="/static/terminal-copy.js?v=clipboard-files-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=clipboard-files-1"></script>
+  <script defer src="/static/terminal-keys.js?v=clipboard-files-1"></script>
+  <script defer src="/static/agent-files.js?v=clipboard-files-1"></script>
+  <script defer src="/static/app.js?v=clipboard-files-1"></script>
 </head>
 <body>
   <header class="topbar">
@@ -61,7 +61,8 @@
   <dialog id="files-dialog" class="wide-dialog" aria-labelledby="files-title">
     <header class="dialog-head"><div><div class="eyebrow" id="files-workspace">Local Swarm</div><h2 id="files-title">Files</h2></div><button type="button" class="icon-button" data-close aria-label="Close files">×</button></header>
     <p class="hint">Upload saves a file in this library; it does not send anything to the agent. Use Insert on a file only when you want its reference typed into the live terminal.</p>
-    <div class="agent-files-toolbar"><span id="agent-file-count" class="hint"></span><span class="agent-files-toolbar-actions"><input id="agent-file-upload-input" type="file" hidden><button id="upload-agent-file" class="small primary" type="button">↑ Upload</button><button id="refresh-agent-files" class="small" type="button">↻ Refresh</button></span></div>
+    <div class="agent-files-toolbar"><span id="agent-file-count" class="hint"></span><span class="agent-files-toolbar-actions"><input id="agent-file-upload-input" type="file" hidden><button id="upload-agent-file" class="small primary" type="button">↑ Upload</button><button id="paste-agent-file" class="small" type="button" title="Upload an image or file from the clipboard" aria-describedby="agent-file-paste-hint">Paste</button><button id="refresh-agent-files" class="small" type="button">↻ Refresh</button></span></div>
+    <p id="agent-file-paste-hint" class="hint clipboard-paste-hint" tabindex="0">Paste one image or file here with Ctrl+V / ⌘V, or use Paste. Text, URLs and copied file paths are not uploaded. If your browser cannot paste a copied file, use Upload.</p>
     <div id="agent-file-upload-status" class="agent-file-upload-status" role="status" aria-live="polite" hidden><span id="agent-file-upload-message"></span><progress id="agent-file-upload-progress" max="100" value="0"></progress><button id="cancel-agent-file-upload" class="small" type="button">Cancel upload</button></div>
     <p id="agent-files-error" class="form-error" role="alert"></p>
     <p id="agent-files-insert-status" class="agent-files-insert-status" role="status" aria-live="polite"></p>
@@ -77,7 +78,7 @@
       <section><h3>Agent states</h3><dl><dt class="running">Running</dt><dd>Working toward its goal.</dd><dt class="waiting">Waiting</dt><dd>Needs human input.</dd><dt class="dormant">Dormant</dt><dd>Waiting for an event or timer.</dd><dt class="idle">Idle</dt><dd>Turn complete, goal not yet complete.</dd><dt class="done">Done</dt><dd>Goal accomplished. Process liveness is shown separately.</dd></dl></section>
       <section><h3>Sessions and controls</h3><p>New agent starts pi. Adopt session offers saved pi conversations or Grok history converted into pi; adopted/imported sessions stay offline until you Wake them. Closing a terminal tab does not stop its agent. Wake resumes; Stop terminates and disables automatic restore. Edit → Forget removes an inactive agent while keeping its saved session history.</p></section>
       <section><h3>Terminal scrolling and copying</h3><p>On mobile, swipe down for older output and up for newer output. At the bottom, tap to type. Copy text puts the visible screen in a read-only layer directly over the terminal: use native selection handles and Copy. It closes after copying, or tap Done copying. Only the visible screen is captured—scroll first for other text.</p><p>While the mobile software keyboard is open, the terminal key bar adds Esc, Tab, Ctrl, Alt, arrows, Home, End and Sup (forward Delete). Ctrl and Alt apply to the next typed key or accessory key, then reset; tap both for a combined shortcut. The bar keeps the keyboard focused and hides when it closes, when you leave the terminal, or while copying.</p><p>On desktop, hold Shift while dragging to select past tmux mouse handling, then use your browser or system Copy command. Desktop terminals have no extra copy layer.</p></section>
-      <section><h3>Files</h3><p>Files on a card or beside Reconnect opens its library. Upload picks a file on your browser's computer and saves a copy in the selected agent machine's temporary folder. Upload does not send a prompt. Download retrieves it; Insert pastes its quoted local path into a live agent's input without pressing Enter. Continue typing and submit when ready.</p><p>Agents can also register existing server files with swarm file add. Only metadata loads first; Open/Download reads bytes on demand. Remove reference keeps existing originals. Remove upload deletes only the uploaded temporary copy, never your browser-side original. Keep important inputs in durable storage: OS temp cleanup can make references unavailable.</p></section>
+      <section><h3>Files</h3><p>Files on a card or beside Reconnect opens its library. Upload picks a file on your browser's computer and saves a copy in the selected agent machine's temporary folder. Paste or Ctrl+V / ⌘V inside Files can also upload a copied image/file. The Paste button may require HTTPS/localhost and clipboard permission; plain text/URLs are not uploaded. Upload does not send a prompt. Download retrieves it; Insert pastes its quoted local path into a live agent's input without pressing Enter. Continue typing and submit when ready.</p><p>Agents can also register existing server files with swarm file add. Only metadata loads first; Open/Download reads bytes on demand. Remove reference keeps existing originals. Remove upload deletes only the uploaded temporary copy, never your browser-side original. Keep important inputs in durable storage: OS temp cleanup can make references unavailable.</p></section>
       <section><h3>Relay and safety</h3><p>The Swarm selector changes workspace. The gear always configures the local relay connection. A relay joins fully trusted controllers: peers can control agents and read data. Keep the dashboard on localhost, HTTPS, or a trusted network. Restart backend reloads the controller, not its tmux-backed agents.</p></section>
     </div>
     <footer class="dialog-footer"><button type="button" data-close>Close</button></footer>

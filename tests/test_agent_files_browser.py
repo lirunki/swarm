@@ -275,3 +275,98 @@ def test_files_button_colors_follow_live_library_count(tmp_path, width):
                 assert not errors
         finally:
             browser.close()
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_clipboard_button_and_keyboard_paste_upload_images_only(tmp_path, width):
+    from test_file_uploads import FakeProcesses
+
+    app = create_app(tmp_path / "clipboard-home", recover=False)
+    ctl = app.state.controller
+    ctl.processes = FakeProcesses()
+    ctl.processes.live = False
+    app.state.uploads.temp_root = tmp_path / "clipboard-server-tmp"
+    agent = ctl.store.create(
+        Agent(
+            name="Clipboard reader",
+            goal="Read later",
+            folder=str(tmp_path),
+            managed=True,
+            auto_resume=False,
+            status="idle",
+        )
+    )
+    with playwright.sync_playwright() as runner:
+        try:
+            browser = runner.chromium.launch(headless=True)
+        except playwright.Error as exc:
+            if "Executable doesn't exist" in str(
+                exc
+            ) or "error while loading shared libraries" in str(exc):
+                pytest.skip("Optional Chromium runtime unavailable")
+            raise
+        try:
+            with running_server(app) as port:
+                origin = f"http://127.0.0.1:{port}"
+                context = browser.new_context(viewport={"width": width, "height": 1000})
+                context.grant_permissions(["clipboard-read", "clipboard-write"], origin=origin)
+                page = context.new_page()
+                errors = []
+                page.on("pageerror", lambda error: errors.append(str(error)))
+                page.goto(origin)
+                page.locator(f'[data-agent-id="{agent.id}"] .card-terminal').click()
+                page.locator(".terminal-files").click()
+                playwright.expect(page.locator("#files-dialog")).to_be_visible()
+                assert ctl.files.list(agent.id)["files"] == []
+                write_image = """async color => {
+                    const canvas = document.createElement('canvas'); canvas.width = 2; canvas.height = 2;
+                    const ctx = canvas.getContext('2d'); ctx.fillStyle = color; ctx.fillRect(0,0,2,2);
+                    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+                    await navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
+                }"""
+                page.evaluate(write_image, "#ff9854")
+                page.locator("#paste-agent-file").click()
+                playwright.expect(page.locator(".agent-file-row")).to_have_count(1)
+                playwright.expect(page.locator("#paste-agent-file")).to_be_enabled()
+                first = ctl.files.read(agent.id).files[0]
+                assert first.filename.startswith("clipboard-") and first.filename.endswith(".png")
+                assert first.uploaded and first.size > 0
+                assert not ctl.processes.pastes and ctl.processes.draft == "Please read "
+                page.evaluate(write_image, "#abcdef")
+                page.locator("#agent-file-paste-hint").focus()
+                page.keyboard.press("Control+V")
+                playwright.expect(page.locator(".agent-file-row")).to_have_count(2)
+                playwright.expect(page.locator("#paste-agent-file")).to_be_enabled()
+                assert not ctl.processes.pastes
+                with page.expect_download() as pending:
+                    page.locator(".file-download").first.click()
+                saved = tmp_path / "clipboard-download.png"
+                pending.value.save_as(saved)
+                assert saved.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+                assert page.locator(
+                    ".file-insert"
+                ).first.is_disabled()  # Upload did not wake the agent.
+                page.locator("#files-dialog").screenshot(
+                    path=str(tmp_path / f"files-clipboard-{width}.png")
+                )
+                page.evaluate("navigator.clipboard.writeText('/tmp/not-a-file.txt')")
+                page.locator("#agent-file-paste-hint").focus()
+                page.keyboard.press("Control+V")
+                playwright.expect(page.locator("#agent-files-error")).to_contain_text(
+                    "Text, URLs and copied paths"
+                )
+                assert len(ctl.files.read(agent.id).files) == 2
+                page.evaluate("""const input = document.createElement('textarea'); input.id='test-editable';
+                    document.querySelector('#files-dialog').append(input);""")
+                page.locator("#test-editable").focus()
+                page.keyboard.press("Control+V")
+                playwright.expect(page.locator("#test-editable")).to_have_value(
+                    "/tmp/not-a-file.txt"
+                )
+                assert len(ctl.files.read(agent.id).files) == 2
+                assert not ctl.processes.pastes and not ctl.store.get(agent.id).auto_resume
+                assert page.evaluate("document.body.scrollWidth <= innerWidth")
+                assert not errors
+                context.close()
+        finally:
+            browser.close()
