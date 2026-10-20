@@ -6,7 +6,7 @@ import fcntl
 import json
 import os
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -14,7 +14,7 @@ from uuid import UUID
 
 import yaml
 
-from .models import Agent, now
+from .models import Agent, Status, now
 from .paths import local_path
 
 MAX_RECORD_BYTES = 1024 * 1024
@@ -104,19 +104,60 @@ class Store:
         with self.lock(agent.id):
             if self.path(agent.id).exists():
                 raise ValueError("agent already exists")
-            atomic_write(self.path(agent.id), encode(agent))
+            content = encode(agent)
+            if len(content.encode("utf-8")) > MAX_RECORD_BYTES:
+                raise ValueError("agent record exceeds 1 MiB")
+            atomic_write(self.path(agent.id), content)
         return agent
+
+    @staticmethod
+    def updated(agent: Agent, fields: dict[str, Any]) -> Agent:
+        if "id" in fields:
+            raise ValueError("agent id is immutable")
+        data = agent.model_dump()
+        data.update(fields)
+        data["updated_at"] = now()
+        updated = Agent.model_validate(data)
+        # A changed deadline or explicit cancellation supersedes pending delivery.
+        # Re-reporting the same deadline preserves its event ID/backoff. The controller
+        # supplies both fields when atomically acknowledging its own event.
+        if (
+            "wake_at" in fields
+            and "wake_delivery" not in fields
+            and (updated.wake_at is None or updated.wake_at != agent.wake_at)
+        ):
+            updated.wake_delivery = None
+        if fields.get("status") == Status.done:
+            updated.wake_at = None
+            if updated.wake_delivery and updated.wake_delivery.state == "pending":
+                updated.wake_delivery = None
+        return updated
+
+    def transition(
+        self, agent_id: str | UUID, change: Callable[[Agent], dict[str, Any] | None]
+    ) -> Agent | None:
+        """Compare and update under the same file lock used by the agent reporting CLI.
+
+        The callback must not perform external actions. Returning None leaves the record
+        untouched; delivery code can thus acknowledge without erasing a newer schedule.
+        """
+        with self.lock(agent_id):
+            agent = self.get(agent_id)
+            fields = change(agent)
+            if fields is None:
+                return None
+            updated = self.updated(agent, fields)
+            content = encode(updated)
+            if len(content.encode("utf-8")) > MAX_RECORD_BYTES:
+                raise ValueError("agent record exceeds 1 MiB")
+            atomic_write(self.path(agent_id), content)
+            return updated
 
     def update(self, agent_id: str | UUID, fields: dict[str, Any]) -> Agent:
         if "id" in fields:
             raise ValueError("agent id is immutable")
-        with self.lock(agent_id):
-            agent = self.get(agent_id)
-            data = agent.model_dump()
-            data.update(fields)
-            data["updated_at"] = now()
-            updated = Agent.model_validate(data)
-            atomic_write(self.path(agent_id), encode(updated))
+        updated = self.transition(agent_id, lambda _: fields)
+        assert updated is not None
         return updated
 
     def remove(self, agent_id: str | UUID) -> Agent:

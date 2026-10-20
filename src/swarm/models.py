@@ -88,6 +88,27 @@ class Product(BaseModel):
         return self
 
 
+class WakeDelivery(BaseModel):
+    """Durable outbox entry for a one-shot timer, not an in-memory scheduling handle."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: UUID
+    scheduled_for: datetime
+    state: Literal["pending", "delivered"] = "pending"
+    attempts: int = Field(default=0, ge=0)
+    retry_at: datetime | None = None
+    last_attempt_at: datetime | None = None
+    delivered_at: datetime | None = None
+    last_error: str | None = None
+
+    @field_validator("scheduled_for", "retry_at", "last_attempt_at", "delivered_at")
+    @classmethod
+    def timezone_required(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("wake delivery timestamps must include a timezone")
+        return value
+
+
 class Agent(BaseModel):
     model_config = ConfigDict(extra="allow")  # future adapters may add metadata
     version: int = 1
@@ -113,6 +134,7 @@ class Agent(BaseModel):
     managed: bool = False  # merely observing a file must NEVER execute a process
     auto_resume: bool = True
     wake_at: datetime | None = None
+    wake_delivery: WakeDelivery | None = None
     wait_reason: str = ""
     updated_at: datetime = Field(default_factory=now)
     created_at: datetime = Field(default_factory=now)

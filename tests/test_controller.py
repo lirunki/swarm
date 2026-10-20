@@ -318,7 +318,7 @@ def test_automatic_worktree_path_refuses_existing_destination(ctrl, tmp_path):
         )
 
 
-def test_timer_launch_failure_does_not_retry_forever(ctrl, monkeypatch):
+def test_timer_launch_failure_is_not_retried_every_tick(ctrl, monkeypatch):
     timer = add(ctrl, "dormant", wake_at=now() - timedelta(seconds=1))
     calls = []
 

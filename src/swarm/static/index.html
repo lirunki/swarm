@@ -7,18 +7,18 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=clipboard-files-1">
+  <link rel="stylesheet" href="/static/app.css?v=durable-wakes-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=clipboard-files-1"></script>
-  <script defer src="/static/org-chart.js?v=clipboard-files-1"></script>
-  <script defer src="/static/relay-settings.js?v=clipboard-files-1"></script>
-  <script defer src="/static/terminal-touch.js?v=clipboard-files-1"></script>
-  <script defer src="/static/terminal-copy.js?v=clipboard-files-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=clipboard-files-1"></script>
-  <script defer src="/static/terminal-keys.js?v=clipboard-files-1"></script>
-  <script defer src="/static/agent-files.js?v=clipboard-files-1"></script>
-  <script defer src="/static/app.js?v=clipboard-files-1"></script>
+  <script defer src="/static/card-views.js?v=durable-wakes-1"></script>
+  <script defer src="/static/org-chart.js?v=durable-wakes-1"></script>
+  <script defer src="/static/relay-settings.js?v=durable-wakes-1"></script>
+  <script defer src="/static/terminal-touch.js?v=durable-wakes-1"></script>
+  <script defer src="/static/terminal-copy.js?v=durable-wakes-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=durable-wakes-1"></script>
+  <script defer src="/static/terminal-keys.js?v=durable-wakes-1"></script>
+  <script defer src="/static/agent-files.js?v=durable-wakes-1"></script>
+  <script defer src="/static/app.js?v=durable-wakes-1"></script>
 </head>
 <body>
   <header class="topbar">
@@ -184,7 +184,7 @@
       <label>Name<input name="name" required maxlength="120"></label>
       <label>Goal<textarea name="goal" required rows="3"></textarea></label>
       <label>Status<select name="status"><option value="running">Running</option><option value="waiting">Waiting for input</option><option value="dormant">Dormant</option><option value="idle">Idle — turn completed</option><option value="done">Done — goal accomplished</option></select></label>
-      <label class="checkbox"><input type="checkbox" name="auto_resume">Restore automatically when Swarm starts</label>
+      <label class="checkbox"><input type="checkbox" name="auto_resume">Allow automatic recovery and scheduled wakes</label>
       <p class="hint">Changing a status only updates the record; it does not start, pause, or stop the process. Use Wake or Stop for process control.</p>
       <section class="meta-compact-section" aria-labelledby="meta-compact-heading">
         <div class="meta-compact-head"><div><h3 id="meta-compact-heading">Meta-compaction</h3><p id="meta-compact-availability" class="hint"></p></div><button id="meta-compact-toggle" type="button">Meta-compact…</button></div>

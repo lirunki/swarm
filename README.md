@@ -1003,7 +1003,7 @@ Default storage (`SWARM_HOME` overrides `~/.swarm`):
 
 ```text
 ~/.swarm/
-  agents/<uuid>.md    # source of truth: YAML frontmatter + Markdown checkpoint
+  agents/<uuid>.md    # source of truth: fields/checkpoint + durable wake delivery state
   sessions/*.jsonl    # exact session files for agents created by Swarm
   sessions/imports/   # converted foreign sessions (currently Grok Build)
   state.json         # atomically persisted last-good dashboard snapshot
@@ -1026,15 +1026,19 @@ and are not resurrected by recovery.
 
 | Saved state | Startup behavior if managed + auto-resume enabled |
 | --- | --- |
-| Process still alive | Reattach to it; no duplicate launch or resume prompt |
-| Running, process gone | Open the exact session and submit “Resume where you were” with goal/activity/checkpoint |
-| Waiting / idle, process gone | Reopen pi with its saved history, **no automatic work prompt** |
-| Dormant | Keep waiting; expired timers wake once, otherwise wait for event/timer |
+| Waiting / dormant with a future `wake_at` | Keep the timer; do not launch early |
+| Waiting / dormant with an overdue timer (or pending delivery retry) | Attempt the saved wake event, whether the process survived or must be relaunched |
+| Process still alive, no due timer | Reattach to it; no unsolicited duplicate launch/resume prompt |
+| Running, process gone, no scheduled delivery | Open the exact session and submit “Resume where you were” with goal/activity/checkpoint |
+| Waiting / idle without a timer, process gone | Reopen pi with its saved history, **no automatic work prompt** |
+| Dormant without `wake_at` | Keep waiting for an external event |
 | Done / auto-resume disabled | Never automatically start |
 | External observed record | Never execute automatically |
 
-A failed launch is visible, not retried in an endless loop. Use Wake after fixing
-pi credentials, missing folders, etc. Missing **known** session history is an
+An ordinary failed startup/manual launch is visible and requires explicit Wake
+after fixing credentials, folders, etc. **Explicitly scheduled wakes** instead keep
+their intent and retry with persisted backoff (see below), not on every monitor tick.
+Missing **known** session history is an
 error, not permission to start an empty conversation. Running state records the
 agent's intent; process liveness is shown separately so a crash never masquerades
 as “goal accomplished.” Recovery is not transactional exactly-once execution:
@@ -1046,11 +1050,71 @@ environment is not necessarily present in a login service. For agents to
 survive logout, your OS must keep the user's processes alive; on Linux this may
 require user lingering. No OS services or startup settings are changed by Swarm.
 
+### Durable scheduled wakeups
+
+The `wake_at` timestamp was already stored atomically in the agent record. The
+scheduler now handles both **waiting** and **dormant** timers and uses a durable
+outbox instead of clearing the timestamp before delivery. This works even when an
+agent runs `swarm report` while the backend is offline: the reporting helper writes
+to the registry directly, without needing the HTTP server.
+
+```bash
+wake=$(date -u -d '+5 minutes' +%Y-%m-%dT%H:%M:%SZ)
+"$SWARM_PYTHON" -m swarm report --status waiting --wake-at "$wake" \
+  --activity 'Monitoring CI' --wait-reason 'Waiting for CI or review changes'
+```
+
+When due, Swarm persists `wake_delivery` with a stable event ID, attempt count and
+retry deadline **before** touching tmux. Successful handoff marks it delivered and
+clears that one-shot `wake_at`. Failures retain the request and `last_error`, with
+backoff of 5s, 10s, 20s… capped at 5 minutes. Restart does not reset this backoff.
+Overdue requests are processed when the controller returns, not lost or replayed
+once per missed interval. A future scheduled waiting agent is not reopened early
+just because its process disappeared during downtime.
+
+Changed schedules and cancellations use the same file lock as agent reports;
+completion of an old attempt cannot erase a newer deadline or checkpoint. Repeating
+an unchanged deadline preserves the existing pending event ID and retry state.
+Stop, manual Wake (including promptless Wake), `--wake-at none`, and reporting
+`done` cancel pending timers. Disabling auto-resume pauses them; observed agents
+never execute automatically. Compaction/stop-in-progress protections remain in force.
+`--no-recover` disables general startup restoration, not the monitor's processing
+of explicitly scheduled timers. The same registry must be available after restart;
+Swarm cannot deliver while its backend is off, and it does not install an OS service.
+
+This is **at-least-once delivery**, not transactional exactly-once execution. If the
+controller dies after tmux accepted input but before its acknowledgement is saved,
+it may send the **same event ID** again. The wake prompt tells the agent to check
+its record and ignore canceled/replaced/already-handled events, then verify external
+side effects. `delivered` means handed to the process—not an LLM acknowledgement or
+proof the requested work finished. Expanded cards show delivery state, event ID and
+next retry; this metadata is also in the agent Markdown and `/api/state`.
+
+### Other restart-sensitive state
+
+- **Already durable:** checkpoints, child wait/event notifications and retries,
+  pending stop intent, spawn request identities, compaction manifests/backups,
+  file-reference indexes and latest-product snapshots.
+- **Next candidate: manual instructions.** Custom Wake text and direct child
+  messages are still immediate deliveries, not persistent message outboxes. A
+  future semantic-command outbox should use request/event IDs and acknowledgement;
+  blindly replaying a deployment/message after an ambiguous failure is unsafe.
+- **Uploaded file bytes:** completed browser uploads survive backend restarts if
+  their system-temp files remain, but OS reboot/temp cleanup can remove them.
+  Their reference metadata is durable. An opt-in durable-upload location would be
+  useful when inputs must survive machine reboot; the current temporary-storage
+  behavior requested by the upload feature is unchanged here. Unfinished uploads
+  are intentionally canceled on controller restart rather than resumed blindly.
+- **Intentionally transient:** relay sockets/RPC response buffers, terminal
+  keystrokes, clipboard reads and browser connections. Reconnect/reconcile them;
+  do not automatically replay raw input. Compaction work is reconciled on restart,
+  not blindly repeated with additional model charges.
+
 ## Agent communication skill
 
 Canonical skill: [`src/swarm/skills/swarm.md`](src/swarm/skills/swarm.md).
 Swarm explicitly loads it via `pi --skill` and tells agents to read it. It explains
-reporting, all statuses, checkpoints, dormant timers, and safe recovery.
+reporting, all statuses, checkpoints, durable waiting/dormant timers, and safe recovery.
 Agents must report **waiting before asking a question**, including before blocking
 question/confirmation tools, and return to **running** when the answer arrives.
 
@@ -1058,7 +1122,7 @@ Inside a managed pi shell tool:
 
 ```bash
 "$SWARM_PYTHON" -m swarm report --status running --activity 'Implementing the parser'
-"$SWARM_PYTHON" -m swarm report --status waiting --wait-reason 'Need schema decision'
+"$SWARM_PYTHON" -m swarm report --status waiting --wake-at none --wait-reason 'Need schema decision'
 "$SWARM_PYTHON" -m swarm report --status dormant \
   --wait-reason 'Recheck CI' --wake-at '2030-01-02T15:00:00Z' \
   --notes 'PR 42 pending. Next: inspect CI and review comments.'

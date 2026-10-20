@@ -279,6 +279,14 @@ function renderCard(a) {
   if (a.parent_id) metadata(meta, 'Parent', agentById(a.parent_id)?.name || a.parent_id);
   metadata(meta, 'Process', a.pid ? `PID ${a.pid}` : 'Not running');
   metadata(meta, 'Wake at', a.wake_at ? new Date(a.wake_at).toLocaleString() : '');
+  const delivery = a.wake_delivery;
+  if (delivery && ['pending', 'delivered'].includes(delivery.state)) {
+    metadata(meta, 'Wake delivery', delivery.state === 'pending'
+      ? `${a.auto_resume ? 'Pending' : 'Paused'} · ${delivery.attempts} attempt(s)`
+      : 'Handed to agent process');
+    metadata(meta, 'Wake event', delivery.id);
+    if (delivery.state === 'pending') metadata(meta, 'Wake retry', delivery.retry_at ? new Date(delivery.retry_at).toLocaleString() : 'Due');
+  }
   metadata(meta, 'Restore', a.auto_resume ? 'Automatic' : 'Manual');
   if (a.import_source) {
     metadata(meta, 'Imported', `${a.import_source.backend} · ${a.import_source.session_id}`);

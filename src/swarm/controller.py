@@ -1,4 +1,4 @@
-"""Registry orchestration, reboot recovery and one-shot dormant timers."""
+"""Registry orchestration, reboot recovery and durable one-shot wake timers."""
 
 from __future__ import annotations
 
@@ -12,10 +12,11 @@ from .adapters import resume_prompt, session_header
 from .discovery import sibling_worktree_path
 from .files import AgentFiles
 from .meta_compact import busy, require_not_busy
-from .models import Agent, CreateAgent, Status, now
+from .models import Agent, CreateAgent, Status
 from .paths import agent_path, local_path
 from .processes import Processes
 from .store import Store
+from .timers import ScheduledWakes, scheduled
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class Controller:
         self.processes = processes
         self.lock = threading.RLock()
         self.files = AgentFiles(store)
+        self.wakes = ScheduledWakes(self)
         self.state: dict = {}
         self.fingerprint = ""
         self.snapshot_fingerprint = ""
@@ -98,7 +100,7 @@ class Controller:
             self.refresh()
             return self.store.get(agent.id)
 
-    def _launch(self, agent: Agent, prompt: str | None) -> None:
+    def _launch(self, agent: Agent, prompt: str | None) -> bool:
         try:
             from .sessions import Sessions
 
@@ -114,12 +116,14 @@ class Controller:
             agent = Sessions(self.store).ensure_agent_portable(agent)
             pid = self.processes.launch(agent, prompt)
             self.store.update(agent.id, {"pid": pid, "last_error": None})
+            return True
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
             log.warning("Cannot launch %s: %s", agent.id, exc)
-            self.store.update(agent.id, {"pid": None, "last_error": str(exc)})
+            self.store.update(agent.id, {"pid": None, "last_error": str(exc)[:4096]})
+            return False
 
     def recover(self) -> None:
-        """Only once at controller startup; never automatically retry crashed agents."""
+        """Restore unscheduled sessions once; explicitly scheduled wakes use a durable outbox."""
         with self.lock:
             for agent in self.store.scan():
                 if getattr(agent, "stop_pending", False):
@@ -134,8 +138,13 @@ class Controller:
                     or not agent.auto_resume
                     or busy(agent)
                     or agent.spawn_state not in {None, "ready"}
-                    or agent.status in {Status.done, Status.dormant}
+                    or agent.status == Status.done
                 ):
+                    continue
+                if scheduled(agent):
+                    self.wakes.attempt(agent)
+                    continue  # Future timers stay asleep; overdue ones are delivered now.
+                if agent.status == Status.dormant:
                     continue
                 if self.processes.alive(agent):
                     continue  # server restart != reboot; don't inject a duplicate prompt
@@ -179,8 +188,8 @@ class Controller:
                 if prompt is not None:
                     try:
                         self.processes.send_prompt(agent, prompt)
-                    except (ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-                        self.store.update(agent.id, {"last_error": str(exc)})
+                    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                        self.store.update(agent.id, {"last_error": str(exc)[:4096]})
             else:
                 self._launch(agent, prompt)
             self.refresh()
@@ -268,14 +277,7 @@ class Controller:
                     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
                         log.warning("Pending stop failed: %s", exc)
                     continue
-                if (
-                    agent.managed
-                    and agent.auto_resume
-                    and agent.status == Status.dormant
-                    and agent.wake_at
-                    and agent.wake_at <= now()
-                ):
-                    self.wake(str(agent.id))
+                if self.wakes.attempt(agent):
                     continue
                 fields = {}
                 if agent.managed:
@@ -283,7 +285,7 @@ class Controller:
                     pid = self.processes.pid(agent) if alive else None
                     if agent.pid != pid:
                         fields["pid"] = pid
-                    if not alive and agent.pid and not agent.last_error:
+                    if not alive and agent.pid and not agent.last_error and not scheduled(agent):
                         fields["last_error"] = (
                             "Agent process exited. Session retained; wake to resume."
                         )

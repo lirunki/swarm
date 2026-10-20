@@ -31,6 +31,8 @@ Status values (use these exact spellings):
 
 - `running`: actively executing an activity toward the goal.
 - `waiting`: need human input. Explain exactly what is needed with `--wait-reason`.
+  An explicit `wake_at` also schedules a timed wake in this status; clear it when
+  you need an answer rather than an automated recheck.
 - `dormant`: intentionally waiting for an external event or timer. Explain the
   event with `--wait-reason`. Use `--wake-at` for a timer (timezone-aware ISO-8601),
   or `--wake-at none` for event-only waiting. Do not busy-loop or sleep in a tool
@@ -246,6 +248,38 @@ Record enough that a resumed agent can safely continue after a machine reboot.
 A "Resume where you were" prompt means read the record AND existing session
 history, verify actual Git/external state, then continue. Never blindly repeat a
 commit, merge, purchase, deployment, or other side effect.
+
+### Durable timed wake requests
+
+`wake_at` is saved in your Markdown record, even if the controller is down. Use
+`dormant` for automated monitoring; `waiting` with an explicit timestamp is also
+supported. A future timer stays asleep across controller/host restart; an overdue
+one is delivered when the controller returns (managed + auto-resume required).
+There is no delivery while the controller is offline.
+
+```bash
+wake=$(date -u -d '+5 minutes' +%Y-%m-%dT%H:%M:%SZ)
+"$SWARM_PYTHON" -m swarm report --status waiting --wake-at "$wake" \
+  --activity 'Monitoring CI' --wait-reason 'Waiting for CI or review changes'
+```
+
+The controller writes `wake_delivery` (event ID, attempts and retry time) before
+sending anything, and consumes the timer only after successful process handoff.
+Failures retain the timer and retry after 5 seconds, then exponential backoff up to
+5 minutes; this state survives restarts. Expanded cards show pending/retry details.
+Changing the deadline supersedes its pending event; re-reporting the same deadline
+keeps its ID/backoff. `--wake-at none`, Stop, manual Wake, or reporting `done` cancels
+the pending timer. Disabling auto-resume pauses automatic delivery; it never grants
+permission to wake an observed/unmanaged agent.
+
+Delivery is **at least once**, not exactly once: a crash after tmux accepted input
+but before the acknowledgement is saved may repeat the same event ID. Read your
+record first and verify that `wake_delivery.id` matches the notification. Ignore
+canceled/replaced/already-handled IDs, and record progress before external effects
+so repeated notifications cannot cause duplicate commits, deployments, etc. A
+`delivered` event means handoff to the process, not proof that your work completed.
+Never edit this controller-owned delivery metadata yourself; use the reporting
+helper to reschedule/cancel. Explicitly schedule the next check after each cycle.
 
 Timers are one-shot. Event-only dormant workers stay dormant until a user or
 external service explicitly calls Swarm's wake endpoint. Tab closure does not

@@ -569,3 +569,18 @@ test('Files color state follows valid live counts and clears for empty or older 
   assert.match(css, /\.card-files,\.terminal-files\{color:var\(--ink\)\}/);
   assert.match(css, /\.card-files\.has-files,\.terminal-files\.has-files\{color:var\(--waiting\)\}/);
 });
+
+
+test('expanded cards show persistent timer delivery and retry details', () => {
+  const {render} = renderer();
+  const a = {...fullAgent('waiting', false), wake_at: '2035-01-01T00:00:00Z',
+    wake_delivery: {id: 'wake-event-1', state: 'pending', attempts: 2, retry_at: '2035-01-01T00:00:15Z'}};
+  const card = render(a); find(card, 'card-toggle').click();
+  assert.match(visibleText(card), /Wake delivery.*Pending.*2 attempt/);
+  assert.match(visibleText(card), /Wake event.*wake-event-1/);
+  assert.match(visibleText(card), /Wake retry/);
+  a.auto_resume = false;
+  assert.match(visibleText(render(a)), /Wake delivery.*Paused/);
+  a.wake_delivery.state = 'delivered'; a.wake_at = null;
+  assert.match(visibleText(render(a)), /Handed to agent process/);
+});
