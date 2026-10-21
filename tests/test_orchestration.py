@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
@@ -11,11 +12,13 @@ from fastapi.testclient import TestClient
 from swarm.importers.pi_history import PiHistory
 from swarm.models import Agent, Status, now
 from swarm.orchestration import ChildMessage, Orchestrator, OwnershipError, SpawnRequest
+from swarm.provisioning import Worker
 from swarm.server import create_app
 
 
 class FakeProcesses:
-    def __init__(self):
+    def __init__(self, store):
+        self.store = store
         self.running, self.launches, self.messages = set(), [], []
 
     def alive(self, agent):
@@ -29,6 +32,18 @@ class FakeProcesses:
         self.running.add(str(agent.id))
         self.launches.append((agent, prompt))
         return 123
+
+    def launch_setup(self, agent):
+        cwd = Path.cwd()
+        try:
+            Worker(self.store, str(agent.id), pi="/bin/echo").run(
+                execute=lambda command, env: self.launch(
+                    self.store.get(agent.id), command[-1]
+                )
+            )
+        finally:
+            os.chdir(cwd)
+        return self.pid(agent)
 
     def stop(self, agent):
         self.running.discard(str(agent.id))
@@ -56,7 +71,7 @@ def setup(tmp_path):
     git(repo, "commit", "-m", "base")
     app = create_app(tmp_path / "registry", recover=False, allowed_hosts=["testserver"])
     ctl = app.state.controller
-    ctl.processes = FakeProcesses()
+    ctl.processes = FakeProcesses(ctl.store)
     history = PiHistory(str(uuid4()), str(repo), "Parent")
     history.user("Parent instructions and useful context. " * 20)
     path = ctl.store.sessions_dir / "parent.jsonl"
@@ -86,11 +101,17 @@ def setup(tmp_path):
     return app, parent, request, repo
 
 
+def finish(controller, record):
+    controller.tick()
+    return controller.store.get(record.id)
+
+
 def spawn(setup, **updates):
     app, parent, request, _ = setup
     req = SpawnRequest(**(request.model_dump() | updates))
     result = app.state.orchestration.spawn(str(parent.id), req)
-    return app.state.controller.store.get(result["agent"]["id"])
+    queued = app.state.controller.store.get(result["agent"]["id"])
+    return finish(app.state.controller, queued)
 
 
 def test_spawn_provisions_before_launch_and_keeps_parent_dirty_changes_separate(setup):
@@ -99,7 +120,13 @@ def test_spawn_provisions_before_launch_and_keeps_parent_dirty_changes_separate(
     commit = git(repo, "rev-parse", "HEAD")
     (repo / "code.txt").write_text("uncommitted parent version")
     (repo / "untracked.txt").write_text("parent only")
-    child = spawn(setup)
+    result = app.state.orchestration.spawn(str(parent.id), request)
+    queued = app.state.controller.store.get(result["agent"]["id"])
+    assert queued.spawn_state == "provisioning"
+    assert queued.creation["state"] == "queued"
+    assert not Path(request.worktree).exists()
+    assert not app.state.controller.processes.launches
+    child = finish(app.state.controller, queued)
     assert child.parent_id == parent.id and child.id != parent.id
     assert child.session_id != parent.session_id and child.spawn_state == "ready"
     assert git(Path(child.folder), "branch", "--show-current") == request.branch
@@ -122,13 +149,15 @@ def test_idempotent_spawn_repeated_concurrently_never_launches_twice(setup):
         results = list(pool.map(lambda _: service.spawn(str(parent.id), request), range(4)))
     assert len({r["agent"]["id"] for r in results}) == 1
     assert sum(not r["reused"] for r in results) == 1
+    assert not app.state.controller.processes.launches
+    app.state.controller.tick()
     assert len(app.state.controller.processes.launches) == 1
     with pytest.raises(RuntimeError, match="different options"):
         service.spawn(str(parent.id), request.model_copy(update={"goal": "Different task"}))
 
 
 @pytest.mark.parametrize("invalid", ["destination", "branch", "base", "metadata"])
-def test_invalid_workspace_requests_have_no_child_or_git_side_effects(setup, invalid):
+def test_invalid_workspace_requests_become_failed_cards_without_git_side_effects(setup, invalid):
     app, parent, request, repo = setup
     req = request.model_dump()
     if invalid == "destination":
@@ -139,9 +168,13 @@ def test_invalid_workspace_requests_have_no_child_or_git_side_effects(setup, inv
         req["base"] = "missing-reference"
     else:
         req["worktree"] = str(repo / ".git" / "nested")
-    with pytest.raises(ValueError):
-        app.state.orchestration.spawn(str(parent.id), SpawnRequest(**req))
-    assert len(app.state.controller.store.scan()) == 1
+    result = app.state.orchestration.spawn(str(parent.id), SpawnRequest(**req))
+    queued = app.state.controller.store.get(result["agent"]["id"])
+    assert queued.creation["state"] == "queued"
+    failed = finish(app.state.controller, queued)
+    assert failed.spawn_state == "failed" and failed.creation["state"] == "failed"
+    assert failed.last_error and not failed.auto_resume
+    assert len(app.state.controller.store.scan()) == 2
     assert not app.state.controller.processes.launches
     assert git(repo, "branch", "--list", "feature/child") == ""
 
@@ -184,29 +217,28 @@ def test_fork_ignores_only_unfinished_final_line_and_rejects_oversize(setup, mon
     snapshot = app.state.controller.store.home / "spawns" / str(child.id) / "parent.jsonl"
     assert snapshot.read_bytes() == original
     monkeypatch.setattr("swarm.orchestration.MAX_FORK_CHARS", 10)
-    with pytest.raises(ValueError, match="Fork context exceeds"):
-        spawn(
-            setup,
-            request_id="oversize",
-            branch="feature/two",
-            worktree=str(Path(child.folder).parent / "two"),
-            context="fork",
-        )
+    oversized = spawn(
+        setup,
+        request_id="oversize",
+        branch="feature/two",
+        worktree=str(Path(child.folder).parent / "two"),
+        context="fork",
+    )
+    assert oversized.spawn_state == "failed"
+    assert "Fork context exceeds" in oversized.last_error
 
 
 def test_failed_provisioning_and_restart_do_not_repeat_git_or_launch(setup, monkeypatch):
-    import swarm.orchestration as module
-
     app, parent, request, _ = setup
-    real_git = module.git
+    real_git = Worker.git
 
-    def fail_after_git(folder, *args):
-        result = real_git(folder, *args)
+    def fail_after_git(self, folder, *args, **kwargs):
+        result = real_git(self, folder, *args, **kwargs)
         if args[:2] == ("worktree", "add"):
             raise RuntimeError("interrupted after worktree creation")
         return result
 
-    monkeypatch.setattr(module, "git", fail_after_git)
+    monkeypatch.setattr(Worker, "git", fail_after_git)
     child = spawn(setup)
     assert child.spawn_state == "failed" and not child.auto_resume
     assert Path(child.folder).is_dir() and not app.state.controller.processes.launches
@@ -247,6 +279,8 @@ def test_direct_child_ownership_and_api_controls(setup):
         result = client.post(base, json=request.model_dump())
         assert result.status_code == 201, result.text
         child_id = result.json()["agent"]["id"]
+        assert result.json()["agent"]["creation"]["state"] == "queued"
+        app.state.controller.tick()
         assert len(client.get(base).json()["agents"]) == 1
         assert client.get(base + "/" + child_id).json()["alive"]
         assert client.get(f"/api/agents/{other.id}/children/{child_id}").status_code == 403
@@ -401,7 +435,9 @@ def test_placeholder_tmux_session_is_not_considered_a_live_agent(setup, monkeypa
 
 
 @pytest.mark.parametrize("limit", ["depth", "global", "fork-source", "fork-total"])
-def test_nesting_global_and_fork_storage_limits_fail_before_side_effects(setup, monkeypatch, limit):
+def test_nesting_global_limits_are_sync_and_fork_storage_limits_fail_in_worker(
+    setup, monkeypatch, limit
+):
     app, parent, request, _ = setup
     if limit == "depth":
         monkeypatch.setattr("swarm.orchestration.MAX_DEPTH", 0)
@@ -411,10 +447,16 @@ def test_nesting_global_and_fork_storage_limits_fail_before_side_effects(setup, 
         monkeypatch.setattr("swarm.orchestration.MAX_FORK_SOURCE_BYTES", 1)
     else:
         monkeypatch.setattr("swarm.orchestration.MAX_FORK_ARCHIVE_BYTES", 1)
-    with pytest.raises(ValueError):
-        spawn(setup, context="fork" if limit.startswith("fork") else "fresh")
-    assert not Path(request.worktree).exists()
-    assert len(app.state.controller.store.scan()) == 1
+    if limit in {"depth", "global"}:
+        with pytest.raises(ValueError):
+            app.state.orchestration.spawn(str(parent.id), request)
+        assert len(app.state.controller.store.scan()) == 1
+        assert not Path(request.worktree).exists()
+    else:
+        failed = spawn(setup, context="fork")
+        assert failed.spawn_state == "failed" and failed.last_error
+        assert len(app.state.controller.store.scan()) == 2
+        assert Path(request.worktree).is_dir()
     assert not app.state.controller.processes.launches
 
 

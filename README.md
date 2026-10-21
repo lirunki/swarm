@@ -318,8 +318,16 @@ conservatively blocks while any native Pi has an unknown working folder.
   worktree as source. For source `X` and branch `feature/name`, Swarm creates the branch in
   sibling `X_feature_name` (`/` and `\\` become `_`) using `git worktree add -b`. The
   destination is shown before launch and must not already exist. Swarm never switches the
-  source folder's branch. Prefer a separate worktree per coding agent to prevent concurrent
+  source folder's branch. Nested branch names such as `feature/subbranch` keep their
+  Git name; only the sibling directory name replaces the slashes. Prefer a separate worktree per coding agent to prevent concurrent
   Git edits.
+- **Background creation:** clicking Create immediately persists and displays a
+  **Setting up** card. Workspace validation, branch/worktree checkout, optional
+  child-context preparation and Pi startup run in the agent's managed **tmux pane**,
+  not inside the HTTP request or the controller's global lock. Compact cards show
+  the current stage (for example **Creating worktree…**); expand for setup errors
+  and the private log path, or open **↗** to watch live Git output. A slow checkout
+  does not block the fleet dashboard or hold a browser/relay request open.
 - **Compact org chart:** agents appear as 128×128 square tiles containing only
   their name, status, expand arrow and a **↗** terminal shortcut directly beneath
   the arrow, plus their latest product link when one is
@@ -464,6 +472,45 @@ falls back to sending editor Up/Down keys into a mouse-free alternate screen.
 After updating, refresh the mobile page to load the new frontend assets. No backend
 restart is needed for this touch-to-wheel implementation; it uses the same input
 transport as existing keyboard/mouse support, including through the federation relay.
+
+### Agent setup lifecycle
+
+Dashboard creation and `swarm spawn` return **HTTP 201 with a queued record** before
+setup has finished. Workspace validation errors (existing branch/destination,
+invalid base, conflicting nested branch, inaccessible source, etc.) appear on that
+same card rather than losing the agent behind an HTTP 500. No Pi work starts until
+the workspace and session are ready. The form returns to Dashboard immediately;
+setup errors do not silently retry the create request or create duplicate cards.
+Filesystem/process failures that still occur on the API path return JSON details;
+if the response is uncertain, inspect the cards before submitting another creation.
+
+The controller starts a worker on its next monitor pass. It starts in the registry
+folder because the destination may not exist yet, provisions the workspace, then
+execs Pi in the **same pane**, with the correct working directory and agent identity.
+A close-on-exec readiness lock keeps Wake, child messages and file Insert out of
+the setup process until Pi takes over. Stop is available during queued/active
+setup; it cancels pending launch and terminates the owned pane without deleting
+partial branches/folders. Incomplete setup cannot be woken into the parent folder.
+
+Git worktree checkout has a 30-minute worker timeout, not the old 30-second HTTP
+helper timeout. Git output and stages remain in the pane and in
+`$SWARM_HOME/setup/<agent-id>/setup.log`; `request.json` records the private setup
+plan and initial instructions. Git hooks are disabled during provisioning and
+provider/cloud credential environment variables are removed from Git children.
+This is not a sandbox against repositories with user-installed Git filters or
+other access to the same local account.
+
+Setup survives a controller-only restart because tmux owns the worker. Queued
+requests, or a worker-launch interruption before setup began, may start after
+restart (at most three terminal-launch attempts). Once setup has begun, a missing
+worker is marked interrupted instead of replaying uncertain Git side effects.
+Inspect the retained artifacts before creating a new destination/branch. A valid
+workspace whose Pi startup failed can be woken explicitly after fixing Pi; Git
+checkout is not repeated. No automatic rollback or worktree deletion is performed.
+Up to 16 dashboard setups can be queued at a time; normal child spawning limits
+still apply. Setup plans and logs contain user instructions and should be treated
+as private session data. Automatic model work is never performed by the setup
+worker; only the requested Pi launch starts the agent.
 
 ## Agent Files library (references and browser uploads)
 
@@ -687,6 +734,9 @@ response is lost, inspect `agent list` and retry with the same key—do not choo
 new key until you have inspected the retained child. Message delivery can likewise
 be uncertain after a transport timeout, so inspect status before resending.
 
+The spawn response initially contains a queued/provisioning child. Git/fork checks
+and checkout run in its managed tmux terminal after the response. Inspect its stage
+or use `agent wait`; a queued child is work in progress, not a completed child.
 A child owns a new branch in a new, nonexistent absolute worktree destination made
 from an absolute repository directory and an explicit base revision (normally
 `HEAD`). Dirty parent changes are not copied. Swarm never automatically commits,
@@ -722,7 +772,7 @@ Changing a child's checkout to another branch causes launch to be refused. Faile
 workspace setup is not retried automatically; partial folders/branches are kept
 for inspection. The registered request and optional parent snapshot live under
 `$SWARM_HOME/spawns/<child-id>/`. Reusing the same key returns the existing child,
-including its error state, rather than creating another worktree or launching twice.
+including its queued or error state, rather than creating another worktree or launching twice.
 For a ready child whose Pi launch failed, use explicit `agent wake` after fixing
 the runtime; an incomplete workspace must be inspected and repaired separately.
 

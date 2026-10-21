@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -175,6 +176,28 @@ def create_app(
     async def bad_request(request, exc):
         return JSONResponse({"detail": str(exc)}, status_code=400)
 
+    @app.exception_handler(OSError)
+    async def filesystem_error(request, exc):
+        log.exception("Filesystem failure handling %s", request.url.path)
+        return JSONResponse(
+            {
+                "detail": f"Server filesystem operation failed: {exc}. "
+                "Check the agent card and backend log before retrying."
+            },
+            status_code=500,
+        )
+
+    @app.exception_handler(subprocess.SubprocessError)
+    async def subprocess_error(request, exc):
+        log.exception("Subprocess failure handling %s", request.url.path)
+        return JSONResponse(
+            {
+                "detail": f"Server process operation failed: {exc}. "
+                "Check the agent card and setup log before retrying."
+            },
+            status_code=500,
+        )
+
     @app.exception_handler(RuntimeError)
     async def runtime_error(request, exc):
         return JSONResponse({"detail": str(exc)}, status_code=409)
@@ -289,8 +312,11 @@ def create_app(
     @app.post("/api/agents", status_code=201)
     async def create(request: CreateAgent):
         agent = await asyncio.to_thread(controller.create, request)
-        await broadcast()
-        return agent.model_dump(mode="json") | {"alive": processes.alive(agent)}
+        try:
+            await broadcast()
+        except Exception:
+            log.exception("Agent %s is queued; deferred creation broadcast", agent.id)
+        return agent.model_dump(mode="json") | {"alive": False}
 
     @app.patch("/api/agents/{agent_id}")
     async def patch(agent_id: UUID, request: AgentPatch):
@@ -458,7 +484,10 @@ def create_app(
     @app.post("/api/agents/{parent_id}/children", status_code=201)
     async def spawn_child(parent_id: UUID, request: SpawnRequest):
         result = await asyncio.to_thread(orchestration.spawn, str(parent_id), request)
-        await broadcast()
+        try:
+            await broadcast()
+        except Exception:
+            log.exception("Child is queued; deferred creation broadcast")
         return result
 
     @app.get("/api/agents/{parent_id}/children")

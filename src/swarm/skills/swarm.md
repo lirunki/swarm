@@ -202,6 +202,14 @@ that key for every retry of the same logical task:
 "$SWARM_PYTHON" -m swarm agent wait CHILD_ID
 ```
 
+Spawn returns a queued child record immediately; it does not wait for Git or Pi.
+Its card/`agent status` shows setup stages such as `Creating worktree…`. The child
+worker runs inside the child's managed tmux pane and starts Pi there only after
+validation, checkout and session preparation. Use `agent wait` for attention/completion
+rather than polling or injecting instructions into the setup process. Wait treats
+queued/provisioning setup as active work. Messages, Wake and file Insert are blocked
+until setup is ready; Stop cancels queued or active setup immediately.
+
 The repository must be an absolute existing repository directory. The worktree must
 be an absolute, nonexistent destination; the branch must be new, and `--base` must
 explicitly identify the intended starting revision (normally `HEAD`). Dirty changes
@@ -220,7 +228,9 @@ fresh context or compact first if the chosen model cannot fit it.
 Limits for agent-initiated spawns/wakes are four active children per parent,
 16 active managed agents globally, and three child nesting levels. At most 32 children are retained per parent. A live process still consumes an active
 slot even if its goal is marked done; stop finished children to free those slots. Failed children
-remain visible with their records and artifacts and are not automatically retried.
+remain visible with their records, setup errors and private log path. Worktree
+operations that were already started are not replayed after a worker crash. A surviving
+setup worker continues across controller restart; unstarted work may launch safely.
 Inspect the existing child and artifacts before choosing a new request key.
 
 `agent wait` is event-driven: it registers the parent for a child completion or

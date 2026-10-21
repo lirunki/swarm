@@ -908,3 +908,100 @@ def test_mobile_terminal_keys_follow_keyboard_geometry_and_preserve_focus(
             assert not errors
         finally:
             browser.close()
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_background_creation_stages_fit_compact_tiles_and_terminal_overlay(
+    static_url, tmp_path, width
+):
+    state = fixture_state()
+    state["agents"] = state["agents"][:1]
+    a = state["agents"][0]
+    a.update(
+        name="A new worktree with a nested feature branch",
+        status="running",
+        alive=False,
+        auto_resume=True,
+        spawn_state="provisioning",
+        product=None,
+        creation={
+            "id": "setup-1",
+            "state": "queued",
+            "stage": "Queued for setup…",
+            "log": "/private/setup.log",
+        },
+    )
+    with playwright.sync_playwright() as runner:
+        try:
+            browser = runner.chromium.launch(headless=True)
+        except playwright.Error as exc:
+            if "Executable doesn't exist" in str(
+                exc
+            ) or "error while loading shared libraries" in str(exc):
+                pytest.skip("Optional Chromium runtime unavailable")
+            raise
+        try:
+            page = browser.new_page(viewport={"width": width, "height": 900})
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.add_init_script("""window.WebSocket = class {
+                static OPEN = 1; constructor() { this.readyState=1; setTimeout(() => this.onopen?.(),0); }
+                send() {} close() { this.readyState=3; }
+            };""")
+            page.route(
+                "**/api/**",
+                lambda route: route.fulfill(
+                    content_type="application/json", body=json.dumps(state)
+                ),
+            )
+            page.goto(static_url)
+            card = page.locator(f'[data-agent-id="{a["id"]}"]')
+            playwright.expect(card.locator(".compact-creation-stage")).to_have_text(
+                "Queued for setup…"
+            )
+            card.locator(".card-terminal").click()
+            playwright.expect(page.locator(".terminal-overlay")).to_contain_text("Setup is queued")
+            assert not page.locator(".terminal-overlay button:visible").count()
+            page.locator(".tab-group .tab-close").click()
+            a["alive"] = True
+            a["creation"].update(state="running", stage="Creating worktree…")
+            a["activity"] = "Creating worktree…"
+            page.evaluate("data => applyState(data)", state)
+            playwright.expect(card.locator(".compact-creation-stage")).to_have_text(
+                "Creating worktree…"
+            )
+            assert card.bounding_box()["height"] == 128
+            page.locator("#dashboard").screenshot(
+                path=str(tmp_path / f"background-setup-{width}.png")
+            )
+            for selector in (".compact-creation-stage", ".badge", ".card-terminal"):
+                bounds, box = card.bounding_box(), card.locator(selector).bounding_box()
+                assert (
+                    box["y"] >= bounds["y"]
+                    and box["y"] + box["height"] <= bounds["y"] + bounds["height"]
+                )
+            card.locator(".card-toggle").click()
+            playwright.expect(card.get_by_role("button", name="Wake", exact=True)).to_be_disabled()
+            playwright.expect(card.get_by_role("button", name="Stop", exact=True)).to_be_enabled()
+            assert "/private/setup.log" in card.inner_text()
+            a["spawn_state"] = "failed"
+            a["alive"] = False
+            a["auto_resume"] = False
+            a["status"] = "idle"
+            a["creation"].update(
+                state="failed",
+                stage="Setup failed",
+                error="Nested branch already exists <script>unsafe</script>",
+            )
+            page.evaluate("data => applyState(data)", state)
+            playwright.expect(card.locator(".creation-error")).to_contain_text(
+                "Nested branch already exists"
+            )
+            assert card.locator("script").count() == 0
+            card.get_by_role("button", name="Terminal ↗", exact=True).click()
+            playwright.expect(page.locator(".terminal-overlay")).to_contain_text("Setup failed")
+            assert not page.locator(".terminal-overlay button:visible").count()
+            assert page.evaluate("document.body.scrollWidth <= innerWidth")
+            assert not errors
+        finally:
+            browser.close()

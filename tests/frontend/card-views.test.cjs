@@ -102,7 +102,7 @@ function renderer() {
     since: () => 'just now', apiPath: value => value, openTerminal: id => calls.push(['terminal', id]), editAgent: id => calls.push(['edit', id]),
     wakeAgent: id => calls.push(['wake', id]), stopAgent: id => calls.push(['stop', id]),
   });
-  vm.runInContext(source.slice(source.indexOf('const $ ='), source.indexOf('const labels =')) + '\n' + source.slice(source.indexOf('function badge('), source.indexOf('\nfunction render()')), context);
+  vm.runInContext(source.slice(source.indexOf('const $ ='), source.indexOf('const labels =')) + '\n' + source.slice(source.indexOf('const provisioningAgent'), source.indexOf('\nfunction render()')), context);
   return {render: a => context.renderCard(a), context, calls, storage};
 }
 function fullAgent(status = 'running', alive = true) {
@@ -140,6 +140,39 @@ test('compact renderer exposes summary and terminal shortcut, expanded form rest
   }
   assert.deepEqual(calls, [['terminal', 'agent-1'], ['edit', 'agent-1'], ['wake', 'agent-1'], ['stop', 'agent-1']]);
   toggle.click(); assert.equal(find(card, 'card-details').hidden, true); assert.equal(find(card, 'card-foot').hidden, true);
+});
+
+test('background setup cards show stage details and enforce Wake/Stop controls', () => {
+  const {render, calls} = renderer();
+  const a = fullAgent('running', false);
+  a.auto_resume = false; a.spawn_state = 'provisioning';
+  a.creation = {id: '11111111-1111-4111-8111-111111111111', state: 'running', stage: 'Creating worktree…', log: '/tmp/swarm/setup.log'};
+  const card = render(a);
+  assert.match(visibleText(card), /Setting up/);
+  assert.match(visibleText(card), /Creating worktree…/);
+  assert.doesNotMatch(visibleText(card), /Setup log/);
+  assert.match(card.title, /Setup: Creating worktree…/);
+  find(card, 'card-terminal').click(); assert.deepEqual(calls, [['terminal', a.id]]); calls.length = 0;
+  find(card, 'card-toggle').click();
+  assert.match(visibleText(card), /Setup log:.*\/tmp\/swarm\/setup\.log/);
+  const wake = walk(card).find(el => el.tagName === 'BUTTON' && el.textContent === 'Wake');
+  const stop = walk(card).find(el => el.tagName === 'BUTTON' && el.textContent === 'Stop');
+  assert.equal(wake.disabled, true); assert.match(wake.title, /still running/);
+  assert.ok(stop); stop.click(); assert.deepEqual(calls, [['stop', a.id]]);
+
+  a.spawn_state = 'failed'; a.creation = {...a.creation, state: 'failed', stage: 'Setup failed', error: '<unsafe failure>'};
+  const failed = render(a);
+  assert.match(visibleText(failed), /Setup failed/); assert.match(visibleText(failed), /<unsafe failure>/);
+  assert.equal(walk(failed).some(el => el.tagName === 'SCRIPT'), false);
+  assert.equal(walk(failed).find(el => el.tagName === 'BUTTON' && el.textContent === 'Wake').disabled, true);
+});
+
+test('ready setup state permits Wake even when Pi later failed to stay alive', () => {
+  const {render, calls} = renderer();
+  const a = fullAgent('idle', false); a.auto_resume = false; a.spawn_state = 'ready'; a.last_error = 'Pi exited';
+  const card = render(a); find(card, 'card-toggle').click();
+  const wake = walk(card).find(el => el.tagName === 'BUTTON' && el.textContent === 'Wake');
+  assert.equal(wake.disabled, false); wake.click(); assert.deepEqual(calls, [['wake', a.id]]);
 });
 
 test('collapsed name highlight follows process liveness, not task status', () => {
@@ -506,9 +539,10 @@ test('terminal toolbar keeps reconnect but removes redundant Wake and Close tab'
     overlay: (...args) => calls.push(['overlay', ...args.slice(1)]),
   });
   const open = source.slice(source.indexOf('function openTerminal('), source.indexOf('function initTerminal('));
-  const sync = source.slice(source.indexOf('function syncTerminal('), source.indexOf('function attachTerminal('));
+  const sync = source.slice(source.indexOf('function terminalAttachable('), source.indexOf('function attachTerminal('));
   const filesState = source.slice(source.indexOf('function agentFileCount('), source.indexOf('function openAgentFiles('));
-  vm.runInContext(filesState + '\n' + open + '\n' + sync, context);
+  const setupState = source.slice(source.indexOf('const provisioningAgent'), source.indexOf('function badge('));
+  vm.runInContext(setupState + '\n' + filesState + '\n' + open + '\n' + sync, context);
   context.openTerminal(a.id);
   const t = context.terminals.get(a.id), header = t.pane.childNodes[0];
   assert.deepEqual(walk(header).filter(el => el.tagName === 'BUTTON' && !el.hidden).map(el => el.textContent), ['Files', '↻ Reconnect']);

@@ -77,6 +77,31 @@ class Processes:
         if not adapter:
             raise ValueError(f"no adapter for backend {agent.backend}")
         command = adapter.command(agent, prompt)
+        return self._start(agent, command, local_path(agent.folder))
+
+    def launch_setup(self, agent: Agent) -> int | None:
+        """Provision and exec Pi in this managed pane, off the HTTP path."""
+        if not agent.managed or agent.spawn_state != "provisioning":
+            raise ValueError("setup requires a managed provisioning record")
+        if self.alive(agent):
+            return self.pid(agent)
+        adapter = self.adapters.get(agent.backend)
+        if not isinstance(adapter, PiAdapter):
+            raise ValueError("background setup currently supports the Pi backend only")
+        command = [
+            sys.executable,
+            "-m",
+            "swarm.provisioning",
+            "--home",
+            str(self.store.home),
+            "--id",
+            str(agent.id),
+            "--pi",
+            adapter.executable,
+        ]
+        return self._start(agent, command, self.store.home)
+
+    def _start(self, agent: Agent, command: list[str], folder: Path) -> int | None:
         target = self.target(agent)
         # Dead panes retain output; replace only when explicitly launching/recovering.
         self.run("kill-session", "-t", target, check=False)
@@ -137,7 +162,7 @@ class Processes:
             "-s",
             target,
             "-c",
-            str(local_path(agent.folder)),
+            str(folder),
             "-x",
             "120",
             "-y",
@@ -158,7 +183,7 @@ class Processes:
                 "-t",
                 target + ":0.0",
                 "-c",
-                str(local_path(agent.folder)),
+                str(folder),
                 shell,
             )
         except Exception:

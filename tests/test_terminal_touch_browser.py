@@ -54,6 +54,14 @@ for line in sys.stdin:
                 with urllib.request.urlopen(request, timeout=10) as response:
                     agent = app.state.controller.store.get(json.load(response)["id"])
                 assert not agent.last_error
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline:
+                    agent = app.state.controller.store.get(agent.id)
+                    if agent.spawn_state == "ready" and processes.alive(agent):
+                        break
+                    assert not agent.last_error, agent.last_error
+                    time.sleep(0.05)
+                assert agent.spawn_state == "ready", agent
                 pid = processes.pid(agent)
                 target = processes.target(agent) + ":0.0"
                 for _ in range(100):
@@ -231,6 +239,14 @@ while True:
                 )
                 with urllib.request.urlopen(request, timeout=10) as response:
                     agent = app.state.controller.store.get(json.load(response)["id"])
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline:
+                    agent = app.state.controller.store.get(agent.id)
+                    if agent.spawn_state == "ready" and processes.alive(agent):
+                        break
+                    assert not agent.last_error, agent.last_error
+                    time.sleep(0.05)
+                assert agent.spawn_state == "ready", agent
                 pid = processes.pid(agent)
                 page = browser.new_page(
                     viewport={"width": 390, "height": 1000}, has_touch=True, is_mobile=True

@@ -22,9 +22,13 @@ function toast(message, error = false) {
 const apiPath = path => activeSwarm === 'local' ? path : `/api/federation/${encodeURIComponent(activeSwarm)}/proxy${path}`;
 const stateWSPath = () => activeSwarm === 'local' ? '/ws/state' : `/ws/federation/${encodeURIComponent(activeSwarm)}/state`;
 const terminalWSPath = id => activeSwarm === 'local' ? `/ws/terminal/${id}` : `/ws/federation/${encodeURIComponent(activeSwarm)}/terminal/${id}`;
+function nonJsonResponseError(response) {
+  const status = response.status || 'unknown';
+  return new Error(`Server error ${status}; check backend logs. Request outcome unknown; check the card before retrying.`);
+}
 async function localApi(path, method = 'GET', body) {
   const response = await fetch(path, {method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
-  let value; try { value = await response.json(); } catch { throw new Error(`Unexpected response (${response.status})`); }
+  let value; try { value = await response.json(); } catch { throw nonJsonResponseError(response); }
   if (!response.ok) {
     const error = new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value));
     error.status = response.status; throw error;
@@ -33,8 +37,11 @@ async function localApi(path, method = 'GET', body) {
 }
 async function api(path, method = 'GET', body) {
   const response = await fetch(apiPath(path), {method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
-  let value; try { value = await response.json(); } catch { throw new Error(`Unexpected response (${response.status})`); }
-  if (!response.ok) throw new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value));
+  let value; try { value = await response.json(); } catch { throw nonJsonResponseError(response); }
+  if (!response.ok) {
+    const error = new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value));
+    error.status = response.status; throw error;
+  }
   return value;
 }
 const agentById = id => state.agents.find(a => a.id === id);
@@ -171,8 +178,20 @@ async function restartController() {
   }
 }
 $('#restart-controller').addEventListener('click', restartController);
-function badge(status) {
-  const el = node('span', `badge ${status}`); el.append(node('i', 'status-dot'), document.createTextNode(labels[status] || status)); return el;
+const provisioningAgent = a => a?.spawn_state === 'provisioning';
+const incompleteSetup = a => ['provisioning', 'failed', 'cancelled'].includes(a?.spawn_state);
+function creationStage(a) {
+  if (typeof a?.creation?.stage === 'string' && a.creation.stage.trim()) return a.creation.stage.trim();
+  return {queued: 'Queued', running: 'Setting up…', completed: 'Setup complete', failed: 'Setup failed', cancelled: 'Setup cancelled'}[a?.creation?.state] || (provisioningAgent(a) ? 'Queued' : 'Setup failed');
+}
+function displayBadge(a) {
+  if (provisioningAgent(a)) return {state: 'provisioning', text: 'Setting up'};
+  if (['failed', 'cancelled'].includes(a?.spawn_state)) return {state: 'setup-failed', text: 'Setup failed'};
+  return {state: a.status, text: labels[a.status] || a.status};
+}
+function badge(agent) {
+  const display = displayBadge(agent);
+  const el = node('span', `badge ${display.state}`); el.append(node('i', 'status-dot'), document.createTextNode(display.text)); return el;
 }
 function metadata(list, label, value) {
   if (!value) return;
@@ -225,13 +244,15 @@ function productLink(a) {
 }
 function renderCard(a) {
   const card = node('article', 'agent-card'); card.dataset.agentId = a.id;
-  const activityHint = a.activity || 'No activity reported yet';
-  card.title = `${a.name}\n${labels[a.status] || a.status} · ${a.alive ? 'Process online' : 'Offline'}\nActivity: ${activityHint}`;
+  const activityHint = a.activity || 'No activity reported yet', stage = (a.creation || incompleteSetup(a)) ? creationStage(a) : '';
+  const setupHint = stage ? `\nSetup: ${stage}` : '';
+  card.title = `${a.name}\n${displayBadge(a).text} · ${a.alive ? 'Process online' : 'Offline'}${setupHint}\nActivity: ${activityHint}`;
   card.classList.toggle('has-process', !!a.alive);
+  card.classList.toggle('is-provisioning', provisioningAgent(a));
   const inside = node('div', 'card-inner'), summary = node('header', 'card-summary'), header = node('div', 'card-head');
   const identity = node('div', 'card-identity'), avatar = node('div', 'avatar', a.name.slice(0, 1).toUpperCase());
   const subtitle = node('div', 'card-subtitle', `${a.backend}${a.import_source ? ` ← ${a.import_source.backend}` : ''} · ${a.id.slice(0, 8)}${a.managed ? '' : ' · observed'}`);
-  const name = node('h3', '', a.name); name.title = `${a.name}\nActivity: ${activityHint}`;
+  const name = node('h3', '', a.name); name.title = `${a.name}${setupHint}\nActivity: ${activityHint}`;
   identity.append(name, subtitle);
   const details = node('div', 'card-details'); details.id = `card-details-${a.id}`;
   const toggle = button('', 'card-toggle', () => {
@@ -246,10 +267,14 @@ function renderCard(a) {
   terminal.setAttribute('aria-label', terminal.title);
   terminal.hidden = true;
   const controls = node('div', 'card-controls'); controls.append(toggle, terminal);
-  const statusBadge = badge(a.status); statusBadge.title = labels[a.status] || a.status;
+  const statusBadge = badge(a); statusBadge.title = stage ? `${displayBadge(a).text}: ${stage}` : displayBadge(a).text;
   header.append(avatar, identity, statusBadge, controls);
   const goal = node('p', 'goal', a.goal); goal.title = a.goal;
   summary.append(header);
+  if (provisioningAgent(a)) {
+    const compactStage = node('p', 'creation-stage compact-creation-stage', stage);
+    compactStage.title = stage; summary.append(compactStage);
+  }
   const product = productLink(a);
   if (product) card.classList.toggle('has-product', true);
   const count = agentFileCount(a);
@@ -265,7 +290,17 @@ function renderCard(a) {
   activity.id = `card-activity-${a.id}`;
   toggle.setAttribute('aria-describedby', activity.id);
   activity.append(node('span', 'activity-label', 'CURRENT ACTIVITY'), document.createTextNode(activityHint));
-  details.append(goal, activity);
+  details.append(goal);
+  if (a.creation || incompleteSetup(a)) {
+    const setup = node('section', `creation-status${['failed', 'cancelled'].includes(a.spawn_state) ? ' failed' : ''}`);
+    setup.append(node('span', 'activity-label', 'SETUP'), node('strong', 'creation-status-stage', stage));
+    if (a.creation?.error) setup.append(node('p', 'creation-error', a.creation.error));
+    if (a.creation?.log) {
+      const log = node('p', 'creation-log', 'Setup log: '); log.append(node('code', '', a.creation.log)); setup.append(log);
+    }
+    details.append(setup);
+  }
+  details.append(activity);
   if (a.activities?.length) {
     const list = node('ul', 'activity-list');
     for (const item of a.activities) {
@@ -297,11 +332,14 @@ function renderCard(a) {
   if (a.last_error) details.append(node('div', 'card-error', a.last_error));
   const foot = node('div', 'card-foot'); foot.id = `card-actions-${a.id}`;
   const runtime = node('span', `runtime${a.alive ? ' online' : ''}`, `${a.alive ? '● Online' : '○ Offline'} · ${since(a.updated_at)}`); runtime.title = a.updated_at;
-  const actions = node('div', 'actions'), compacting = compactionBlocked(a);
+  const actions = node('div', 'actions'), compacting = compactionBlocked(a), setupBlocked = incompleteSetup(a);
   actions.append(button('Terminal ↗', 'small', () => openTerminal(a.id)), button('Edit', 'small', () => editAgent(a.id)));
   if (a.managed) {
-    const wake = button('Wake', 'small', () => wakeAgent(a.id)); wake.disabled = compacting; if (compacting) wake.title = metaCompactionRunning(a) ? 'Meta-compaction is running' : 'Tool input compaction is running'; actions.append(wake);
-    if (a.alive || a.auto_resume) actions.append(button('Stop', 'small danger', () => stopAgent(a.id)));
+    const wake = button('Wake', 'small', () => wakeAgent(a.id)); wake.disabled = compacting || setupBlocked;
+    if (setupBlocked) wake.title = provisioningAgent(a) ? 'Setup is still running' : 'Setup did not complete';
+    else if (compacting) wake.title = metaCompactionRunning(a) ? 'Meta-compaction is running' : 'Tool input compaction is running';
+    actions.append(wake);
+    if (a.alive || a.auto_resume || provisioningAgent(a)) actions.append(button('Stop', 'small danger', () => stopAgent(a.id)));
   }
   foot.append(runtime, actions); inside.append(summary, details); card.append(inside, foot);
   const compact = cardViews.isCompact(state.home, a);
@@ -396,7 +434,7 @@ function initTerminal(t) {
     onClose: focus => { if (focus && !t.closed && !t.pane.hidden) t.copyButton.focus({preventScroll: true}); },
   });
   t.mobileKeys = new SwarmTerminalKeys.TerminalKeys({term: t.term, pane: t.pane,
-    isActive: () => !t.closed && !t.pane.hidden && !t.copyText?.active && !!agentById(t.id)?.alive,
+    isActive: () => !t.closed && !t.pane.hidden && !t.copyText?.active && terminalAttachable(agentById(t.id)),
     ready: () => t.ws?.readyState === WebSocket.OPEN,
     send: data => t.term.input(data, true),
   });
@@ -407,23 +445,35 @@ function overlay(t, title, message, actionText, action) {
   t.overlay.hidden = false; t.overlay.replaceChildren(node('h2', '', title), node('p', '', message));
   if (action) t.overlay.append(button(actionText, 'primary', action));
 }
+function terminalAttachable(a) {
+  return !!a && (a.alive === true || (provisioningAgent(a) && a.creation?.state !== 'queued'));
+}
 function syncTerminal(t) {
   const a = agentById(t.id); if (!a) return;
   syncFilesButton(t.filesButton, a);
   t.mobileKeys?.update();
   t.title.textContent = a.name; t.title.title = a.name; t.tabLabel.textContent = a.name;
-  t.info.textContent = `${labels[a.status]} · ${a.session_id || 'session pending'} · ${a.folder}`;
+  const stage = incompleteSetup(a) ? creationStage(a) : '';
+  t.info.textContent = `${stage || labels[a.status]} · ${a.session_id || 'session pending'} · ${a.folder}`;
   t.info.title = t.info.textContent;
   const compacting = compactionBlocked(a);
-  if (!a.alive) {
+  if (provisioningAgent(a) && a.creation?.state === 'queued') {
+    overlay(t, 'Setup is queued.', 'Setup has not started yet. This terminal will attach automatically when setup begins.');
+  } else if (terminalAttachable(a)) {
+    if (t.term && (!t.ws || t.ws.readyState > 1) && !t.timer) attachTerminal(t);
+  } else if (['failed', 'cancelled'].includes(a.spawn_state)) {
+    const message = [stage, a.creation?.error, a.creation?.log ? `Setup log: ${a.creation.log}` : ''].filter(Boolean).join('\n');
+    overlay(t, a.spawn_state === 'cancelled' ? 'Setup was cancelled.' : 'Setup failed.', message || 'The agent setup process did not complete.');
+  } else if (!a.alive) {
     overlay(t, compacting ? 'Session compaction is running.' : 'This agent is offline.', compacting ? 'The saved session is being updated. It stays stopped afterward; wake it explicitly when the job completes.' : 'Opening a terminal only attaches to a process. Wake the agent explicitly to continue its saved session.', a.managed && !compacting ? 'Wake agent ↗' : '', a.managed && !compacting ? () => wakeAgent(t.id) : null);
-  } else if (t.term && (!t.ws || t.ws.readyState > 1) && !t.timer) attachTerminal(t);
+  }
 }
 function attachTerminal(t) {
   if (t.closed || !t.term || t.ws?.readyState < 2) return;
-  if (!agentById(t.id)?.alive) { syncTerminal(t); return; }
+  const agent = agentById(t.id);
+  if (!terminalAttachable(agent)) { syncTerminal(t); return; }
   clearTimeout(t.timer); t.timer = null;
-  overlay(t, 'Attaching terminal…', 'The agent keeps running independently of this tab.');
+  overlay(t, provisioningAgent(agent) ? 'Attaching setup terminal…' : 'Attaching terminal…', provisioningAgent(agent) ? 'Setup continues independently of this tab.' : 'The agent keeps running independently of this tab.');
   const ws = new WebSocket(wsURL(`${terminalWSPath(t.id)}?cols=${t.term.cols}&rows=${t.term.rows}`)); ws.binaryType = 'arraybuffer'; t.ws = ws;
   ws.onopen = () => { if (t.ws !== ws || t.closed) { ws.close(); return; } t.overlay.hidden = true; t.connected.textContent = '● Attached'; t.term.reset(); t.fit.fit(); t.mobileKeys?.update(); ws.send(JSON.stringify({type: 'resize', cols: t.term.cols, rows: t.term.rows})); };
   ws.onmessage = event => { if (t.ws === ws && event.data instanceof ArrayBuffer) t.term.write(new Uint8Array(event.data)); };
@@ -431,8 +481,8 @@ function attachTerminal(t) {
   ws.onclose = () => {
     if (t.closed || t.ws !== ws) return;
     t.connected.textContent = '○ Detached'; t.mobileKeys?.update();
-    if (!agentById(t.id)?.alive) { syncTerminal(t); return; }
-    overlay(t, 'Terminal disconnected.', 'Reattaching in a few seconds. The agent is not stopped by a tab disconnect.', 'Reconnect', () => { disconnectTerminal(t); attachTerminal(t); });
+    if (!terminalAttachable(agentById(t.id))) { syncTerminal(t); return; }
+    overlay(t, 'Terminal disconnected.', 'Reattaching in a few seconds. The agent or setup process is not stopped by a tab disconnect.', 'Reconnect', () => { disconnectTerminal(t); attachTerminal(t); });
     t.timer = setTimeout(() => { t.timer = null; attachTerminal(t); }, 4000);
   };
 }
@@ -605,11 +655,12 @@ $('#meta-compact-toggle').addEventListener('click', () => {
 });
 $('#start-meta-compact').addEventListener('click', startMetaCompaction);
 function updateWakeAvailability() {
-  const running = compactionBlocked(agentById(wakeId));
-  $('[type=submit]', $('#wake-form')).disabled = running;
+  const a = agentById(wakeId), blocked = compactionBlocked(a) || incompleteSetup(a);
+  $('[type=submit]', $('#wake-form')).disabled = blocked;
 }
 function wakeAgent(id) {
   const a = agentById(id); if (!a) return;
+  if (incompleteSetup(a)) { toast(provisioningAgent(a) ? 'Wait for setup to finish before waking this agent.' : 'This agent cannot wake because setup did not complete.', true); return; }
   if (compactionBlocked(a)) { toast('Wait for session compaction to finish before waking this agent.', true); return; }
   wakeId = id; $('#wake-form').reset(); $('#wake-title').textContent = `Wake ${a.name || 'agent'}`; updateWakeAvailability(); showDialog('#wake-dialog');
 }
@@ -709,8 +760,15 @@ $('#create-form').addEventListener('submit', event => {
     if (!data.model) delete data.model;
     if (!data.create_worktree) delete data.branch;
     if (data.create_worktree && (!data.folder || !data.branch.trim())) throw new Error('Choose a Git folder and enter a new branch.');
-    const agent = await api('/api/agents', 'POST', data); $('#create-dialog').close(); form.reset();
-    toast(agent.last_error ? `Agent registered but could not start: ${agent.last_error}` : 'Agent launched.', !!agent.last_error); await refresh();
+    // Capture the selected workspace before awaiting: a late remote response must never mutate a newly selected Swarm.
+    const requestGeneration = stateGeneration, requestSwarm = activeSwarm;
+    const agent = await api('/api/agents', 'POST', data);
+    if (requestGeneration !== stateGeneration || requestSwarm !== activeSwarm) return;
+    $('#create-dialog').close(); form.reset(); dashboardControls.status.reset(); $('#search').value = ''; activate('dashboard');
+    const current = agentById(agent.id);
+    const agents = state.agents.filter(existing => existing.id !== agent.id); agents.push(current || agent);
+    applyState({...state, agents});
+    toast('Agent created; setup is running in its terminal.');
   });
 });
 $('#wake-form').addEventListener('submit', event => {

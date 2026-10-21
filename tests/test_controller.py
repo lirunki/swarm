@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from datetime import timedelta
 from pathlib import Path
@@ -8,11 +9,13 @@ import pytest
 from swarm.adapters import PiAdapter, resume_prompt
 from swarm.controller import Controller
 from swarm.models import Agent, CreateAgent, Status, WakeRequest, now
+from swarm.provisioning import Worker
 from swarm.store import Store
 
 
 class FakeProcesses:
-    def __init__(self):
+    def __init__(self, store=None):
+        self.store = store
         self.running = set()
         self.launches = []
         self.messages = []
@@ -28,6 +31,18 @@ class FakeProcesses:
         self.launches.append((agent, prompt))
         return 4321
 
+    def launch_setup(self, agent):
+        cwd = Path.cwd()
+        try:
+            Worker(self.store, str(agent.id), pi="/bin/echo").run(
+                execute=lambda command, env: self.launch(
+                    self.store.get(agent.id), command[-1]
+                )
+            )
+        finally:
+            os.chdir(cwd)
+        return self.pid(agent)
+
     def send_prompt(self, agent, prompt):
         self.messages.append((agent, prompt))
 
@@ -41,7 +56,12 @@ class FakeProcesses:
 @pytest.fixture
 def ctrl(tmp_path):
     store = Store(tmp_path / "home")
-    return Controller(store, FakeProcesses())
+    return Controller(store, FakeProcesses(store))
+
+
+def finish(ctrl, record):
+    ctrl.tick()
+    return ctrl.store.get(record.id)
 
 
 def add(ctrl, status, **fields):
@@ -240,7 +260,7 @@ def test_real_git_worktree_metadata_and_branch_isolation(ctrl, tmp_path):
         capture_output=True,
     )
     folder = tmp_path / "isolated"
-    agent = ctrl.create(
+    queued = ctrl.create(
         CreateAgent(
             name="Coder",
             goal="Ship",
@@ -250,6 +270,11 @@ def test_real_git_worktree_metadata_and_branch_isolation(ctrl, tmp_path):
             create_worktree=True,
         )
     )
+    assert queued.spawn_state == "provisioning"
+    assert queued.creation["state"] == "queued"
+    assert not folder.exists() and not ctrl.processes.launches
+    agent = finish(ctrl, queued)
+    assert agent.spawn_state == "ready" and agent.creation["state"] == "completed"
     assert agent.branch == "swarm/task" and agent.worktree == str(folder)
     assert agent.repository == str(repo)
     assert (folder / ".git").is_file()
@@ -281,7 +306,7 @@ def test_automatic_worktree_path_creates_sibling_and_sanitizes_branch(ctrl, tmp_
         capture_output=True,
     )
 
-    agent = ctrl.create(
+    queued = ctrl.create(
         CreateAgent(
             name="Sibling coder",
             goal="Ship",
@@ -293,6 +318,8 @@ def test_automatic_worktree_path_creates_sibling_and_sanitizes_branch(ctrl, tmp_
     )
 
     destination = tmp_path / "project_feature_nested"
+    assert not destination.exists()
+    agent = finish(ctrl, queued)
     assert agent.folder == str(destination)
     assert agent.worktree == str(destination)
     assert agent.repository == str(repo)
@@ -303,19 +330,41 @@ def test_automatic_worktree_path_creates_sibling_and_sanitizes_branch(ctrl, tmp_
 def test_automatic_worktree_path_refuses_existing_destination(ctrl, tmp_path):
     repo = tmp_path / "project"
     repo.mkdir()
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+        check=True,
+        capture_output=True,
+    )
     destination = tmp_path / "project_feature"
     destination.mkdir()
-    with pytest.raises(ValueError, match="destination already exists"):
-        ctrl.create(
-            CreateAgent(
-                name="Coder",
-                goal="Ship",
-                folder=str(repo),
-                branch="feature",
-                create_worktree=True,
-                automatic_worktree_path=True,
-            )
+    queued = ctrl.create(
+        CreateAgent(
+            name="Coder",
+            goal="Ship",
+            folder=str(repo),
+            branch="feature",
+            create_worktree=True,
+            automatic_worktree_path=True,
         )
+    )
+    assert queued.creation["state"] == "queued"
+    failed = finish(ctrl, queued)
+    assert failed.spawn_state == "failed" and failed.creation["state"] == "failed"
+    assert "destination already exists" in failed.last_error.lower()
+    assert not ctrl.processes.launches
 
 
 def test_timer_launch_failure_is_not_retried_every_tick(ctrl, monkeypatch):

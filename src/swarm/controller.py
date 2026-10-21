@@ -53,52 +53,102 @@ class Controller:
         self.snapshot_fingerprint = ""
 
     def create(self, request: CreateAgent) -> Agent:
+        # No Git subprocess or Pi launch runs on the request path. Persist intent first.
+        from .provisioning import MAX_QUEUED_SETUPS, is_setup, queued, save_queued
+
         with self.lock:
-            selected_folder = local_path(request.folder)
-            folder = selected_folder
-            if request.create_worktree:
-                if request.automatic_worktree_path:
-                    repo = selected_folder
-                    folder = sibling_worktree_path(selected_folder, request.branch)
-                else:
-                    repo = local_path(request.repository)
-                if not repo.is_dir():
-                    raise ValueError("repository must be an existing local repository folder")
-                if folder.exists() or folder.is_symlink():
-                    raise ValueError(f"worktree destination already exists: {folder}")
-                git(repo, "check-ref-format", "--branch", request.branch)
-                git(repo, "worktree", "add", "-b", request.branch, "--", str(folder))
-            elif not folder.is_dir():
-                raise ValueError("working folder must exist (or select create worktree)")
-            repository, branch, worktree = "", "", ""
-            try:
-                repository, worktree, branch = git_metadata(folder)
-            except (ValueError, FileNotFoundError):
-                pass  # research agents need not be in a Git repository
-            if request.branch and not request.create_worktree and request.branch != branch:
-                raise ValueError(
-                    "requested branch is not checked out in this folder; use a worktree"
-                )
+            if sum(is_setup(a) for a in self.store.scan()) >= MAX_QUEUED_SETUPS:
+                raise ValueError("Too many agents are setting up; wait for a setup to finish")
+            selected = local_path(request.folder)
+            folder = (
+                sibling_worktree_path(selected, request.branch)
+                if (request.create_worktree and request.automatic_worktree_path)
+                else selected
+            )
             agent = Agent(
                 name=request.name,
                 goal=request.goal,
                 folder=str(folder),
-                repository=repository,
-                branch=branch,
-                worktree=worktree,
+                repository=str(
+                    selected if request.automatic_worktree_path else local_path(request.repository)
+                )
+                if request.create_worktree
+                else "",
+                worktree=str(folder) if request.create_worktree else "",
+                branch=request.branch,
                 model=request.model,
                 managed=True,
-                status=Status.running,
             )
-            agent.session_file = str(self.store.sessions_dir / f"{agent.id}.jsonl")
-            self.store.create(agent)
-            # Preserve the record even when pi fails, making the error visible and retryable.
-            self._launch(
+            agent = queued(
                 agent,
+                "create",
+                request.model_dump(mode="json")
+                | {
+                    "folder": str(selected),
+                    "repository": str(local_path(request.repository)) if request.repository else "",
+                },
                 f"Read the swarm skill and your Swarm record. Work toward this goal:\n{agent.goal}",
+                self.store,
             )
-            self.refresh()
-            return self.store.get(agent.id)
+            save_queued(self.store, agent)
+            self.queued_state(agent)
+            return agent
+
+    def queued_state(self, agent: Agent) -> None:
+        """Publish a just-committed card without a fleet-wide tmux/filesystem scan."""
+        entry = agent.model_dump(mode="json") | {
+            "alive": False,
+            "file_count": 0,
+            "files_version": None,
+            "files_error": None,
+        }
+        entries = [a for a in self.state.get("agents", []) if a["id"] != str(agent.id)]
+        self.state = self.state | {
+            "agents": [*entries, entry],
+            "home": str(self.store.home),
+            "errors": self.state.get("errors", {}),
+            "health": self.state.get("health", {}),
+        }
+
+    def start_setup(self, agent: Agent) -> None:
+        from .provisioning import is_setup, mark_failed
+
+        try:
+            agent = self.store.transition(
+                agent.id,
+                lambda current: (
+                    {
+                        "creation": current.creation
+                        | {
+                            "state": "starting",
+                            "stage": "Starting setup terminal…",
+                            "launch_attempts": current.creation.get("launch_attempts", 0) + 1,
+                        },
+                        "activity": "Starting setup terminal…",
+                    }
+                    if is_setup(current)
+                    and current.creation.get("state") in {"queued", "starting"}
+                    and current.auto_resume
+                    and not getattr(current, "stop_pending", False)
+                    else None
+                ),
+            )
+            if agent is None:
+                return
+            pid = self.processes.launch_setup(agent)
+            # The independent worker may already have progressed or failed; never reset its state.
+            self.store.transition(
+                agent.id,
+                lambda current: (
+                    {"pid": pid}
+                    if current.spawn_state == "provisioning"
+                    and not getattr(current, "stop_pending", False)
+                    else None
+                ),
+            )
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            if agent is not None:
+                mark_failed(self.store, str(agent.id), f"Cannot start setup terminal: {exc}")
 
     def _launch(self, agent: Agent, prompt: str | None) -> bool:
         try:
@@ -137,13 +187,18 @@ class Controller:
                     or not agent.managed
                     or not agent.auto_resume
                     or busy(agent)
-                    or agent.spawn_state not in {None, "ready"}
                     or agent.status == Status.done
                 ):
+                    continue
+                from .provisioning import reconcile
+
+                if reconcile(self, agent):
                     continue
                 if scheduled(agent):
                     self.wakes.attempt(agent)
                     continue  # Future timers stay asleep; overdue ones are delivered now.
+                if agent.spawn_state not in {None, "ready"}:
+                    continue
                 if agent.status == Status.dormant:
                     continue
                 if self.processes.alive(agent):
@@ -205,6 +260,8 @@ class Controller:
         with self.lock:
             agent = self.store.get(agent_id)
             require_not_busy(agent)
+            if agent.spawn_state not in {None, "ready"}:
+                raise RuntimeError("Agent setup is incomplete; references cannot be inserted yet")
             if not agent.managed or not self.processes.alive(agent):
                 raise RuntimeError(
                     "Agent is stopped or unmanaged; open/wake it explicitly before Insert"
@@ -236,6 +293,16 @@ class Controller:
                     "child_wait": None,
                     "orchestration_stop": None,
                     "stop_pending": True,
+                    **(
+                        {
+                            "spawn_state": "cancelled",
+                            "activity": "Setup cancelled",
+                            "creation": agent.creation
+                            | {"state": "cancelled", "stage": "Setup cancelled"},
+                        }
+                        if agent.spawn_state == "provisioning" and getattr(agent, "creation", None)
+                        else {}
+                    ),
                 },
             )
             self.processes.stop(agent)
@@ -276,6 +343,10 @@ class Controller:
                         self.stop(str(agent.id))
                     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
                         log.warning("Pending stop failed: %s", exc)
+                    continue
+                from .provisioning import reconcile
+
+                if reconcile(self, agent):
                     continue
                 if self.wakes.attempt(agent):
                     continue

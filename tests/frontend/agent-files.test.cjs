@@ -158,7 +158,7 @@ test('late insert success from a closed workspace cannot navigate or target the 
 
 test('insert availability tracks live managed and busy state, while backend errors advise checking terminal', async () => {
   assert.equal(canInsert(agent), true);
-  for (const update of [{alive: false}, {managed: false}, {stop_pending: true}, {orchestration_stop: {reason: 'parent'}}, {meta_compaction: {status: 'running'}}, {tool_input_compaction: {status: 'running'}}]) {
+  for (const update of [{alive: false}, {managed: false}, {spawn_state: 'provisioning'}, {stop_pending: true}, {orchestration_stop: {reason: 'parent'}}, {meta_compaction: {status: 'running'}}, {tool_input_compaction: {status: 'running'}}]) {
     assert.equal(canInsert({...agent, ...update}), false);
   }
   const t = fixture(async (path, method) => { if (method === 'POST') throw Error('network down'); return {files: [file], revision: 1}; });

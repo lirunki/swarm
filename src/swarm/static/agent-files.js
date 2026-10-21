@@ -40,7 +40,7 @@
   }
   function canInsert(agent) {
     const compacting = agent?.meta_compaction?.status === 'running' || agent?.tool_input_compaction?.status === 'running' || agent?.compaction?.status === 'running' || agent?.compaction === true;
-    return agent?.alive === true && agent?.managed === true && !compacting && !agent.stop_pending && !agent.orchestration_stop;
+    return agent?.alive === true && agent?.managed === true && agent?.spawn_state !== 'provisioning' && !compacting && !agent.stop_pending && !agent.orchestration_stop;
   }
 
   class AgentFilesDialog {

@@ -202,7 +202,14 @@ for line in sys.stdin:
             record = response.json()
             agent_id = record["id"]
             assert not record["last_error"], record
-            agent = app.state.controller.store.get(agent_id)
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                agent = app.state.controller.store.get(agent_id)
+                if agent.spawn_state == "ready" and proc.alive(agent):
+                    break
+                assert not agent.last_error, agent.last_error
+                time.sleep(0.05)
+            assert agent.spawn_state == "ready", agent
             assert proc.alive(agent)
             with client.websocket_connect(f"/ws/terminal/{agent_id}?cols=100&rows=25") as ws:
                 data = b""
@@ -259,7 +266,8 @@ import json, os, sys, uuid
 from pathlib import Path
 from swarm.paths import local_path
 path = local_path(sys.argv[sys.argv.index('--session') + 1])
-path.write_text(json.dumps({'type': 'session', 'version': 3, 'id': str(uuid.uuid4()), 'cwd': os.getcwd()}) + '\\n')
+if not path.exists():
+    path.write_text(json.dumps({'type': 'session', 'version': 3, 'id': str(uuid.uuid4()), 'cwd': os.getcwd()}) + '\\n')
 for line in sys.stdin:
     pass
 """,
@@ -278,10 +286,14 @@ for line in sys.stdin:
             assert not record["last_error"]
             agent = controller.store.get(record["id"])
             path = controller.store.sessions_dir / f"{agent.id}.jsonl"
-            for _ in range(100):
-                if path.exists() and path.stat().st_size:
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                agent = controller.store.get(agent.id)
+                if agent.spawn_state == "ready" and path.exists() and path.stat().st_size:
                     break
-                time.sleep(0.01)
+                assert not agent.last_error, agent.last_error
+                time.sleep(0.05)
+            assert agent.spawn_state == "ready", agent
             original = path.read_bytes()
             assert client.delete(f"/api/agents/{agent.id}").status_code == 409
             assert processes.alive(agent)

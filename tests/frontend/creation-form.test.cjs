@@ -19,6 +19,27 @@ test('new-agent form uses discovered model and folder selectors', () => {
   assert.match(source, /new Set\(state\.agents\.map\(agent => agent\.folder\)/);
 });
 
+test('create response is rendered immediately without retrying or crossing workspaces', () => {
+  assert.match(source, /const requestGeneration = stateGeneration, requestSwarm = activeSwarm/);
+  assert.match(source, /requestGeneration !== stateGeneration \|\| requestSwarm !== activeSwarm/);
+  assert.match(source, /applyState\(\{\.\.\.state, agents\}\)/);
+  assert.match(source, /activate\('dashboard'\)/);
+  assert.match(source, /Agent created; setup is running in its terminal\./);
+  const handler = source.slice(source.indexOf("$('#create-form').addEventListener"), source.indexOf("$('#wake-form').addEventListener"));
+  assert.equal((handler.match(/api\('\/api\/agents', 'POST'/g) || []).length, 1);
+  assert.doesNotMatch(handler, /await refresh\(\)/);
+});
+
+test('non-JSON server failures explain uncertainty instead of suggesting a blind retry', async () => {
+  const start = source.indexOf('function nonJsonResponseError('), end = source.indexOf('\nconst agentById', start);
+  const context = vm.createContext({
+    fetch: async () => ({status: 500, ok: false, json: async () => { throw Error('not json'); }}),
+    apiPath: value => value,
+  });
+  vm.runInContext(source.slice(start, end), context);
+  await assert.rejects(context.localApi('/api/test', 'POST', {}), /Server error 500; check backend logs.*outcome unknown.*check the card before retrying/i);
+});
+
 test('worktree destination is a sanitized sibling while branch remains unchanged', () => {
   const start = source.indexOf('function siblingWorktreePath(');
   const end = source.indexOf('\nfunction updateWorktreeCreateFields()', start);
