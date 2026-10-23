@@ -9,6 +9,25 @@ You are one worker in a swarm. Read your existing record at `$SWARM_AGENT_FILE`
 (or `$SWARM_HOME/agents/$SWARM_AGENT_ID.md`; home defaults to `~/.swarm`).
 Do not create a new identity or overwrite another agent's record.
 
+## Companion workflows
+
+This canonical skill is the single launch-time entry point for Swarm workflows. Companion
+instructions live beside this file rather than in Pi's global user-skill directory. Resolve the
+skill directory from `dirname "$SWARM_SKILL"`, then use the file reader to load the relevant
+companion **before** acting when a task matches:
+
+- **PR monitoring/caretaking:** read sibling `pr-monitor.md` when asked to monitor, watch,
+  caretake, or wait on a GitHub Enterprise or Azure DevOps One pull request, its CI, review
+  feedback, or clean completion. Use its blocking scripts instead of LLM polling.
+- **Geneva/IcM monitor authoring:** read sibling `geneva-monitor/SKILL.md` when asked to
+  propose, create, update, or verify a Lobster Geneva/MDM metric monitor or IcM routing. Its
+  `references/` paths resolve relative to the `geneva-monitor` directory. Proposal-only work
+  makes no writes, and enabling paging requires explicit authorization.
+
+These companions are referenced instructions, not separately discovered `/skill:*` commands.
+Do not look for or copy them under `~/.pi/agent/skills`. If this canonical file changes during
+an active Pi session, `/reload` refreshes it; then read the matching companion when needed.
+
 ## Report before working, on activity transitions, and before ending every turn
 
 Use the Python interpreter supplied by Swarm. It has the reporting tool installed:

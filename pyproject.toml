@@ -22,12 +22,15 @@ dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.9"]
 
 [project.scripts]
 swarm = "swarm.entrypoint:main"
+swarm-pr-monitor = "swarm.pr_monitor:main"
+swarm-pr-monitor-ghe = "swarm.pr_monitor:main"
+swarm-pr-monitor-one = "swarm.ado_pr_monitor:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-swarm = ["static/*", "static/vendor/*", "skills/*.md"]
+swarm = ["static/*", "static/vendor/*", "skills/*.md", "skills/**/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

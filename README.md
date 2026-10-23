@@ -1167,11 +1167,42 @@ next retry; this metadata is also in the agent Markdown and `/api/state`.
   do not automatically replay raw input. Compaction work is reconciled on restart,
   not blindly repeated with additional model charges.
 
-## Agent communication skill
+## Blocking pull-request monitor
 
-Canonical skill: [`src/swarm/skills/swarm.md`](src/swarm/skills/swarm.md).
-Swarm explicitly loads it via `pi --skill` and tells agents to read it. It explains
-reporting, all statuses, checkpoints, durable waiting/dormant timers, and safe recovery.
+Editable/package installation provides two read-only PR watchers intended for agent shell calls:
+`swarm-pr-monitor-ghe` for GitHub Enterprise (also available as `swarm-pr-monitor`) and
+`swarm-pr-monitor-one` for Azure DevOps One. They poll outside model context and block until CI
+fails, blocking review feedback appears, observed CI settles green, the PR merges/completes, or
+the local deadline expires. This avoids paying for repeated unchanged polling turns.
+
+```bash
+swarm-pr-monitor-ghe https://microsoft.ghe.com/bic/lobster/pull/22065 \
+  --timeout 3600 --interval 30 --settle 30 \
+  --ci-output /tmp/pr22065-ci.md --feedback-output /tmp/pr22065-feedback.md
+
+swarm-pr-monitor-one \
+  https://msazure.visualstudio.com/One/_git/AAD-FirstPartyApps/pullrequest/17640047 \
+  --timeout 3600 --interval 30 --settle 30 \
+  --ci-output /tmp/pr17640047-ci.md --feedback-output /tmp/pr17640047-feedback.md
+```
+
+The command atomically writes separate CI and review-feedback Markdown reports. Exit `0` means
+all green/merged; `10` means CI failures; `11` blocking feedback; `12` both; `20` timeout; and
+`21` repeated query errors. Codes `10`–`20` are expected monitor outcomes. Read both output files
+after the command returns. GHE authentication comes from `gh`; One authentication comes from
+`az devops` and its `azure-devops` extension.
+See [`src/swarm/skills/pr-monitor.md`](src/swarm/skills/pr-monitor.md) for the complete agent
+workflow, exact semantics and safety rules.
+
+## Agent communication skills
+
+Canonical coordination skill: [`src/swarm/skills/swarm.md`](src/swarm/skills/swarm.md).
+Swarm explicitly loads only this entry point via `pi --skill` and tells agents to read it. It
+explains reporting, all statuses, checkpoints, durable waiting/dormant timers, and safe recovery,
+and routes matching tasks to repository companions such as
+[`pr-monitor.md`](src/swarm/skills/pr-monitor.md) and
+[`geneva-monitor/SKILL.md`](src/swarm/skills/geneva-monitor/SKILL.md). The companions are not
+copied into Pi's global user-skill directory or separately injected on the command line.
 Agents must report **waiting before asking a question**, including before blocking
 question/confirmation tools, and return to **running** when the answer arrives.
 
