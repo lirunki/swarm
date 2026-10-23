@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
 import subprocess
 import sys
 import time
+from collections import deque
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -43,7 +45,72 @@ from .tool_inputs import RevertToolInputsRequest, ToolInputCompactor
 from .uploads import MAX_CHUNK_BODY, UploadChunk, UploadRequest, Uploads
 
 log = logging.getLogger(__name__)
+client_log = logging.getLogger("uvicorn.error")
 STATIC = Path(__file__).parent / "static"
+
+
+class ClientIPAllowlistMiddleware:
+    """Filter by direct peer IP and log newly observed peer endpoints."""
+
+    def __init__(self, app, allowed_ips: list[str]):
+        self.app = app
+        self.allowed_ips = {ipaddress.ip_address(value) for value in allowed_ips}
+        self._logged_peers: set[tuple[str, int | None]] = set()
+        self._peer_order: deque[tuple[str, int | None]] = deque()
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in {"http", "websocket"}:
+            client = scope.get("client")
+            try:
+                address = ipaddress.ip_address(client[0]) if client else None
+            except ValueError:
+                address = None
+            if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+                address = address.ipv4_mapped
+            raw_port = (
+                client[1]
+                if client and len(client) > 1 and isinstance(client[1], int)
+                else None
+            )
+            peer = (str(address) if address else "unknown", raw_port)
+            peer_label = (
+                f"[{peer[0]}]:{peer[1]}" if ":" in peer[0] else f"{peer[0]}:{peer[1]}"
+            )
+            if peer not in self._logged_peers:
+                if len(self._peer_order) >= 1024:
+                    self._logged_peers.discard(self._peer_order.popleft())
+                self._peer_order.append(peer)
+                self._logged_peers.add(peer)
+                if address in self.allowed_ips:
+                    client_log.info("Accepted new IP-allowlisted client %s", peer_label)
+                else:
+                    client_log.warning(
+                        "Rejected new client %s: IP is not allowlisted", peer_label
+                    )
+            if address not in self.allowed_ips:
+                if scope["type"] == "websocket":
+                    await send(
+                        {
+                            "type": "websocket.close",
+                            "code": 1008,
+                            "reason": "client IP is not allowed",
+                        }
+                    )
+                else:
+                    body = b"client IP is not allowed"
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": 403,
+                            "headers": [
+                                (b"content-type", b"text/plain; charset=utf-8"),
+                                (b"content-length", str(len(body)).encode()),
+                            ],
+                        }
+                    )
+                    await send({"type": "http.response.body", "body": body})
+                return
+        await self.app(scope, receive, send)
 
 
 def same_origin(headers) -> bool:
@@ -77,6 +144,7 @@ def create_app(
     restart_action: Callable[[], None] = restart_process,
     federation_config: FederationConfig | None = None,
     password_file: Path | None = None,
+    allowed_client_ips: list[str] | None = None,
 ) -> FastAPI:
     store = Store(home)
     access = BrowserAccess(store.home, password_file)
@@ -159,6 +227,8 @@ def create_app(
     )
 
     app.add_middleware(BrowserAuthMiddleware, access=access)
+    if allowed_client_ips:
+        app.add_middleware(ClientIPAllowlistMiddleware, allowed_ips=allowed_client_ips)
 
     @app.middleware("http")
     async def secure_local_access(request: Request, call_next):

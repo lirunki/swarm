@@ -42,11 +42,18 @@ all IPv4 interfaces for access from another machine:
 ```bash
 swarm serve --host 0.0.0.0
 swarm serve --host 0.0.0.0 --port 8788 --open
+# Restrict network mode to one or more exact client IPs (repeat the option):
+swarm serve --host 0.0.0.0 --allow-ip 192.168.1.25 --allow-ip 2001:db8::25
 ```
 
 Remote clients use `http://<server-ip>:<port>`; `--open` still opens the local
 `127.0.0.1` URL. In this opt-in network mode, Host headers are unrestricted so
 LAN IP addresses/hostnames work; browser same-origin checks remain enabled.
+Repeat `--allow-ip IP` to reject HTTP and WebSocket requests from every other
+client IP; these are exact addresses, not CIDR ranges. The filter uses the direct
+socket peer address (forwarded proxy headers are ignored when it is enabled).
+New peer endpoints are logged as accepted (`INFO`) or rejected (`WARNING`); repeat
+requests on the same peer endpoint do not generate duplicate allowlist logs.
 Loopback mode retains its strict Host checks. Network mode also removes the
 default Host-based DNS-rebinding protection; same-origin checks are not authentication.
 

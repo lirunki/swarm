@@ -1,5 +1,7 @@
 """Opt-in network mode tests; Uvicorn is mocked so no network port is exposed."""
 
+import asyncio
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -56,6 +58,104 @@ def test_cli_binding_browser_url_and_host_policy(
         assert "no authentication" in output.err and "never expose it publicly" in output.err
     else:
         assert not output.err
+
+
+def test_cli_ip_allowlist_is_passed_to_app_and_disables_proxy_headers(tmp_path, monkeypatch, capsys):
+    captured = {}
+    monkeypatch.setattr(
+        server,
+        "create_app",
+        lambda home, **kwargs: captured.setdefault("factory", kwargs),
+    )
+    monkeypatch.setattr(
+        uvicorn, "run", lambda app, **kwargs: captured.setdefault("run", kwargs)
+    )
+    monkeypatch.setattr(cli.webbrowser, "open", lambda _: None)
+
+    cli.main(
+        [
+            "--home",
+            str(tmp_path),
+            "serve",
+            "--host",
+            "0.0.0.0",
+            "--allow-ip",
+            "192.0.2.10",
+            "--allowed-ip",
+            "2001:db8::10",
+            "--allow-ip",
+            "192.0.2.10",
+        ]
+    )
+
+    assert captured["factory"]["allowed_client_ips"] == ["192.0.2.10", "2001:db8::10"]
+    assert captured["run"]["proxy_headers"] is False
+    assert "Client IP allowlist: 192.0.2.10, 2001:db8::10" in capsys.readouterr().out
+
+
+def test_cli_rejects_invalid_ip_allowlist_entry():
+    with pytest.raises(SystemExit):
+        cli.parser().parse_args(["serve", "--allow-ip", "not-an-ip"])
+
+
+def test_ip_allowlist_logs_each_new_peer_once(caplog):
+    async def exercise():
+        async def app(scope, receive, send):
+            pass
+
+        middleware = server.ClientIPAllowlistMiddleware(app, ["192.0.2.10"])
+
+        async def call(peer):
+            async def send(event):
+                pass
+
+            await middleware({"type": "http", "client": peer}, lambda: None, send)
+
+        await call(("192.0.2.10", 60000))
+        await call(("192.0.2.10", 60000))
+        await call(("192.0.2.10", 60001))
+        await call(("192.0.2.11", 60002))
+        await call(("192.0.2.11", 60002))
+
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+    asyncio.run(exercise())
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages.count("Accepted new IP-allowlisted client 192.0.2.10:60000") == 1
+    assert messages.count("Accepted new IP-allowlisted client 192.0.2.10:60001") == 1
+    assert messages.count("Rejected new client 192.0.2.11:60002: IP is not allowlisted") == 1
+
+
+def test_ip_allowlist_blocks_http_and_websocket_before_app_dispatch():
+    async def exercise():
+        dispatched = []
+
+        async def app(scope, receive, send):
+            dispatched.append(scope["type"])
+
+        middleware = server.ClientIPAllowlistMiddleware(
+            app, ["192.0.2.10", "2001:db8::10"]
+        )
+
+        async def call(scope):
+            events = []
+
+            async def send(event):
+                events.append(event)
+
+            await middleware(scope, lambda: None, send)
+            return events
+
+        blocked = await call({"type": "http", "client": ("192.0.2.11", 1234)})
+        assert blocked[0]["type"] == "http.response.start"
+        assert blocked[0]["status"] == 403
+        blocked_ws = await call({"type": "websocket", "client": ("192.0.2.11", 1234)})
+        assert blocked_ws[0]["type"] == "websocket.close"
+        await call({"type": "http", "client": ("::ffff:192.0.2.10", 1234)})
+        await call({"type": "websocket", "client": ("2001:db8::10", 1234)})
+        assert dispatched == ["http", "websocket"]
+
+    asyncio.run(exercise())
 
 
 def test_cli_still_rejects_unsupported_bind_addresses():

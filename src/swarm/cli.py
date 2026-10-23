@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import re
@@ -111,6 +112,15 @@ def parser() -> argparse.ArgumentParser:
         help="bind address (default: 127.0.0.1; 0.0.0.0 exposes unauthenticated network access)",
     )
     serve.add_argument("--port", type=int, default=8787)
+    serve.add_argument(
+        "--allow-ip",
+        "--allowed-ip",
+        action="append",
+        type=_ip_address_argument,
+        dest="allowed_ips",
+        metavar="IP",
+        help="allow only this client IP in network mode (repeat for each IP)",
+    )
     serve.add_argument(
         "--password-file",
         type=Path,
@@ -357,6 +367,16 @@ def run_agent_command(args: argparse.Namespace) -> dict:
     raise ValueError("unknown agent command")
 
 
+def _ip_address_argument(value: str) -> str:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid IP address: {value}") from exc
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return str(address)
+
+
 def _secret(path: Path | None, environment: str) -> str:
     if path:
         try:
@@ -473,6 +493,9 @@ def main(argv: list[str] | None = None) -> None:
                 raise ValueError("relay node/key/restart options require --relay-url")
 
             network = args.host == "0.0.0.0"
+            allowed_ips = list(dict.fromkeys(args.allowed_ips or []))
+            if allowed_ips and not network:
+                raise ValueError("--allow-ip requires --host 0.0.0.0")
             browser_host = (
                 "127.0.0.1" if network else ("[::1]" if args.host == "::1" else args.host)
             )
@@ -498,6 +521,8 @@ def main(argv: list[str] | None = None) -> None:
             )
             if network:
                 print(f"Listening on 0.0.0.0:{args.port} (all IPv4 interfaces).", flush=True)
+                if allowed_ips:
+                    print(f"Client IP allowlist: {', '.join(allowed_ips)}", flush=True)
                 print(
                     (
                         "WARNING: Browser password authentication is enabled. Network mode allows any "
@@ -523,6 +548,7 @@ def main(argv: list[str] | None = None) -> None:
                     session_roots=args.pi_sessions_dir,
                     grok_session_roots=args.grok_sessions_dir,
                     allowed_hosts=["*"] if network else None,
+                    allowed_client_ips=allowed_ips or None,
                     api_url=url,
                     federation_config=federation_config,
                     password_file=local_path(args.password_file) if args.password_file else None,
@@ -531,6 +557,7 @@ def main(argv: list[str] | None = None) -> None:
                 port=args.port,
                 workers=1,
                 ws_max_size=262144,
+                proxy_headers=not bool(allowed_ips),
                 **tls,
             )
         elif args.command == "list":
