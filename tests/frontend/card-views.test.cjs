@@ -555,6 +555,15 @@ test('terminal toolbar keeps reconnect but removes redundant Wake and Close tab'
   a.file_count = 0; context.syncTerminal(t);
   assert.equal(t.filesButton.classList.contains('has-files'), false);
   assert.equal(t.filesButton.textContent, 'Files');
+  t.tab.classList.toggle('active', true);
+  Object.assign(context.labels, {waiting: 'Waiting for input', dormant: 'Dormant', idle: 'Idle', done: 'Done'});
+  for (const status of ['running', 'waiting', 'dormant', 'idle', 'done']) {
+    a.status = status; context.syncTerminal(t);
+    assert.equal(t.group.dataset.status, status);
+    assert.equal(t.tab.getAttribute('aria-label'), `${a.name} · ${context.labels[status]}`);
+    assert.equal(t.tab.classList.contains('active'), true);
+  }
+  a.status = 'running'; context.syncTerminal(t);
   assert.equal(find(t.group, 'tab-close').getAttribute('aria-label'), 'Close terminal tab');
   find(t.group, 'tab-close').click(); assert.ok(calls.some(c => c[0] === 'close' && c[1] === a.id));
   a.alive = false; context.syncTerminal(t);
@@ -617,4 +626,26 @@ test('expanded cards show persistent timer delivery and retry details', () => {
   assert.match(visibleText(render(a)), /Wake delivery.*Paused/);
   a.wake_delivery.state = 'delivered'; a.wake_at = null;
   assert.match(visibleText(render(a)), /Handed to agent process/);
+});
+
+
+test('tab activation marks only the selected title current, including pinned Dashboard', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
+  const elements = new Map(['#dashboard', '#terminals', '#dashboard-tab'].map(key => [key, new Element('div')]));
+  const terminals = new Map(['a', 'b'].map(id => [id, {pane: new Element('div'), tab: new Element('button'), group: new Element('span')}]));
+  const context = vm.createContext({activeTab: 'dashboard', terminals, $: key => elements.get(key), initTerminal() {}, requestAnimationFrame: callback => callback(), remember() {}});
+  vm.runInContext(source.slice(source.indexOf('function activate('), source.indexOf('function openTerminal(')), context);
+  context.activate('b');
+  assert.equal(elements.get('#dashboard-tab').getAttribute('aria-current'), 'false');
+  assert.equal(terminals.get('a').tab.getAttribute('aria-current'), 'false');
+  assert.equal(terminals.get('b').tab.getAttribute('aria-current'), 'page');
+  assert.equal(terminals.get('b').tab.classList.contains('active'), true);
+  context.activate('dashboard');
+  assert.equal(elements.get('#dashboard-tab').getAttribute('aria-current'), 'page');
+  assert.equal(elements.get('#dashboard').hidden, false);
+  for (const terminal of terminals.values()) {
+    assert.equal(terminal.pane.hidden, true);
+    assert.equal(terminal.tab.classList.contains('active'), false);
+    assert.equal(terminal.tab.getAttribute('aria-current'), 'false');
+  }
 });

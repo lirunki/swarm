@@ -45,11 +45,12 @@
   }
 
   class TerminalKeys {
-    constructor({term, pane, isActive, ready, send, document = pane.ownerDocument, media}) {
-      Object.assign(this, {term, pane, isActive, ready, send, document}); this.view = document.defaultView || root;
+    constructor({term, pane, isActive, ready, send, onKeyboardHidden = () => {}, document = pane.ownerDocument, media}) {
+      Object.assign(this, {term, pane, isActive, ready, send, onKeyboardHidden, document}); this.view = document.defaultView || root;
       this.media = media || this.view.matchMedia?.('(hover: none) and (pointer: coarse)') || {matches: false};
       this.ctrl = false; this.alt = false; this.visible = false; this.disposed = false; this.listeners = [];
       this.originalBottom = pane.style.bottom || ''; this.reserved = false;
+      this.keyboardOpen = false; this.hideTimer = null; this.keyboardWidth = null; this.keyboardGeometry = null;
       this.bar = document.createElement('div'); this.bar.className = 'terminal-keybar'; this.bar.hidden = true;
       this.bar.setAttribute('role', 'toolbar'); this.bar.setAttribute('aria-label', 'Mobile terminal keyboard');
       this.bar.title = 'Ctrl and Alt apply once to the next key';
@@ -103,9 +104,38 @@
       }
     }
 
+    cancelKeyboardHide() {
+      if (this.hideTimer !== null) { this.view.clearTimeout(this.hideTimer); this.hideTimer = null; }
+    }
+
+    trackKeyboard(geometry) {
+      const width = this.view.innerWidth || this.document.documentElement.clientWidth;
+      const rotated = this.keyboardWidth !== null && Math.abs(width - this.keyboardWidth) > 50;
+      this.keyboardWidth = width;
+      const signature = [geometry.visible, geometry.top, geometry.bottom, geometry.left, geometry.width, this.view.innerHeight, this.document.documentElement.clientHeight].join(':');
+      const moved = signature !== this.keyboardGeometry; this.keyboardGeometry = signature;
+      if (!this.media.matches || this.document.hidden || !this.isActive() || !this.ready() || rotated) {
+        this.keyboardOpen = false; this.cancelKeyboardHide(); return;
+      }
+      if (geometry.visible) {
+        // Focus can leave the textarea before the keyboard's closing animation finishes.
+        this.keyboardOpen = this.keyboardOpen || this.hideTimer !== null || this.focused();
+        this.cancelKeyboardHide(); return;
+      }
+      // Ordinary state/focus updates must not postpone an already-scheduled hide.
+      if (!this.keyboardOpen && (this.hideTimer === null || !moved)) return;
+      this.keyboardOpen = false; this.cancelKeyboardHide();
+      // Wait for viewport/keyboard animation events to settle before reattaching tmux.
+      this.hideTimer = this.view.setTimeout(() => {
+        this.hideTimer = null;
+        if (!this.disposed && this.media.matches && !this.document.hidden && this.isActive() && this.ready() && !metrics(this.view, this.document).visible) this.onKeyboardHidden();
+      }, 250);
+    }
+
     update() {
       if (this.disposed) return;
       const geometry = metrics(this.view, this.document);
+      this.trackKeyboard(geometry);
       this.visible = !!this.media.matches && !this.document.hidden && this.isActive() && this.focused() && geometry.visible;
       this.bar.hidden = !this.visible;
       const ready = this.visible && this.ready();
@@ -151,7 +181,7 @@
     }
 
     dispose() {
-      this.disposed = true; this.visible = false; this.clearModifiers();
+      this.disposed = true; this.visible = false; this.keyboardOpen = false; this.cancelKeyboardHide(); this.clearModifiers();
       for (const [target, name, callback, options] of this.listeners) target.removeEventListener(name, callback, options);
       if (this.legacyMedia) this.media.removeListener?.(this.legacyMedia);
       this.listeners = []; if (this.reserved) this.pane.style.bottom = this.originalBottom;

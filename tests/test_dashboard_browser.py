@@ -780,10 +780,10 @@ def test_mobile_terminal_keys_follow_keyboard_geometry_and_preserve_focus(
                 Object.defineProperties(viewport, {height: {get: () => innerHeight - keyboard}, width: {get: () => innerWidth}, scale: {value: 1}, offsetTop: {value: 0}, offsetLeft: {value: 0}});
                 Object.defineProperty(window, 'visualViewport', {value: viewport, configurable: true});
                 window.testKeyboard = height => { keyboard = height; viewport.dispatchEvent(new Event('resize')); };
-                window.sentFrames = [];
+                window.sentFrames = []; window.terminalConnections = 0;
                 window.WebSocket = class {
                     static OPEN = 1;
-                    constructor(url) { this.readyState = 1; setTimeout(() => { this.onopen?.(); if (url.includes('/terminal/')) this.onmessage?.({data: new TextEncoder().encode('\\x1b[?1hLIVE TERMINAL').buffer}); }, 0); }
+                    constructor(url) { this.readyState = 1; if (url.includes('/terminal/')) window.terminalConnections++; setTimeout(() => { this.onopen?.(); if (url.includes('/terminal/')) this.onmessage?.({data: new TextEncoder().encode('\\x1b[?1hLIVE TERMINAL').buffer}); }, 0); }
                     close() { this.readyState = 3; }
                     send(raw) { window.sentFrames.push(JSON.parse(raw)); }
                 };
@@ -809,6 +809,9 @@ def test_mobile_terminal_keys_follow_keyboard_geometry_and_preserve_focus(
             if not mobile:
                 playwright.expect(bar).to_be_hidden()
                 assert page.evaluate("terminals.get('a0').pane.style.bottom") == ""
+                page.evaluate("testKeyboard(0)")
+                page.wait_for_timeout(350)
+                assert page.evaluate("window.terminalConnections") == 1
             else:
                 playwright.expect(bar).to_be_visible()
                 assert bar.locator("button").all_text_contents() == [
@@ -892,6 +895,8 @@ def test_mobile_terminal_keys_follow_keyboard_geometry_and_preserve_focus(
                 bar.locator('[data-key="ctrl"]').tap()
                 page.evaluate("testKeyboard(0)")
                 playwright.expect(bar).to_be_hidden()
+                page.wait_for_function("window.terminalConnections === 2")
+                assert page.evaluate("terminals.get('a0').pane.style.bottom") == ""
                 page.evaluate("testKeyboard(350)")
                 playwright.expect(bar).to_be_visible()
                 playwright.expect(bar.locator('[data-key="ctrl"]')).to_have_attribute(
@@ -899,11 +904,17 @@ def test_mobile_terminal_keys_follow_keyboard_geometry_and_preserve_focus(
                 )
                 page.locator(".terminal-copy-button").click()
                 playwright.expect(bar).to_be_hidden()
+                page.evaluate("testKeyboard(0)")
+                page.wait_for_timeout(350)
+                assert page.evaluate("window.terminalConnections") == 2
                 page.locator(".terminal-copy-button").click()
-                page.evaluate("terminals.get('a0').term.focus()")
+                page.evaluate("terminals.get('a0').term.focus(); testKeyboard(350)")
                 playwright.expect(bar).to_be_visible()
                 page.locator("#dashboard-tab").click()
                 playwright.expect(bar).to_be_hidden()
+                page.evaluate("testKeyboard(0)")
+                page.wait_for_timeout(350)
+                assert page.evaluate("window.terminalConnections") == 2
                 assert page.evaluate("document.body.scrollWidth <= innerWidth")
             assert not errors
         finally:
@@ -1001,6 +1012,101 @@ def test_background_creation_stages_fit_compact_tiles_and_terminal_overlay(
             card.get_by_role("button", name="Terminal ↗", exact=True).click()
             playwright.expect(page.locator(".terminal-overlay")).to_contain_text("Setup failed")
             assert not page.locator(".terminal-overlay button:visible").count()
+            assert page.evaluate("document.body.scrollWidth <= innerWidth")
+            assert not errors
+        finally:
+            browser.close()
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_workspace_tabs_pin_dashboard_show_status_and_frame_active_title(static_url, width):
+    state = fixture_state()
+    palette = {
+        "running": "rgb(104, 216, 174)",
+        "waiting": "rgb(243, 201, 107)",
+        "dormant": "rgb(179, 154, 236)",
+        "idle": "rgb(145, 161, 184)",
+        "done": "rgb(126, 182, 246)",
+    }
+    for index, agent in enumerate(state["agents"]):
+        agent["status"] = list(palette)[index % len(palette)]
+        agent["alive"] = False
+    with playwright.sync_playwright() as runner:
+        try:
+            browser = runner.chromium.launch(headless=True)
+        except playwright.Error as exc:
+            if "Executable doesn't exist" in str(
+                exc
+            ) or "error while loading shared libraries" in str(exc):
+                pytest.skip("Optional Chromium runtime unavailable")
+            raise
+        try:
+            page = browser.new_page(
+                viewport={"width": width, "height": 1000},
+                has_touch=width == 390,
+                is_mobile=width == 390,
+            )
+            errors = []
+            page.on("pageerror", lambda exc: errors.append(str(exc)))
+            page.add_init_script("""window.WebSocket = class {
+                static OPEN = 1;
+                constructor() { this.readyState = 1; setTimeout(() => this.onopen?.(), 0); }
+                close() { this.readyState = 3; } send() {}
+            };""")
+            page.route(
+                "**/api/**",
+                lambda route: route.fulfill(
+                    content_type="application/json", body=json.dumps(state)
+                ),
+            )
+            page.goto(static_url)
+            playwright.expect(page.locator(".agent-card")).to_have_count(18)
+            page.evaluate(
+                "ids => ids.forEach(id => openTerminal(id, false))",
+                [agent["id"] for agent in state["agents"]],
+            )
+            tabs = page.locator("#tabs")
+            dashboard = page.locator("#dashboard-tab")
+            groups = page.locator(".tab-group")
+            playwright.expect(groups).to_have_count(18)
+            for index, status in enumerate(palette):
+                playwright.expect(groups.nth(index).locator(".tab-label")).to_have_css(
+                    "color", palette[status]
+                )
+                playwright.expect(groups.nth(index).locator(".tab-close")).to_have_css(
+                    "color", palette[status]
+                )
+            assert tabs.evaluate("e => e.scrollWidth > e.clientWidth")
+            tabs.evaluate("e => { e.scrollLeft = e.scrollWidth; }")
+            assert tabs.evaluate("e => e.scrollLeft > 0")
+            box, nav = dashboard.bounding_box(), tabs.bounding_box()
+            assert nav["x"] <= box["x"] and box["x"] + box["width"] <= nav["x"] + nav["width"]
+            assert dashboard.evaluate(
+                "e => { const r=e.getBoundingClientRect(); return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2) === e; }"
+            )
+
+            page.evaluate("activate('a17')")
+            active = groups.nth(17).locator(".tab")
+            playwright.expect(active).to_have_attribute("aria-current", "page")
+            playwright.expect(active.locator(".tab-label")).to_have_css(
+                "color", palette[state["agents"][17]["status"]]
+            )
+            frame = active.evaluate(
+                "e => { const s=getComputedStyle(e,'::after'); return [s.borderTopColor,s.borderTopWidth,s.borderRightWidth,s.borderBottomWidth,s.borderLeftWidth,s.pointerEvents]; }"
+            )
+            assert frame == ["rgb(255, 161, 106)", "1px", "1px", "1px", "1px", "none"]
+            assert page.locator(".tab.active").count() == 1
+            state["agents"][17]["status"] = "waiting"
+            page.evaluate("data => applyState(data)", state)
+            playwright.expect(active.locator(".tab-label")).to_have_css("color", palette["waiting"])
+            playwright.expect(active).to_have_attribute(
+                "aria-label", "Agent 17 · Waiting for input"
+            )
+            dashboard.click()
+            playwright.expect(dashboard).to_have_attribute("aria-current", "page")
+            playwright.expect(active).to_have_attribute("aria-current", "false")
+            playwright.expect(page.locator("#dashboard")).to_be_visible()
+            assert dashboard.evaluate("e => getComputedStyle(e,'::after').borderTopWidth") == "1px"
             assert page.evaluate("document.body.scrollWidth <= innerWidth")
             assert not errors
         finally:

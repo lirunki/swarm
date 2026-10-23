@@ -305,6 +305,22 @@ while True:
                     b"\x03"
                 )  # Raw fixture proves Ctrl+C bytes without signaling a real agent.
                 assert processes.pid(agent) == pid and processes.alive(agent)
+                page.evaluate(
+                    "id => { window.beforeHideSocket = terminals.get(id).ws; testKeyboard(0); }",
+                    str(agent.id),
+                )
+                playwright.expect(bar).to_be_hidden()
+                page.wait_for_function(
+                    "id => terminals.get(id).ws !== window.beforeHideSocket && terminals.get(id).ws?.readyState === 1",
+                    arg=str(agent.id),
+                )
+                assert processes.pid(agent) == pid and processes.alive(agent)
+                assert received.read_bytes() == expected  # Reattach never submits input.
+                page.evaluate("id => window.afterHideSocket = terminals.get(id).ws", str(agent.id))
+                page.wait_for_timeout(350)
+                assert page.evaluate(
+                    "id => terminals.get(id).ws === window.afterHideSocket", str(agent.id)
+                )
                 page.get_by_role("button", name="Close terminal tab").click()
                 assert not page.locator(".terminal-keybar").count()
                 assert processes.alive(agent)

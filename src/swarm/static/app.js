@@ -391,8 +391,10 @@ function activate(id) {
   activeTab = id && terminals.has(id) ? id : 'dashboard';
   $('#dashboard').hidden = activeTab !== 'dashboard'; $('#terminals').hidden = activeTab === 'dashboard';
   $('#dashboard-tab').classList.toggle('active', activeTab === 'dashboard');
+  $('#dashboard-tab').setAttribute('aria-current', activeTab === 'dashboard' ? 'page' : 'false');
   for (const [key, t] of terminals) {
     t.pane.hidden = key !== activeTab; t.tab.classList.toggle('active', key === activeTab); t.group.classList.toggle('active', key === activeTab);
+    t.tab.setAttribute('aria-current', key === activeTab ? 'page' : 'false');
     t.mobileKeys?.update();
     if (key === activeTab) { initTerminal(t); requestAnimationFrame(() => { t.fit?.fit(); if (!t.copyText?.active) t.term?.focus(); }); }
   } remember();
@@ -434,9 +436,13 @@ function initTerminal(t) {
     onClose: focus => { if (focus && !t.closed && !t.pane.hidden) t.copyButton.focus({preventScroll: true}); },
   });
   t.mobileKeys = new SwarmTerminalKeys.TerminalKeys({term: t.term, pane: t.pane,
-    isActive: () => !t.closed && !t.pane.hidden && !t.copyText?.active && terminalAttachable(agentById(t.id)),
+    isActive: () => !t.closed && !t.pane.hidden && !t.copyText?.active && !$('dialog[open]') && terminalAttachable(agentById(t.id)),
     ready: () => t.ws?.readyState === WebSocket.OPEN,
     send: data => t.term.input(data, true),
+    onKeyboardHidden: () => {
+      if (t.closed || t.pane.hidden || t.copyText?.active || $('dialog[open]') || t.ws?.readyState !== WebSocket.OPEN || !terminalAttachable(agentById(t.id))) return;
+      t.fit?.fit(); disconnectTerminal(t); attachTerminal(t);
+    },
   });
   t.observer = new ResizeObserver(() => { if (!t.pane.hidden) t.fit?.fit(); }); t.observer.observe(t.screen);
   attachTerminal(t);
@@ -453,6 +459,9 @@ function syncTerminal(t) {
   syncFilesButton(t.filesButton, a);
   t.mobileKeys?.update();
   t.title.textContent = a.name; t.title.title = a.name; t.tabLabel.textContent = a.name;
+  t.group.dataset.status = a.status;
+  t.tab.title = `${a.name} · ${labels[a.status] || a.status}`;
+  t.tab.setAttribute('aria-label', t.tab.title);
   const stage = incompleteSetup(a) ? creationStage(a) : '';
   t.info.textContent = `${stage || labels[a.status]} · ${a.session_id || 'session pending'} · ${a.folder}`;
   t.info.title = t.info.textContent;

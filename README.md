@@ -350,7 +350,10 @@ conservatively blocks while any native Pi has an unknown working folder.
   model context/history and process state are unaffected.
 - **Terminal ↗** (or **↗** on a compact tile) attaches to the real pi TUI using
   xterm.js and a tmux PTY client. Tabs retain scrollback while open, and open tabs
-  are remembered locally. The terminal toolbar is a single 28px row (about half
+  are remembered locally. **Dashboard** stays pinned at the left while agent tabs
+  scroll horizontally. Agent tab titles use the same status colors as their cards;
+  the active title has an orange outline (the former underline extended around it).
+  Hover/accessibility labels include the status. The terminal toolbar is a single 28px row (about half
   its previous height), with long titles/metadata ellipsized and available on hover.
   Its buttons retain 24px click targets. It keeps **Reconnect**; use the tab's
   **×** to close it. Wake remains available on the agent card and in the offline
@@ -409,7 +412,11 @@ scale to fit on narrow screens; no horizontal scrolling is required.
 - **Esc** and control shortcuts are real terminal input: Ctrl+C can interrupt an
   application just as it does with a physical keyboard. No keys are queued while offline.
 - Button taps retain input focus, keeping the software keyboard open. The terminal
-  resizes above the key bar rather than being covered by it.
+  resizes above the key bar rather than being covered by it. When the software
+  keyboard hides, the active connected mobile tmux view reconnects once after the
+  viewport settles, refreshing its full-size screen without restarting the agent or
+  reopening the keyboard. Dashboard, copy mode, dialogs, offline/closed tabs and
+  desktop browsers do not trigger this reattachment.
 - Copy text, other forms/dialogs, the dashboard and desktop browsers have no key bar.
   Native paste and multi-character IME/paste text are not converted into control
   commands; terminal mouse reports and device replies are passed through unchanged.

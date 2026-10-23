@@ -20,16 +20,20 @@ function fixture({mobile = true, viewport = true} = {}) {
   const doc = new Events(); doc.documentElement = {clientWidth: 390, clientHeight: 1000};
   doc.createElement = () => new Element(doc); doc.body = new Element(doc); doc.activeElement = doc.body;
   const view = new Events(); Object.assign(view, {innerWidth: 390, innerHeight: 1000}); doc.defaultView = view;
+  const timers = new Map(); let nextTimer = 0;
+  view.setTimeout = callback => { const id = ++nextTimer; timers.set(id, callback); return id; };
+  view.clearTimeout = id => timers.delete(id);
+  const settle = () => { const pending = [...timers.values()]; timers.clear(); for (const callback of pending) callback(); };
   if (viewport) { view.visualViewport = new Events(); Object.assign(view.visualViewport, {width: 390, height: 1000, offsetTop: 0, offsetLeft: 0, scale: 1}); }
   const vk = new Events(); vk.boundingRect = {height: 0, top: 0}; view.navigator = {virtualKeyboard: vk};
   const media = new Events(); media.matches = mobile;
   const pane = new Element(doc); pane.parentElement = {getBoundingClientRect: () => ({bottom: view.innerHeight})};
   const input = new Element(doc), term = {textarea: input, modes: {applicationCursorKeysMode: false}};
-  const sent = [], state = {active: true, ready: true};
-  const keys = new TerminalKeys({term, pane, media, isActive: () => state.active, ready: () => state.ready, send: data => sent.push(data)});
+  const sent = [], hidden = [], state = {active: true, ready: true};
+  const keys = new TerminalKeys({term, pane, media, isActive: () => state.active, ready: () => state.ready, send: data => sent.push(data), onKeyboardHidden: () => hidden.push(pane.style.bottom)});
   const focus = () => { doc.activeElement = input; doc.fire('focusin'); };
   const keyboard = height => { if (view.visualViewport) { view.visualViewport.height = height; view.visualViewport.fire('resize'); } else { view.innerHeight = height; doc.documentElement.clientHeight = height; view.fire('resize'); } };
-  return {keys, term, pane, input, doc, view, vk, media, sent, state, focus, keyboard};
+  return {keys, term, pane, input, doc, view, vk, media, sent, state, focus, keyboard, hidden, settle, timers};
 }
 
 test('navigation keys respect application cursor mode and modifiers, Sup is forward Delete', () => {
@@ -145,4 +149,57 @@ test('all eleven keys stay ordered in a centered 90-percent bar and labels fit t
   assert.equal(label.style.transform, 'scaleX(0.5)');
   button.clientWidth = 80; t.keys.fitLabels(); assert.equal(label.style.transform, 'scaleX(1)');
   t.keys.press('tab'); assert.equal(t.sent.at(-1), '\t');
+});
+
+
+test('keyboard hide notifies once after layout settles, even if blur precedes geometry', () => {
+  for (const viewport of [true, false]) {
+    const t = fixture({viewport}); t.focus(); t.keyboard(650);
+    t.doc.activeElement = t.doc.body; t.doc.fire('focusout'); t.settle();
+    assert.deepEqual(t.hidden, []); // Losing focus is not a keyboard-hide event.
+    t.keyboard(1000); const hideTimer = t.keys.hideTimer;
+    t.keys.update(); t.keys.update();
+    assert.equal(t.keys.hideTimer, hideTimer); // Live state refreshes cannot starve the debounce.
+    assert.equal(t.timers.size, 1); assert.deepEqual(t.hidden, []);
+    t.settle(); assert.deepEqual(t.hidden, ['']);
+    t.keys.update(); t.settle(); assert.equal(t.hidden.length, 1);
+    t.focus(); t.keyboard(650); t.keyboard(1000); t.settle();
+    assert.equal(t.hidden.length, 2);
+  }
+});
+
+test('keyboard reopening cancels pending hide and geometry bounce keeps cycle ownership', () => {
+  const t = fixture(); t.focus(); t.keyboard(650); t.keyboard(1000);
+  t.doc.activeElement = t.doc.body; t.doc.fire('focusout');
+  t.keyboard(650); t.settle(); assert.equal(t.hidden.length, 0);
+  t.keyboard(1000); t.settle(); assert.equal(t.hidden.length, 1);
+});
+
+test('desktop, inactive/copy/dialog views, disconnect, hidden page and dispose never notify', () => {
+  const desktop = fixture({mobile: false}); desktop.focus(); desktop.keyboard(650); desktop.keyboard(1000); desktop.settle();
+  assert.equal(desktop.hidden.length, 0);
+  for (const disable of [t => { t.state.active = false; }, t => { t.state.ready = false; }, t => { t.doc.hidden = true; }, t => { t.media.matches = false; }, t => t.keys.dispose()]) {
+    const t = fixture(); t.focus(); t.keyboard(650); t.keyboard(1000);
+    disable(t); t.keys.update(); t.settle(); assert.equal(t.hidden.length, 0);
+  }
+  const rotated = fixture(); rotated.focus(); rotated.keyboard(650);
+  rotated.view.innerWidth = 844; rotated.view.innerHeight = 390; rotated.doc.documentElement.clientHeight = 390;
+  Object.assign(rotated.view.visualViewport, {width: 844, height: 390}); rotated.view.fire('orientationchange'); rotated.settle();
+  assert.equal(rotated.hidden.length, 0);
+});
+
+test('VirtualKeyboard overlay hide also notifies once without viewport shrinking', () => {
+  const t = fixture(); t.focus(); t.vk.boundingRect = {height: 300, top: 700}; t.vk.fire('geometrychange');
+  t.vk.boundingRect = {height: 0, top: 0}; t.vk.fire('geometrychange'); t.settle();
+  assert.equal(t.hidden.length, 1); assert.equal(t.pane.style.bottom, '');
+});
+
+
+test('hide debounce follows actual closing geometry, not repeated state updates', () => {
+  const t = fixture(); t.focus(); t.keyboard(650); t.keyboard(850);
+  const first = t.keys.hideTimer; t.keyboard(950);
+  assert.notEqual(t.keys.hideTimer, first);
+  const second = t.keys.hideTimer; t.keys.update(); assert.equal(t.keys.hideTimer, second);
+  t.keyboard(1000); assert.notEqual(t.keys.hideTimer, second);
+  assert.equal(t.timers.size, 1); t.settle(); assert.equal(t.hidden.length, 1);
 });
