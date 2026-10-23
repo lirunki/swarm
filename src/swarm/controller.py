@@ -11,6 +11,7 @@ from pathlib import Path
 from .adapters import resume_prompt, session_header
 from .discovery import sibling_worktree_path
 from .files import AgentFiles
+from .messaging import Messages
 from .meta_compact import busy, require_not_busy
 from .models import Agent, CreateAgent, Status
 from .paths import agent_path, local_path
@@ -48,6 +49,7 @@ class Controller:
         self.lock = threading.RLock()
         self.files = AgentFiles(store)
         self.wakes = ScheduledWakes(self)
+        self.messages = Messages(self)
         self.state: dict = {}
         self.fingerprint = ""
         self.snapshot_fingerprint = ""
@@ -329,6 +331,7 @@ class Controller:
                     raise RuntimeError("Could not stop the agent; its dashboard record was kept.")
             # Never terminate a PID from a record; externally observed processes are not owned.
             removed = self.store.remove(agent.id)
+            self.messages.forget(agent.id)
             self.refresh()
             return removed
 
@@ -364,7 +367,11 @@ class Controller:
                     if session_id and session_id != agent.session_id:
                         fields["session_id"] = session_id
                 if fields:
-                    self.store.update(agent.id, fields)
+                    agent = self.store.update(agent.id, fields)
+                try:
+                    self.messages.tick(agent)
+                except (OSError, ValueError, RuntimeError):
+                    log.exception("Mailbox remains queued; could not pump agent %s", agent.id)
             return self.refresh()
 
     def refresh(self) -> bool:
@@ -381,8 +388,20 @@ class Controller:
                         "files_error": "File references could not be read",
                     }
                     errors[f"files/{agent.id}.json"] = files["files_error"]
+                try:
+                    messages = self.messages.summary(agent.id)
+                except (OSError, ValueError):
+                    messages = {
+                        "message_count": 0,
+                        "messages_revision": None,
+                        "messages_error": "Mailbox could not be read",
+                    }
+                    errors[f"messages/{agent.id}.json"] = messages["messages_error"]
                 entries.append(
-                    agent.model_dump(mode="json") | {"alive": self.processes.alive(agent)} | files
+                    agent.model_dump(mode="json")
+                    | {"alive": self.processes.alive(agent)}
+                    | files
+                    | messages
                 )
             self.state = {
                 "agents": entries,

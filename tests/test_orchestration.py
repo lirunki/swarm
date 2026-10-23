@@ -37,9 +37,7 @@ class FakeProcesses:
         cwd = Path.cwd()
         try:
             Worker(self.store, str(agent.id), pi="/bin/echo").run(
-                execute=lambda command, env: self.launch(
-                    self.store.get(agent.id), command[-1]
-                )
+                execute=lambda command, env: self.launch(self.store.get(agent.id), command[-1])
             )
         finally:
             os.chdir(cwd)
@@ -293,7 +291,10 @@ def test_direct_child_ownership_and_api_controls(setup):
         )
         assert client.post(base + f"/{child_id}/stop", json={"force": True}).status_code == 200
         assert not client.get(base + "/" + child_id).json()["alive"]
-        assert client.post(base + f"/{child_id}/message", json={"message": "Hi"}).status_code == 409
+        assert client.post(base + f"/{child_id}/message", json={"message": "Hi"}).status_code == 200
+        pending = client.get(f"/api/agents/{child_id}/messages").json()["messages"]
+        assert [message["text"] for message in pending] == ["Add edge cases", "Hi"]
+        assert not client.get(base + "/" + child_id).json()["alive"]
         assert client.post(base + f"/{child_id}/wake", json={}).json()["alive"]
         assert (
             client.post(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import os
 import tempfile
 from collections.abc import Callable, Iterator
@@ -18,6 +19,7 @@ from .models import Agent, Status, now
 from .paths import local_path
 
 MAX_RECORD_BYTES = 1024 * 1024
+log = logging.getLogger(__name__)
 
 
 def atomic_write(path: Path, content: str | bytes) -> None:
@@ -133,6 +135,38 @@ class Store:
                 updated.wake_delivery = None
         return updated
 
+    def pause_mailbox(self, agent: Agent) -> None:
+        """Close an exposed inbox during a sleep/stop report, not on a later monitor tick."""
+        if not (
+            agent.status in {Status.dormant, Status.done}
+            or getattr(agent, "stop_pending", False)
+            or getattr(agent, "orchestration_stop", None)
+        ):
+            return
+        directory = self.home / "control" / str(agent.id)
+        path = directory / "inbox.json"
+        if not path.exists():
+            return
+        try:
+            if (
+                any(p.is_symlink() for p in (directory.parent, directory, path))
+                or path.stat().st_size > 2 * 1024 * 1024
+            ):
+                raise ValueError("Invalid mailbox path")
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if (
+                isinstance(data, dict)
+                and data.get("agent_id") == str(agent.id)
+                and data.get("awake") is True
+            ):
+                data["awake"] = False
+                atomic_write(path, json.dumps(data, ensure_ascii=False) + "\n")
+        except (OSError, ValueError):
+            log.warning(
+                "Could not immediately pause inbox for %s; persisted state is authoritative",
+                agent.id,
+            )
+
     def transition(
         self, agent_id: str | UUID, change: Callable[[Agent], dict[str, Any] | None]
     ) -> Agent | None:
@@ -152,11 +186,13 @@ class Store:
             before = agent.model_dump(exclude={"updated_at"})
             after = updated.model_dump(exclude={"updated_at"})
             if after == before:
+                self.pause_mailbox(agent)
                 return agent
             content = encode(updated)
             if len(content.encode("utf-8")) > MAX_RECORD_BYTES:
                 raise ValueError("agent record exceeds 1 MiB")
             atomic_write(self.path(agent_id), content)
+            self.pause_mailbox(updated)
             return updated
 
     def update(self, agent_id: str | UUID, fields: dict[str, Any]) -> Agent:

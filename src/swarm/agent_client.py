@@ -93,6 +93,18 @@ class AgentClient:
                 "The outcome may be unknown. Inspect `swarm agent list`, then retry only with "
                 "the same --request-id; do not invent a new key for the same task."
             )
+        if operation.startswith("message send "):
+            request_id = operation.removeprefix("message send ")
+            return (
+                "The outcome may be unknown. Inspect `swarm message list AGENT_ID` before "
+                f"resending; if retrying the same message, reuse request ID {request_id}."
+            )
+        if operation.startswith("command "):
+            request_id = operation.removeprefix("command ")
+            return (
+                "The command outcome may be unknown. Inspect the mailbox/agent state before "
+                f"retrying; if retrying the same command, reuse request ID {request_id}."
+            )
         if operation == "message":
             return "The outcome may be unknown; inspect child status before resending the message."
         if operation == "wait":
@@ -167,6 +179,56 @@ class AgentClient:
         if not isinstance(decoded, dict):
             raise AgentClientError("API returned JSON that is not an object")
         return decoded
+
+    @staticmethod
+    def _mailbox(agent_id: str) -> str:
+        return f"/api/agents/{quote(agent_id, safe='')}/messages"
+
+    def list_messages(self, agent_id: str) -> dict[str, Any]:
+        """List the agent's outstanding durable mailbox records."""
+        return self.request("GET", self._mailbox(agent_id), operation="message list")
+
+    def send_message(
+        self,
+        agent_id: str,
+        text: str,
+        *,
+        sender_id: str | None,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Persist one ordinary text message; never retry an uncertain POST."""
+        return self.request(
+            "POST",
+            self._mailbox(agent_id),
+            body={"text": text, "sender_id": sender_id, "request_id": request_id},
+            expected=202,
+            operation=f"message send {request_id}",
+        )
+
+    def delete_message(self, agent_id: str, message_id: str) -> dict[str, Any]:
+        """Cancel an outstanding message when its transport state permits deletion."""
+        return self.request(
+            "DELETE",
+            f"{self._mailbox(agent_id)}/{quote(message_id, safe='')}",
+            operation="message delete",
+        )
+
+    def command(
+        self,
+        agent_id: str,
+        text: str,
+        *,
+        sender_id: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Queue a provider-neutral self-command record for the target agent."""
+        return self.request(
+            "POST",
+            f"/api/agents/{quote(agent_id, safe='')}/commands",
+            body={"text": text, "sender_id": sender_id, "request_id": request_id},
+            expected=202,
+            operation=f"command {request_id}",
+        )
 
     def product(self, agent_id: str, payload: dict[str, Any] | None) -> dict[str, Any]:
         return self.request(

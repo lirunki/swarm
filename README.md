@@ -71,10 +71,12 @@ swarm serve --password-file /private/path/swarm-browser-password.txt
 # For LAN access, add --host 0.0.0.0 and use HTTPS certificate options below.
 ```
 
-The password file must be a regular non-symlink file, private to its owner (0600
-on POSIX), with a nonempty password of at most 1,024 characters. It is read once at
-startup; restart to change it. Missing, unreadable, empty, oversized or unsafe files
-fail startup rather than silently disabling authentication. Do not use an API key
+The password file must be a regular non-symlink file, with a nonempty password of
+at most 1,024 characters. Keep it private to its owner (0600 on POSIX); mode-bit
+enforcement is currently disabled for compatibility, so configuring safe permissions
+is your responsibility. It is read once at startup; restart to change it. Missing,
+unreadable, empty, oversized or symlink files fail startup rather than silently
+disabling authentication. Do not use an API key
 or relay credential as the browser password. Use a strong, unique password.
 
 The browser shows a password dialog before loading private state or controls.
@@ -770,6 +772,101 @@ state and child-status responses. This shares Swarm's trusted local-user boundar
 product publication is not a remote upload service or a separate authorization
 system. The Swarm skill includes these instructions for agents.
 
+## Durable agent messages and Pi self-commands
+
+Use the mailbox API instead of typing into an agent's tmux pane. It is durable across
+controller restarts and is the primary path for new agent-to-agent/operator messages:
+
+```bash
+swarm message send AGENT_ID 'Review the failing parser test.'
+swarm message send AGENT_ID '/this remains ordinary text' \
+  --request-id 6f485ccd-1a35-4eb7-a6d7-5aa15e9ba6fc --sender-id SENDER_UUID
+swarm message list AGENT_ID
+swarm message delete AGENT_ID MESSAGE_ID
+
+# Queue a command for this managed agent (or use --id as a local operator):
+swarm command '/compact retain the current implementation plan'
+swarm command '/thinking high' --id AGENT_ID
+
+swarm p                         # short alias for `swarm list` (all records)
+```
+
+`message send` creates a UUID request ID locally when it is omitted; `--sender-id`
+defaults to `SWARM_AGENT_ID` and is null for an operator outside a managed environment.
+`command` similarly generates its request ID and defaults `--id` to `SWARM_AGENT_ID`.
+A managed process cannot target a different ID; an operator without that environment
+must explicitly select one. The CLI uses the same bounded, authenticated loopback-only
+client as other agent operations. It does not access tmux and never automatically retries
+a mutating request. On a timeout the outcome is unknown: retain the printed request ID,
+inspect `message list`/agent state, and reuse that ID only when retrying the same logical
+operation.
+
+The protocol is:
+
+- `POST /api/agents/{id}/messages` with
+  `{"text":"…","sender_id":UUID-or-null,"request_id":UUID}` returns HTTP 202 after
+  durable persistence.
+- `GET /api/agents/{id}/messages` lists outstanding records and their transport state.
+- `DELETE /api/agents/{id}/messages/{message_id}` cancels a pending, failed, or uncertain
+  record. A record already being delivered returns HTTP 409.
+- `POST /api/agents/{id}/commands` with
+  `{"text":"/compact …","sender_id":id,"request_id":UUID}` returns HTTP 202 and uses
+  the same durable outbox. Command text is kept separate from ordinary message text.
+
+An ordinary-message delivery acknowledgement means the text was persisted into Pi
+context; it does **not** mean the requested task finished. Messages beginning with `/` are still enveloped
+and delivered as ordinary text. Self-commands wait until Pi is idle and are never injected
+as terminal keystrokes. Pi initially supports `/compact [instructions]`, `/model
+provider/model`, `/thinking off|minimal|low|medium|high|xhigh|max`, `/name NAME`, and
+`/reload`. Session/identity switching commands `/new`, `/fork`, `/clone`, `/resume`,
+`/tree`, `/import`, and `/quit` are forbidden. Every other command is explicitly rejected,
+not silently passed to the model as a prompt. Reload is treated as a safe action, but
+failures and uncertain outcomes remain visible and are not blindly replayed. The generic
+mailbox/CLI protocol is backend-neutral; native delivery and self-commands currently
+use Pi's extension transport. Other backends need an explicit safe adapter, not blind
+terminal injection. `/model` changes the live Pi session; a configured Swarm model
+override is still reapplied on a later launch unless separately changed.
+
+Delivery occurs only while an agent is **awake**: managed, alive and fully provisioned,
+with status running/waiting/idle, and neither stopping nor compacting. Queueing never wakes it. Older Pi processes launched
+without Swarm's trusted mailbox extension must be relaunched; their messages remain pending
+with the transport state visible. Newly launched Pi loads that extension, including its
+`swarm_session_command` tool for queueing its own supported commands.
+
+Each agent is limited to 128 outstanding records, message text to 32,000 characters, and the queue to
+about 2 MiB. Sender permissions use the existing same-user service authentication; this is
+not a hostile-agent sandbox. If every agent is busy, use event-driven child `agent wait`, a
+scheduled wake, or bounded mailbox polling with a delay/backoff—never a no-sleep agents
+busy loop. A persistence outage leaves durable inbox entries available for later delivery.
+The older direct-child `swarm agent message` route now uses the same durable queue,
+while retaining its ownership checks; prefer the mailbox CLI for new work.
+
+Queue data lives under `$SWARM_HOME/messages/<agent-id>.json`. Each Pi process gets
+an epoch/session-bound private `$SWARM_HOME/control/<agent-id>/` bridge. No message
+text is broadcast in fleet state; only outstanding counts/revisions are included,
+and the card fetches bodies on demand. The compact envelope button opens the mailbox;
+expanded cards list outstanding messages with Delete controls. These routes also
+work through the authenticated federation proxy and require the destination's password.
+
+Delivery is at-least-once across uncertain process/crash windows. Pi records stable
+message IDs in saved context and deduplicates them on restart. Do not repeat external
+side effects merely because an ID reappears. Up to 256 final receipt metadata entries
+are retained for request-ID idempotency; always generate a new UUID for a genuinely
+new request. Deleted/delivered records do not keep duplicate bodies in the queue.
+Already delivering/executing items cannot be recalled (HTTP 409). If the bridge is
+stale for over two minutes, an in-flight item becomes **uncertain**, not falsely
+successful or automatically replayed. A late positive receipt can still resolve it.
+Deleting an uncertain item removes tracking only; input/actions already accepted by
+Pi cannot be recalled. Unknown command outcomes are never blindly re-executed.
+
+The Pi `swarm_session_command` tool durably writes a bounded private self-request
+before returning; it must finish the current turn before an idle-only command can
+run. The controller can ingest that request after downtime. Native commands never
+clear the user's editor, press Enter, or switch sessions. `/compact` can incur normal
+model costs. `/reload` is acknowledged only by a new runtime reporting an actual
+reload lifecycle; an interrupted startup is not proof of completion. Forgetting an
+agent removes its mailbox/control metadata, not its session or worktree.
+
 ## Orchestrate child agents from the CLI
 
 A Swarm-managed agent can delegate work to direct children through the controller:
@@ -1215,10 +1312,11 @@ next retry; this metadata is also in the agent Markdown and `/api/state`.
 - **Already durable:** checkpoints, child wait/event notifications and retries,
   pending stop intent, spawn request identities, compaction manifests/backups,
   file-reference indexes and latest-product snapshots.
-- **Next candidate: manual instructions.** Custom Wake text and direct child
-  messages are still immediate deliveries, not persistent message outboxes. A
-  future semantic-command outbox should use request/event IDs and acknowledgement;
-  blindly replaying a deployment/message after an ambiguous failure is unsafe.
+- **Durable messages:** ordinary messages and direct-child messages now use a
+  persistent mailbox with request IDs and native Pi acknowledgements (see above).
+  Custom text supplied directly to **Wake** and the cooperative-stop checkpoint
+  prompt are still immediate deliveries. Extending durable semantics to those paths
+  remains useful; blindly replaying an ambiguous external action is unsafe.
 - **Uploaded file bytes:** completed browser uploads survive backend restarts if
   their system-temp files remain, but OS reboot/temp cleanup can remove them.
   Their reference metadata is durable. An opt-in durable-upload location would be

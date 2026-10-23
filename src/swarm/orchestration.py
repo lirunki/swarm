@@ -11,7 +11,7 @@ import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path, PureWindowsPath
 from typing import TYPE_CHECKING, Literal
-from uuid import uuid4, uuid5
+from uuid import UUID, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -65,6 +65,7 @@ class SpawnRequest(BaseModel):
 class ChildMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
     message: str = Field(min_length=1, max_length=32000)
+    request_id: UUID = Field(default_factory=uuid4)
 
 
 class ChildStop(BaseModel):
@@ -240,16 +241,14 @@ class Orchestrator:
     def message(self, parent_id: str, child_id: str, request: ChildMessage) -> dict:
         with self.controller.lock:
             child = self.owned(parent_id, child_id)
-            require_not_busy(child)
-            if child.spawn_state not in {None, "ready"}:
-                raise RuntimeError("Child setup is incomplete; inspect its setup stage/error")
-            if not request.message.strip():
-                raise ValueError("Message must not be blank")
-            if not self.controller.processes.alive(child):
-                raise RuntimeError("Child is stopped; explicitly wake it to send new instructions")
-            if getattr(child, "orchestration_stop", None) or getattr(child, "stop_pending", False):
-                raise RuntimeError("Child is stopping; wait until it has stopped")
-            self.controller.processes.send_prompt(child, request.message)
+            from .messaging import MessageRequest
+
+            self.controller.messages.send(
+                str(child.id),
+                MessageRequest(
+                    text=request.message, request_id=request.request_id, sender_id=UUID(parent_id)
+                ),
+            )
             return self.describe(self.store.get(child.id))
 
     def wake(self, parent_id: str, child_id: str, message: str | None = None) -> dict:

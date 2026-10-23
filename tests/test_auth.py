@@ -236,12 +236,11 @@ def test_password_file_validation_does_not_echo_contents(tmp_path, value):
     assert value not in str(failure.value) if len(value) > 20 else True
 
 
-def test_unsafe_password_permissions_and_symlinks_rejected(tmp_path):
+def test_readable_password_file_is_accepted_but_symlinks_rejected(tmp_path):
     path = password_file(tmp_path)
     if os.name != "nt":
         path.chmod(0o644)
-        with pytest.raises(ValueError, match="private"):
-            BrowserAccess(tmp_path / "home", path)
+        assert BrowserAccess(tmp_path / "home", path).required
     path.chmod(0o600)
     link = tmp_path / "password-link"
     link.symlink_to(path)

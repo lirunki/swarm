@@ -9,6 +9,7 @@ import re
 import socket
 import sys
 import threading
+import uuid
 import webbrowser
 from pathlib import Path, PureWindowsPath
 
@@ -141,6 +142,7 @@ def parser() -> argparse.ArgumentParser:
         "--api-key-file", action="append", type=Path, help="one or two key files (repeatable)"
     )
     commands.add_parser("list", help="list agent records as JSON")
+    commands.add_parser("p", help="alias for list (all agent records as JSON)")
     commands.add_parser("doctor", help="check runtime prerequisites")
     commands.add_parser("sessions", help="list adoptable pi sessions as JSON")
     tool_input = commands.add_parser(
@@ -201,6 +203,32 @@ def parser() -> argparse.ArgumentParser:
     source.add_argument("--url", help="external HTTP(S) product link")
     source.add_argument("--file", help="local result file to snapshot for download")
     source.add_argument("--clear", action="store_true", help="remove the current product")
+
+    mailbox = commands.add_parser("message", help="use an agent's durable message mailbox")
+    mailbox_commands = mailbox.add_subparsers(dest="message_command", required=True)
+    send_message = mailbox_commands.add_parser("send", help="queue an ordinary text message")
+    send_message.add_argument("id", help="recipient agent ID")
+    send_message.add_argument("text", help="message text (32 KiB maximum)")
+    send_message.add_argument("--request-id", help="UUID; generated locally when omitted")
+    send_message.add_argument(
+        "--sender-id",
+        default=os.environ.get("SWARM_AGENT_ID"),
+        help="sender UUID (defaults to SWARM_AGENT_ID; omitted for a local operator)",
+    )
+    list_messages = mailbox_commands.add_parser("list", help="list outstanding messages")
+    list_messages.add_argument("id", help="recipient agent ID")
+    delete_message = mailbox_commands.add_parser("delete", help="cancel an outstanding message")
+    delete_message.add_argument("id", help="recipient agent ID")
+    delete_message.add_argument("message_id", help="message ID")
+
+    agent_command = commands.add_parser("command", help="queue a supported self-command")
+    agent_command.add_argument("text", help="command text, for example '/compact instructions'")
+    agent_command.add_argument("--request-id", help="UUID; generated locally when omitted")
+    agent_command.add_argument(
+        "--id",
+        default=os.environ.get("SWARM_AGENT_ID"),
+        help="target agent ID (defaults to SWARM_AGENT_ID)",
+    )
 
     files = commands.add_parser(
         "file", help="register and browse original-file references on an agent"
@@ -357,6 +385,84 @@ def run_agent_command(args: argparse.Namespace) -> dict:
     raise ValueError("unknown agent command")
 
 
+def _request_id(value: str | None) -> str:
+    if value is None:
+        return str(uuid.uuid4())
+    try:
+        parsed = uuid.UUID(value)
+    except (ValueError, AttributeError) as exc:
+        raise ValueError("--request-id must be a UUID") from exc
+    if str(parsed) != value.lower():
+        raise ValueError("--request-id must be a canonical UUID")
+    return str(parsed)
+
+
+def _message_text(value: str) -> str:
+    if not value.strip():
+        raise ValueError("TEXT must be nonempty")
+    if len(value.encode("utf-8")) > 32 * 1024:
+        raise ValueError("TEXT must be at most 32 KiB in UTF-8")
+    return value
+
+
+def _validate_command(value: str) -> str:
+    text = _message_text(value)
+    if not text.startswith("/"):
+        raise ValueError("command text must start with '/'")
+    name, _, argument = text.partition(" ")
+    forbidden = {"/new", "/fork", "/clone", "/resume", "/tree", "/import", "/quit"}
+    if name in forbidden:
+        raise ValueError(f"{name} is forbidden in a Swarm-managed session")
+    if name == "/compact":
+        return text
+    if name == "/model" and argument.strip() and len(argument.split()) == 1:
+        return text
+    if name == "/thinking" and argument.strip() in {
+        "off", "minimal", "low", "medium", "high", "xhigh", "max"
+    }:
+        return text
+    if name == "/name" and argument.strip():
+        return text
+    if name == "/reload" and not argument:
+        return text
+    raise ValueError(f"unsupported agent command: {name}")
+
+
+def run_mailbox_command(args: argparse.Namespace) -> dict:
+    client = AgentClient(
+        args.api_url, token_file=local_path(args.home) / "api-auth" / "client.token"
+    )
+    if args.message_command == "list":
+        return client.list_messages(args.id)
+    if args.message_command == "delete":
+        return client.delete_message(args.id, args.message_id)
+    request_id = _request_id(args.request_id)  # Generate before making the network request.
+    return client.send_message(
+        args.id,
+        _message_text(args.text),
+        sender_id=args.sender_id,
+        request_id=request_id,
+    )
+
+
+def run_self_command(args: argparse.Namespace) -> dict:
+    managed_id = os.environ.get("SWARM_AGENT_ID")
+    if not args.id:
+        raise ValueError("--id or SWARM_AGENT_ID is required for a self-command")
+    if managed_id and args.id != managed_id:
+        raise ValueError("a managed agent may queue commands only for itself")
+    request_id = _request_id(args.request_id)  # Generate before making the network request.
+    client = AgentClient(
+        args.api_url, token_file=local_path(args.home) / "api-auth" / "client.token"
+    )
+    return client.command(
+        args.id,
+        _validate_command(args.text),
+        sender_id=args.id,
+        request_id=request_id,
+    )
+
+
 def _secret(path: Path | None, environment: str) -> str:
     if path:
         try:
@@ -430,6 +536,12 @@ def main(argv: list[str] | None = None) -> None:
                     indent=2,
                 )
             )
+            return
+        if args.command == "message":
+            print(json.dumps(run_mailbox_command(args), indent=2))
+            return
+        if args.command == "command":
+            print(json.dumps(run_self_command(args), indent=2))
             return
         if args.command == "file":
             if not args.id:
@@ -533,7 +645,7 @@ def main(argv: list[str] | None = None) -> None:
                 ws_max_size=262144,
                 **tls,
             )
-        elif args.command == "list":
+        elif args.command in {"list", "p"}:
             print(
                 json.dumps(
                     {

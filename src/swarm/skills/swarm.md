@@ -208,6 +208,58 @@ remove an uploaded file the user or another task may still need without permissi
 Forgetting this agent also cleans owned uploaded copies. Normal server-file
 references retain their original-file-preservation behavior.
 
+## Durable mailbox messages and self-commands
+
+Use Swarm's mailbox for ordinary messages; never type instructions or commands into tmux:
+
+```bash
+"$SWARM_PYTHON" -m swarm message send AGENT_ID 'Please inspect the failure.'
+"$SWARM_PYTHON" -m swarm message list AGENT_ID
+"$SWARM_PYTHON" -m swarm message delete AGENT_ID MESSAGE_ID
+"$SWARM_PYTHON" -m swarm command '/compact retain the implementation plan'
+```
+
+Messages are durable across controller restarts and remain ordinary enveloped text even
+when they begin with `/`. Queueing does not wake the recipient. Delivery requires an awake
+agent: managed/alive, neither dormant nor done, ready and not stopping or compacting. An
+acknowledgement means the context/handoff was persisted, not that the recipient completed
+the task. Older Pi agents without the trusted mailbox extension need relaunching; leave
+messages pending and inspect their visible transport state rather than falling back to tmux.
+
+`message send` and `command` generate UUID request IDs locally unless `--request-id UUID`
+is supplied. The sender defaults to `SWARM_AGENT_ID`. Mutations are never automatically
+retried. If a timeout makes the result unknown, keep the request ID printed in the error,
+inspect `message list` and agent state, and reuse the same ID only for the same operation.
+Pending, failed, or uncertain messages can be deleted; an in-flight delivering message
+or executing command cannot (HTTP 409). Limits are 128 outstanding records, 32,000
+characters of text, and about 2 MiB queued
+per agent. This same-user authenticated coordination is cooperative, not a hostile sandbox.
+
+Self-commands are initially Pi-only and wait until Pi is idle; they are not terminal input.
+Supported forms are `/compact [instructions]`, `/model provider/model`, `/thinking
+ off|minimal|low|medium|high|xhigh|max`, `/name NAME`, and `/reload`. `/new`, `/fork`,
+`/clone`, `/resume`, `/tree`, `/import`, and `/quit` are forbidden because they switch or
+end Swarm's managed identity/session. Any other slash command is explicitly unsupported,
+not an LLM prompt. A managed agent may command only itself. The trusted extension also
+provides `swarm_session_command` to queue these self-commands; failures/uncertainty stay
+visible and must not be blindly replayed.
+
+When no agents are immediately available, use `agent wait`, durable events/timers, or
+polling with a real delay/backoff. Never busy-loop `message list`. The older direct-child
+message action now uses the same durable queue while retaining ownership checks; use
+this provider-neutral mailbox for new messaging. Current native delivery is implemented
+for Pi; other CLI backends require a safe transport adapter.
+
+Swarm may retry a message after a process interruption using the same stable ID.
+Check its ID and saved context before repeating external effects. In-flight items
+with a stale bridge become uncertain after two minutes; do not resend blindly.
+Deleting an uncertain item removes tracking, not anything already accepted by Pi.
+Final request-ID metadata is bounded to 256 receipts: never reuse an ID for new work.
+The self-command tool writes a durable request even if the controller is temporarily
+offline. Finish the current turn after queuing; do not poll in a tool or invoke a
+second command directly to force it. `/compact` can make a charged model request.
+A live `/model` change does not overwrite a configured Swarm startup-model pin.
+
 ## Orchestrating direct children
 
 A managed agent may create and control only its **direct children** through the local

@@ -230,6 +230,9 @@ function canRevertToolInputs(a) {
 function agentFileCount(agent) {
   return Number.isInteger(agent?.file_count) && agent.file_count >= 0 ? agent.file_count : 0;
 }
+function agentMessageCount(agent) {
+  return Number.isInteger(agent?.message_count) && agent.message_count >= 0 ? agent.message_count : 0;
+}
 function syncFilesButton(control, agent) {
   const count = agentFileCount(agent);
   control.classList.toggle('has-files', count > 0);
@@ -239,6 +242,11 @@ function openAgentFiles(id) {
   const agent = agentById(id); if (!agent) return;
   const workspace = activeSwarm === 'local' ? 'Local Swarm' : federationNodes.get(activeSwarm)?.name || activeSwarm;
   agentFilesDialog.open(agent, apiPath(`/api/agents/${encodeURIComponent(id)}/files`), workspace);
+}
+function openAgentMessages(id) {
+  const agent = agentById(id); if (!agent?.managed) return;
+  const workspace = activeSwarm === 'local' ? 'Local Swarm' : federationNodes.get(activeSwarm)?.name || activeSwarm;
+  agentMessagesController.open(agent, apiPath(`/api/agents/${encodeURIComponent(id)}/messages`), workspace);
 }
 function productLink(a) {
   const product = a.product;
@@ -275,11 +283,13 @@ function renderCard(a) {
   const name = node('h3', '', a.name); name.title = `${a.name}${setupHint}\nActivity: ${activityHint}`;
   identity.append(name, subtitle);
   const details = node('div', 'card-details'); details.id = `card-details-${a.id}`;
+  let setupMessages = () => {};
   const toggle = button('', 'card-toggle', () => {
     const compact = !cardViews.isCompact(state.home, a);
     cardViews.setCompact(state.home, a.id, compact);
     SwarmCardViews.applyCardView({card, details, foot, avatar, subtitle, toggle}, compact, a.name);
     terminal.hidden = !compact;
+    if (!compact) setupMessages();
   });
   toggle.setAttribute('aria-controls', `${details.id} card-actions-${a.id}`);
   const terminal = button('↗', 'card-terminal', () => openTerminal(a.id));
@@ -297,15 +307,25 @@ function renderCard(a) {
   }
   const product = productLink(a);
   if (product) card.classList.toggle('has-product', true);
-  const count = agentFileCount(a);
-  if (count || a.files_error) {
+  const count = agentFileCount(a), messageCount = agentMessageCount(a);
+  if (count || a.files_error || product || a.managed) {
     const library = node('div', 'card-product-files');
-    const files = button(a.files_error ? 'Files !' : `Files ${count}`, 'card-files', () => openAgentFiles(a.id));
-    syncFilesButton(files, a);
-    files.setAttribute('aria-label', `Files for ${a.name}`);
     if (product) library.append(product);
-    library.append(files); summary.append(library); card.classList.toggle('has-files', true);
-  } else if (product) summary.append(product);
+    if (count || a.files_error) {
+      const files = button(a.files_error ? 'Files !' : `Files ${count}`, 'card-files', () => openAgentFiles(a.id));
+      syncFilesButton(files, a);
+      files.setAttribute('aria-label', `Files for ${a.name}`);
+      library.append(files); card.classList.toggle('has-files', true);
+    }
+    if (a.managed) {
+      const messages = button(`✉ ${messageCount}`, 'card-messages', () => openAgentMessages(a.id));
+      messages.classList.toggle('has-messages', messageCount > 0);
+      messages.title = a.messages_error || `${messageCount} outstanding message${messageCount === 1 ? '' : 's'}`;
+      messages.setAttribute('aria-label', `Messages for ${a.name}: ${messageCount} outstanding`);
+      library.append(messages); card.classList.toggle('has-messages', messageCount > 0);
+    }
+    summary.append(library);
+  }
   const activity = node('div', 'activity'); activity.style.borderColor = `var(--${a.status})`;
   activity.id = `card-activity-${a.id}`;
   toggle.setAttribute('aria-describedby', activity.id);
@@ -321,6 +341,9 @@ function renderCard(a) {
     details.append(setup);
   }
   details.append(activity);
+  const messagesSection = node('section', 'expanded-messages');
+  setupMessages = () => agentMessagesController.mountExpanded(messagesSection, a, apiPath(`/api/agents/${encodeURIComponent(a.id)}/messages`));
+  details.append(messagesSection);
   if (a.activities?.length) {
     const list = node('ul', 'activity-list');
     for (const item of a.activities) {
@@ -365,6 +388,7 @@ function renderCard(a) {
   const compact = cardViews.isCompact(state.home, a);
   SwarmCardViews.applyCardView({card, details, foot, avatar, subtitle, toggle}, compact, a.name);
   terminal.hidden = !compact;
+  if (!compact) setupMessages();
   return card;
 }
 function render() {
@@ -402,6 +426,7 @@ function render() {
   if ($('#edit-dialog').open) updateEditAvailability();
   if ($('#wake-dialog').open) updateWakeAvailability();
   agentFilesDialog.sync(agentById(agentFilesDialog.agentId));
+  agentMessagesController.sync(agentById(agentMessagesController.agentId));
 }
 $('#collapse-all').addEventListener('click', () => {
   cardViews.setAllCompact(state.home, state.agents, true);
@@ -913,6 +938,7 @@ const agentFilesDialog = new SwarmAgentFiles.AgentFilesDialog({
     toast('File reference inserted. Not submitted.');
   },
 });
+const agentMessagesController = new SwarmAgentMessages.MessagesController({api: localApi, onChange: refresh});
 const dashboardControls = new SwarmDashboardControls.DashboardControls({onStatusChange: render});
 const relaySettingsDialog = new SwarmRelaySettings.RelaySettingsDialog({
   api: localApi,

@@ -97,6 +97,7 @@ function renderer() {
     state: {home, agents: []}, cardViews: new CardViews(() => storage), SwarmCardViews: {applyCardView},
     agentById: id => context.state.agents.find(a => a.id === id),
     activeSwarm: 'local', federationNodes: new Map(), agentFilesDialog: {open: (a, base, workspace) => calls.push(['files', a.id, base, workspace])},
+    agentMessagesController: {open: (a, base, workspace) => calls.push(['messages', a.id, base, workspace]), mountExpanded: () => {}},
     metaCompactingId: null, toolInputCompactingId: null,
     labels: {running: 'Running', waiting: 'Waiting for input', idle: 'Idle', dormant: 'Dormant', done: 'Done'},
     since: () => 'just now', apiPath: value => value, openTerminal: id => calls.push(['terminal', id]), editAgent: id => calls.push(['edit', id]),
@@ -140,6 +141,20 @@ test('compact renderer exposes summary and terminal shortcut, expanded form rest
   }
   assert.deepEqual(calls, [['terminal', 'agent-1'], ['edit', 'agent-1'], ['wake', 'agent-1'], ['stop', 'agent-1']]);
   toggle.click(); assert.equal(find(card, 'card-details').hidden, true); assert.equal(find(card, 'card-foot').hidden, true);
+});
+
+test('managed cards show durable message counts in the existing product/files row, including provisioning', () => {
+  const {render, calls, context} = renderer();
+  const a = fullAgent('running', false); a.message_count = 4; a.messages_revision = 7; a.spawn_state = 'provisioning';
+  a.creation = {state: 'queued', stage: 'Queued'};
+  const card = render(a), messages = find(card, 'card-messages');
+  assert.equal(messages.textContent, '✉ 4'); assert.equal(messages.classList.contains('has-messages'), true);
+  assert.ok(find(card, 'card-product-files').childNodes.includes(messages));
+  assert.equal(card.classList.contains('is-compact'), true);
+  context.state.agents = [a]; messages.click(); assert.deepEqual(calls, [['messages', a.id, '/api/agents/agent-1/messages', 'Local Swarm']]);
+  a.managed = false;
+  const observed = render(a); assert.equal(find(observed, 'card-messages'), undefined);
+  find(observed, 'card-toggle').click(); assert.ok(find(observed, 'expanded-messages'));
 });
 
 test('background setup cards show stage details and enforce Wake/Stop controls', () => {

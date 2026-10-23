@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from anyio import CancelScope
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 PROTOCOL_VERSION = 1
@@ -198,6 +199,9 @@ def create_relay_app(api_keys: list[str]) -> FastAPI:
             pass
         finally:
             if peer:
-                await directory.detach(peer)
+                # Disconnect cancellation must not leave a ghost peer or lose its
+                # offline notification while other controllers queue messages.
+                with CancelScope(shield=True):
+                    await directory.detach(peer)
 
     return app

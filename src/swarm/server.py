@@ -30,6 +30,7 @@ from .discovery import browse_folders, discover_models
 from .federation import MAX_RPC_REQUEST, FederationConfig
 from .files import FileRequest, FileUnavailable
 from .importers.grok import GrokImportRequest, GrokSessions
+from .messaging import MessageRequest
 from .meta_compact import MetaCompactor, MetaCompactRequest, require_not_busy
 from .models import AgentPatch, CreateAgent, WakeRequest
 from .orchestration import ChildMessage, ChildStop, Orchestrator, OwnershipError, SpawnRequest
@@ -510,6 +511,31 @@ def create_app(
             background=BackgroundTask(stream.close),
         )
 
+    @app.get("/api/agents/{agent_id}/messages")
+    async def outstanding_messages(agent_id: UUID):
+        return await asyncio.to_thread(controller.messages.list, str(agent_id))
+
+    @app.post("/api/agents/{agent_id}/messages", status_code=202)
+    async def send_agent_message(agent_id: UUID, request: MessageRequest):
+        result = await asyncio.to_thread(controller.messages.send, str(agent_id), request)
+        await broadcast()
+        return result
+
+    @app.post("/api/agents/{agent_id}/commands", status_code=202)
+    async def self_session_command(agent_id: UUID, request: MessageRequest):
+        result = await asyncio.to_thread(
+            controller.messages.send, str(agent_id), request, "command"
+        )
+        await broadcast()
+        return result
+
+    @app.delete("/api/agents/{agent_id}/messages/{message_id}")
+    async def delete_outstanding_message(agent_id: UUID, message_id: UUID):
+        result = await asyncio.to_thread(controller.messages.delete, str(agent_id), str(message_id))
+        await asyncio.to_thread(controller.refresh)
+        await broadcast()
+        return result
+
     @app.post("/api/agents/{agent_id}/product")
     async def publish_product(agent_id: UUID, request: ProductRequest):
         result = await asyncio.to_thread(products.publish, str(agent_id), request)
@@ -568,9 +594,11 @@ def create_app(
 
     @app.post("/api/agents/{parent_id}/children/{child_id}/message")
     async def child_message(parent_id: UUID, child_id: UUID, request: ChildMessage):
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             orchestration.message, str(parent_id), str(child_id), request
         )
+        await broadcast()
+        return result
 
     @app.post("/api/agents/{parent_id}/children/{child_id}/wake")
     async def child_wake(parent_id: UUID, child_id: UUID, request: WakeRequest):

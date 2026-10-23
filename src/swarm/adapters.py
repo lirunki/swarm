@@ -11,6 +11,7 @@ from .models import Agent
 from .paths import agent_path, local_path
 
 SKILL = Path(__file__).parent / "skills" / "swarm.md"
+MAILBOX_EXTENSION = Path(__file__).parent / "extensions" / "mailbox.js"
 
 
 class Adapter(Protocol):
@@ -40,6 +41,8 @@ class PiAdapter:
             agent_path(agent.session_file),
             "--skill",
             skill,
+            "--extension",
+            agent_path(MAILBOX_EXTENSION),
             "--append-system-prompt",
             f"You are a Swarm-managed agent. Read {skill} before working. "
             "Use its file-based reporting protocol for real status changes and concise "

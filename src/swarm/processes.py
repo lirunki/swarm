@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 
 from .adapters import SKILL, Adapter, PiAdapter
 from .models import Agent
-from .paths import local_path
+from .paths import agent_path, local_path
 from .store import Store
 
 
@@ -103,6 +103,9 @@ class Processes:
         return self._start(agent, command, self.store.home)
 
     def _start(self, agent: Agent, command: list[str], folder: Path) -> int | None:
+        from .messaging import prepare_bridge
+
+        directory, epoch = prepare_bridge(self.store, agent)
         target = self.target(agent)
         # Dead panes retain output; replace only when explicitly launching/recovering.
         self.run("kill-session", "-t", target, check=False)
@@ -114,6 +117,8 @@ class Processes:
             "SWARM_SKILL": str(SKILL),
             "SWARM_API_URL": self.api_url,
             "SWARM_PARENT_ID": str(agent.parent_id) if agent.parent_id else "",
+            "SWARM_CONTROL_DIR": agent_path(directory),
+            "SWARM_CONTROL_EPOCH": epoch,
             "TERM": "xterm-256color",
         }
         if self.api_token_file is not None:

@@ -7,19 +7,20 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=browser-auth-1">
+  <link rel="stylesheet" href="/static/app.css?v=messaging-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=browser-auth-1"></script>
-  <script defer src="/static/org-chart.js?v=browser-auth-1"></script>
-  <script defer src="/static/relay-settings.js?v=browser-auth-1"></script>
-  <script defer src="/static/terminal-touch.js?v=browser-auth-1"></script>
-  <script defer src="/static/terminal-copy.js?v=browser-auth-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=browser-auth-1"></script>
-  <script defer src="/static/terminal-keys.js?v=browser-auth-1"></script>
-  <script defer src="/static/agent-files.js?v=browser-auth-1"></script>
-  <script defer src="/static/auth.js?v=browser-auth-1"></script>
-  <script defer src="/static/app.js?v=browser-auth-1"></script>
+  <script defer src="/static/card-views.js?v=messaging-1"></script>
+  <script defer src="/static/org-chart.js?v=messaging-1"></script>
+  <script defer src="/static/relay-settings.js?v=messaging-1"></script>
+  <script defer src="/static/terminal-touch.js?v=messaging-1"></script>
+  <script defer src="/static/terminal-copy.js?v=messaging-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=messaging-1"></script>
+  <script defer src="/static/terminal-keys.js?v=messaging-1"></script>
+  <script defer src="/static/agent-files.js?v=messaging-1"></script>
+  <script defer src="/static/agent-messages.js?v=messaging-1"></script>
+  <script defer src="/static/auth.js?v=messaging-1"></script>
+  <script defer src="/static/app.js?v=messaging-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -61,6 +62,19 @@
     <footer class="page-footer"><span><i class="tiny-dot"></i> LOCAL-FIRST · FILE-BASED · ALWAYS YOURS</span><code id="home-path">~/.swarm/agents</code></footer>
   </main>
   <section id="terminals" aria-label="Agent terminal workspace" hidden></section>
+
+  <dialog id="messages-dialog" class="wide-dialog" aria-labelledby="messages-title">
+    <header class="dialog-head"><div><div class="eyebrow" id="messages-workspace">Local Swarm</div><h2 id="messages-title">Messages</h2></div><button type="button" class="icon-button" data-close aria-label="Close messages">×</button></header>
+    <p class="hint">Messages are durable and do not wake an agent. Live managed agents receive them through Pi; stopped, dormant, and completed agents keep them queued until they run again.</p>
+    <form id="agent-message-form">
+      <label>Message<textarea name="text" required rows="4" maxlength="65536" placeholder="Send durable instructions or context…"></textarea></label>
+      <div class="agent-message-compose-actions"><span id="agent-message-count" class="hint"></span><button id="send-agent-message" class="primary" type="submit">Send message</button><button id="refresh-agent-messages" class="small" type="button">↻ Refresh</button></div>
+    </form>
+    <p id="agent-messages-error" class="form-error" role="alert"></p>
+    <div id="agent-message-list" role="list" aria-label="Outstanding messages"></div>
+    <p class="hint">Pending messages are queued. Delivering messages are already being injected and cannot be recalled. A failed or uncertain item remains visible for inspection.</p>
+    <footer class="dialog-footer"><button type="button" data-close>Close</button></footer>
+  </dialog>
 
   <dialog id="files-dialog" class="wide-dialog" aria-labelledby="files-title">
     <header class="dialog-head"><div><div class="eyebrow" id="files-workspace">Local Swarm</div><h2 id="files-title">Files</h2></div><button type="button" class="icon-button" data-close aria-label="Close files">×</button></header>
