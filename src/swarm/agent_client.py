@@ -6,6 +6,7 @@ import ipaddress
 import json
 import os
 import ssl
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit, urlunsplit
@@ -64,8 +65,9 @@ def validate_api_url(value: str) -> str:
 class AgentClient:
     """JSON client that deliberately ignores proxy configuration and redirects."""
 
-    def __init__(self, api_url: str, *, opener=None):
+    def __init__(self, api_url: str, *, opener=None, token_file: Path | None = None):
         self.api_url = validate_api_url(api_url)
+        self.token_file = token_file
         self._opener = opener or build_opener(*self._handlers())
 
     def _handlers(self):
@@ -112,6 +114,28 @@ class AgentClient:
     ) -> dict[str, Any]:
         data = None if body is None else json.dumps(body).encode("utf-8")
         headers = {"Accept": "application/json"}
+        token_path = Path(
+            self.token_file
+            or os.environ.get("SWARM_API_TOKEN_FILE")
+            or (
+                Path(os.environ.get("SWARM_HOME", "~/.swarm")).expanduser()
+                / "api-auth"
+                / "client.token"
+            )
+        )
+        if token_path.exists():
+            if (
+                token_path.is_symlink()
+                or not token_path.is_file()
+                or token_path.stat().st_size > 512
+            ):
+                raise AgentClientError("Local API credential file is invalid")
+            if os.name != "nt" and token_path.stat().st_mode & 0o077:
+                raise AgentClientError("Local API credential file must be private (mode 0600)")
+            token = token_path.read_text(encoding="utf-8").strip()
+            if not token or any(not (c.isascii() and (c.isalnum() or c in "_-")) for c in token):
+                raise AgentClientError("Local API credential file is invalid")
+            headers["Authorization"] = f"Bearer {token}"
         if data is not None:
             headers["Content-Type"] = "application/json"
         request = Request(self.api_url + path, data=data, headers=headers, method=method)

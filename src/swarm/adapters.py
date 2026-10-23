@@ -42,8 +42,8 @@ class PiAdapter:
             skill,
             "--append-system-prompt",
             f"You are a Swarm-managed agent. Read {skill} before working. "
-            "Use its file-based reporting protocol to maintain your goal, activities, "
-            "checkpoint and status at every transition, including before ending a turn. "
+            "Use its file-based reporting protocol for real status changes and concise "
+            "material checkpoints, not routine tool-by-tool narration. "
             "SWARM_AGENT_ID and SWARM_HOME identify your existing record. "
             "Do not use /new, /fork, /clone or switch sessions; retain this session.",
         ]

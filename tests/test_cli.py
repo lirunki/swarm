@@ -62,6 +62,51 @@ def test_wrong_pi_session_cannot_overwrite_registered_identity(tmp_path, monkeyp
     assert store.get(agent.id).status.value == "idle"
 
 
+def test_report_cli_is_quiet_unless_json_is_requested(tmp_path, monkeypatch, capsys):
+    home = tmp_path / "home"
+    store = Store(home)
+    session = tmp_path / "session.jsonl"
+    session_id = str(uuid4())
+    agent = store.create(
+        Agent(
+            name="Coder",
+            goal="Ship",
+            folder=str(tmp_path),
+            managed=True,
+            session_id=session_id,
+            session_file=str(session),
+        )
+    )
+    monkeypatch.setenv("PI_SESSION_ID", session_id)
+    monkeypatch.setenv("PI_SESSION_FILE", str(session))
+
+    main(["--home", str(home), "report", "--id", str(agent.id), "--activity", "Testing"])
+    assert capsys.readouterr().out == ""
+    reported = store.get(agent.id)
+    reported_stat = store.path(agent.id).stat()
+
+    main(["--home", str(home), "report", "--id", str(agent.id), "--json"])
+    output = capsys.readouterr()
+    record = json.loads(output.out)
+    current = store.get(agent.id)
+    assert output.err == ""
+    assert record == current.model_dump(mode="json")
+    assert record["session_id"] == session_id
+    assert record["session_file"] == str(session)
+    assert current.updated_at == reported.updated_at
+    assert store.path(agent.id).stat().st_ino == reported_stat.st_ino
+
+
+def test_report_cli_errors_stay_nonzero_on_stderr(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("SWARM_AGENT_ID", raising=False)
+    with pytest.raises(SystemExit) as stopped:
+        main(["--home", str(tmp_path), "report", "--status", "running"])
+    output = capsys.readouterr()
+    assert stopped.value.code == 1
+    assert output.out == ""
+    assert "--id or SWARM_AGENT_ID is required" in output.err
+
+
 def test_cli_lists_and_custom_roots(tmp_path, capsys):
     main(["--home", str(tmp_path), "--pi-sessions-dir", str(tmp_path / "custom"), "doctor"])
     result = json.loads(capsys.readouterr().out)

@@ -111,6 +111,11 @@ def parser() -> argparse.ArgumentParser:
         help="bind address (default: 127.0.0.1; 0.0.0.0 exposes unauthenticated network access)",
     )
     serve.add_argument("--port", type=int, default=8787)
+    serve.add_argument(
+        "--password-file",
+        type=Path,
+        help="optional private UTF-8 password file for browser and relayed access",
+    )
     _tls_arguments(serve)
     serve.add_argument("--pi", default=os.environ.get("SWARM_PI", "pi"), help="pi executable path")
     serve.add_argument(
@@ -179,6 +184,9 @@ def parser() -> argparse.ArgumentParser:
         "--activities", help='JSON array of {"title": "...", "status": "pending|running|done"}'
     )
     report.add_argument("--pid", type=int)
+    report.add_argument(
+        "--json", action="store_true", help="print the complete updated record as JSON"
+    )
 
     product = commands.add_parser(
         "product", help="advertise the latest result on this agent's card"
@@ -297,7 +305,9 @@ def _parent_id(args: argparse.Namespace) -> str:
 
 def run_agent_command(args: argparse.Namespace) -> dict:
     parent_id = _parent_id(args)
-    client = AgentClient(args.api_url)
+    client = AgentClient(
+        args.api_url, token_file=local_path(args.home) / "api-auth" / "client.token"
+    )
     if args.command == "spawn":
         if len(args.request_id) > 80:
             raise ValueError("--request-id must be at most 80 characters")
@@ -412,12 +422,21 @@ def main(argv: list[str] | None = None) -> None:
                 payload["url"] = args.url
             elif args.file:
                 payload["path"] = str(local_path(args.file))
-            print(json.dumps(AgentClient(args.api_url).product(args.id, payload), indent=2))
+            print(
+                json.dumps(
+                    AgentClient(
+                        args.api_url, token_file=local_path(args.home) / "api-auth" / "client.token"
+                    ).product(args.id, payload),
+                    indent=2,
+                )
+            )
             return
         if args.command == "file":
             if not args.id:
                 raise ValueError("--id or SWARM_AGENT_ID is required for file registration")
-            client = AgentClient(args.api_url)
+            client = AgentClient(
+                args.api_url, token_file=local_path(args.home) / "api-auth" / "client.token"
+            )
             if args.file_command == "add":
                 result = client.add_file(
                     args.id, {"path": str(local_path(args.path)), "label": args.label}
@@ -480,10 +499,15 @@ def main(argv: list[str] | None = None) -> None:
             if network:
                 print(f"Listening on 0.0.0.0:{args.port} (all IPv4 interfaces).", flush=True)
                 print(
-                    "WARNING: Swarm has no authentication and network mode allows any Host header. "
-                    "Anyone who can reach this port "
-                    "can access private data and control agents with your permissions. "
-                    "Use only a trusted network with firewall restrictions; never expose it publicly.",
+                    (
+                        "WARNING: Browser password authentication is enabled. Network mode allows any "
+                        "Host header; use HTTPS, a strong password and firewall restrictions."
+                        if args.password_file
+                        else "WARNING: Swarm has no authentication and network mode allows any Host header. "
+                        "Anyone who can reach this port can access private data and control agents "
+                        "with your permissions. Use only a trusted network with firewall restrictions; "
+                        "never expose it publicly."
+                    ),
                     file=sys.stderr,
                     flush=True,
                 )
@@ -501,6 +525,7 @@ def main(argv: list[str] | None = None) -> None:
                     allowed_hosts=["*"] if network else None,
                     api_url=url,
                     federation_config=federation_config,
+                    password_file=local_path(args.password_file) if args.password_file else None,
                 ),
                 host=args.host,
                 port=args.port,
@@ -519,7 +544,9 @@ def main(argv: list[str] | None = None) -> None:
                 )
             )
         elif args.command == "report":
-            print(json.dumps(run_report(store, args), indent=2))
+            record = run_report(store, args)
+            if args.json:
+                print(json.dumps(record, indent=2))
         elif args.command == "tool-input":
             print(json.dumps(retrieve(store, args.toolrun_id, args.offset, args.limit), indent=2))
         elif args.command == "sessions":

@@ -12,6 +12,17 @@ playwright = pytest.importorskip("playwright.sync_api")
 STATIC = Path(__file__).resolve().parents[1] / "src" / "swarm" / "static"
 
 
+def no_auth_mock(handler):
+    """Synthetic dashboard fixtures model an unprotected server's public auth status."""
+
+    def response(route):
+        if route.request.url.split("?", 1)[0].endswith("/api/auth/status"):
+            return route.fulfill(content_type="application/json", body='{"required":false}')
+        return handler(route)
+
+    return response
+
+
 class StaticHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/static/"):
@@ -105,8 +116,10 @@ def test_dense_org_chart_layout_and_interactions(static_url, tmp_path, width):
             };""")
             page.route(
                 "**/api/**",
-                lambda route: route.fulfill(
-                    content_type="application/json", body=json.dumps(state)
+                no_auth_mock(
+                    lambda route: route.fulfill(
+                        content_type="application/json", body=json.dumps(state)
+                    )
                 ),
             )
             page.goto(static_url)
@@ -278,7 +291,7 @@ def test_local_relay_settings_dialog_connect_disconnect_and_errors(static_url, w
                     status=status, content_type="application/json", body=json.dumps(value)
                 )
 
-            page.route("**/api/**", route_api)
+            page.route("**/api/**", no_auth_mock(route_api))
             page.goto(static_url)
             page.locator("#settings-button").click()
             assert not errors, f"Settings click raised a browser error: {errors}"
@@ -366,7 +379,7 @@ def test_compact_status_adoption_and_help_controls(static_url, width):
                     value = state
                 route.fulfill(content_type="application/json", body=json.dumps(value))
 
-            page.route("**/api/**", respond)
+            page.route("**/api/**", no_auth_mock(respond))
             page.goto(static_url)
             playwright.expect(page.locator(".agent-card")).to_have_count(8)
             assert not page.locator("#summary").count()
@@ -472,13 +485,15 @@ def test_native_mobile_copy_overlay_and_unchanged_desktop(static_url, mobile):
             };""")
             page.route(
                 "**/api/**",
-                lambda route: route.fulfill(
-                    content_type="application/json",
-                    body=json.dumps(
-                        {"enabled": False, "nodes": []}
-                        if "/api/federation/nodes" in route.request.url
-                        else state
-                    ),
+                no_auth_mock(
+                    lambda route: route.fulfill(
+                        content_type="application/json",
+                        body=json.dumps(
+                            {"enabled": False, "nodes": []}
+                            if "/api/federation/nodes" in route.request.url
+                            else state
+                        ),
+                    )
                 ),
             )
             page.goto(static_url)
@@ -634,7 +649,7 @@ def test_dashboard_reference_layout(static_url, tmp_path):
                 )
                 route.fulfill(content_type="application/json", body=json.dumps(payload))
 
-            page.route("**/api/**", respond)
+            page.route("**/api/**", no_auth_mock(respond))
             page.goto(static_url)
             playwright.expect(page.locator(".agent-card")).to_have_count(13)
             dashboard = page.locator("#dashboard").bounding_box()
@@ -701,7 +716,7 @@ def test_compact_global_and_terminal_headers(static_url, width):
                 payload = nodes if "/api/federation/nodes" in route.request.url else state
                 route.fulfill(content_type="application/json", body=json.dumps(payload))
 
-            page.route("**/api/**", respond)
+            page.route("**/api/**", no_auth_mock(respond))
             page.goto(static_url)
             playwright.expect(page.locator(".agent-card")).to_have_count(18)
             playwright.expect(page.locator("#swarm-selector")).to_be_visible()
@@ -790,13 +805,15 @@ def test_mobile_terminal_keys_follow_keyboard_geometry_and_preserve_focus(
             })();""")
             page.route(
                 "**/api/**",
-                lambda route: route.fulfill(
-                    content_type="application/json",
-                    body=json.dumps(
-                        {"enabled": False, "nodes": []}
-                        if "/api/federation/nodes" in route.request.url
-                        else state
-                    ),
+                no_auth_mock(
+                    lambda route: route.fulfill(
+                        content_type="application/json",
+                        body=json.dumps(
+                            {"enabled": False, "nodes": []}
+                            if "/api/federation/nodes" in route.request.url
+                            else state
+                        ),
+                    )
                 ),
             )
             page.goto(static_url)
@@ -961,8 +978,10 @@ def test_background_creation_stages_fit_compact_tiles_and_terminal_overlay(
             };""")
             page.route(
                 "**/api/**",
-                lambda route: route.fulfill(
-                    content_type="application/json", body=json.dumps(state)
+                no_auth_mock(
+                    lambda route: route.fulfill(
+                        content_type="application/json", body=json.dumps(state)
+                    )
                 ),
             )
             page.goto(static_url)
@@ -1055,8 +1074,10 @@ def test_workspace_tabs_pin_dashboard_show_status_and_frame_active_title(static_
             };""")
             page.route(
                 "**/api/**",
-                lambda route: route.fulfill(
-                    content_type="application/json", body=json.dumps(state)
+                no_auth_mock(
+                    lambda route: route.fulfill(
+                        content_type="application/json", body=json.dumps(state)
+                    )
                 ),
             )
             page.goto(static_url)

@@ -101,6 +101,7 @@ def test_cli_can_persist_waiting_timer_while_backend_is_down(timers, monkeypatch
             "Monitoring CI",
             "--wait-reason",
             "Waiting for review",
+            "--json",
         ]
     )
     assert json.loads(capsys.readouterr().out)["status"] == "waiting"

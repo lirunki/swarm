@@ -50,15 +50,76 @@ LAN IP addresses/hostnames work; browser same-origin checks remain enabled.
 Loopback mode retains its strict Host checks. Network mode also removes the
 default Host-based DNS-rebinding protection; same-origin checks are not authentication.
 
-**Network mode has no authentication. Anyone who can reach the port can read
-private data and control agents with your user account's permissions.** Use it
-only on a trusted private network with restrictive firewall rules. Do not expose
-it to the public internet or through a public reverse proxy. Swarm does not
-configure your firewall automatically.
+**Without `--password-file`, anyone who can reach the port can read private data
+and control agents with your user account's permissions.** Optional browser password
+authentication is described below. Use HTTPS and restrictive firewall rules even
+when a password is configured. Swarm does not configure your firewall automatically
+and remains a single-user tool, not an Internet-facing multi-user service.
 
 Run **one controller per registry**, with one Uvicorn worker (the CLI enforces
 the latter). It is a single-user application, not a multi-user server, a sandbox,
 or an authentication boundary against other local processes.
+
+### Optional browser password
+
+Start each controller with its own private, one-line UTF-8 password file:
+
+```bash
+# Create this file with your editor; do not put the password on a shell command line.
+chmod 600 /private/path/swarm-browser-password.txt
+swarm serve --password-file /private/path/swarm-browser-password.txt
+# For LAN access, add --host 0.0.0.0 and use HTTPS certificate options below.
+```
+
+The password file must be a regular non-symlink file, private to its owner (0600
+on POSIX), with a nonempty password of at most 1,024 characters. It is read once at
+startup; restart to change it. Missing, unreadable, empty, oversized or unsafe files
+fail startup rather than silently disabling authentication. Do not use an API key
+or relay credential as the browser password. Use a strong, unique password.
+
+The browser shows a password dialog before loading private state or controls.
+Successful sign-in creates a random bearer session; **authorization is held only
+in JavaScript memory**, separately for each Swarm. No auth cookies, localStorage
+or sessionStorage are used. Refreshing the page or opening a new page requires
+sign-in again. Password-manager behavior is up to your browser; Swarm itself does
+not save the password. Backend restart invalidates sessions; server-side sessions
+also expire after 24 hours and are bounded in number. Failed sign-ins are rate
+limited per controller. Authentication response bodies and private APIs are not
+cacheable.
+
+**Relay access uses the destination's password too.** Unlocking the local gateway
+or possessing the relay's API key does not unlock a password-protected remote Swarm.
+Selecting a protected remote prompts for that server's password. Each node enforces
+its own HTTP, file, state-stream and terminal checks. Protected fleet state is not
+broadcast to unauthenticated peers; cached state does not authorize a browser.
+Session validity is rechecked for active sockets, and before forwarding remote state
+updates, so logout/expiry cannot piggyback on another browser's authorization.
+Older unprotected peers remain accessible; upgrade all peers before relying on this
+feature to protect their data.
+
+File Open/Download and WebSockets use 30-second, one-use, path-bound access tickets
+because browser navigation/standard WebSockets cannot set bearer headers. Passwords
+and bearer sessions never go in URLs. Ticket parameters are stripped before routing
+and redacted from standard Uvicorn access/WebSocket logs; an already issued unused
+ticket remains a narrow capability until it is used, expires or its session is
+revoked. Existing third-party reverse proxies should redact query strings too.
+
+Local agent automation still works without prompting: the running controller writes
+a separate owner-only service credential to `$SWARM_HOME/api-auth/client.token`.
+Managed agents receive `SWARM_API_TOKEN_FILE`, and local CLI clients read that file
+(or the registry selected by `--home`) on each request, including after controller
+restart. This credential is accepted only from loopback clients without a browser
+Origin header, and **never as relayed browser authorization**. Anyone with access
+to the same OS account/registry already has full agent privileges; this is not a
+sandbox against local processes. Offline `swarm report` remains file-based and
+needs no browser password or running controller. Never publish the password or
+service-token files as products/references.
+
+The relay API key authenticates controller-to-relay connections; the browser
+password authenticates users to a controller. They are separate. Use HTTPS for
+browser/LAN traffic and WSS for the relay: passwords are not safe over unencrypted
+networks. The existing relay transport is not end-to-end encrypted between peers;
+relay operators and authenticated local controllers remain trusted intermediaries.
 
 ### Automatic HTTPS certificates
 
@@ -127,8 +188,9 @@ verification or replacing the relay's trust configuration. For manually invoked
 agent commands, set `SWARM_API_URL=https://127.0.0.1:8787` and
 `SWARM_API_CA_FILE=/absolute/path/to/tls/dashboard/cert.pem` in that shell too.
 
-TLS encrypts traffic; **it does not add dashboard authentication**. The network-mode
-warning above still applies. Prefer a publicly trusted certificate for production relays.
+TLS encrypts traffic; it does not enable authentication by itself. Add
+`--password-file` for the browser password gate. The network/firewall guidance above
+still applies. Prefer a publicly trusted certificate for production relays.
 
 ## Federate multiple Swarms through an Azure relay
 
@@ -1072,7 +1134,8 @@ Default storage (`SWARM_HOME` overrides `~/.swarm`):
 
 The registry is polled every 750 ms and pushed to browsers over WebSockets.
 Changes and snapshots are written using temporary files, fsync, and atomic
-rename. Reports merge under locks. Invalid/partial edits are shown as warnings;
+rename. Reports merge under locks; normalized reports with no substantive state
+change preserve the existing file and `updated_at`. Invalid/partial edits are shown as warnings;
 a live controller retains the last-good record rather than losing the row.
 Deleted files remove rows; snapshots never silently resurrect deleted records.
 Do not delete a live agent's file to stop it — use Stop first. Use **Forget agent**
@@ -1203,8 +1266,13 @@ and routes matching tasks to repository companions such as
 [`pr-monitor.md`](src/swarm/skills/pr-monitor.md) and
 [`geneva-monitor/SKILL.md`](src/swarm/skills/geneva-monitor/SKILL.md). The companions are not
 copied into Pi's global user-skill directory or separately injected on the command line.
-Agents must report **waiting before asking a question**, including before blocking
-question/confirmation tools, and return to **running** when the answer arrives.
+Agents report real status changes immediately—especially **waiting before asking a
+question**, including before blocking question/confirmation tools; dormant/timer
+changes; errors that alter progress; and completion. While running, reports are for
+major milestones or material plan changes, not each tool, test, or thought. Routine
+updates should usually be no more frequent than about once every five minutes, but
+real transitions are never delayed or dropped. A simple already-running task may skip
+an opening report, and an unchanged status/checkpoint needs no duplicate end report.
 
 Inside a managed pi shell tool:
 
@@ -1217,11 +1285,17 @@ Inside a managed pi shell tool:
 "$SWARM_PYTHON" -m swarm report --status done --wake-at none --notes 'Goal met; PR merged.'
 ```
 
-The helper captures `PI_SESSION_ID` / `PI_SESSION_FILE` and preserves unrelated
-fields. PID comes from tmux, not the shell helper. The Markdown body stores the
-checkpoint. Status is **agent-reported**, not inferred from terminal text: the
-skill must be followed. There is no pi extension or heuristic pretending to
-know when a semantic goal is accomplished.
+Successful `swarm report` calls are quiet by default; add `--json` to print the
+complete updated record. Errors remain nonzero on stderr. The helper captures
+`PI_SESSION_ID` / `PI_SESSION_FILE` and preserves unrelated fields. PID comes from
+tmux, not the shell helper. Normalized no-op reports do not rewrite the record or
+advance `updated_at` (timer cancellation and `done` normalization still apply).
+Keep activity near 80 characters and checkpoint notes as the latest delta rather
+than a full log; roughly 3–6 bullets / 1,000 characters is guidance, never a reason
+to truncate important uncertainty, side effects, or recovery details. Status is
+**agent-reported**, not inferred from terminal text: the skill must be followed.
+There is no pi extension or heuristic pretending to know when a semantic goal is
+accomplished.
 
 Other backends can publish matching files today for observation. To **launch**
 another backend, implement the adapter boundary in `adapters.py` and register it

@@ -147,6 +147,12 @@ class Store:
             if fields is None:
                 return None
             updated = self.updated(agent, fields)
+            # Validate and apply timer/status normalization before deciding whether this
+            # report changed anything. Timestamps are bookkeeping, not substantive state.
+            before = agent.model_dump(exclude={"updated_at"})
+            after = updated.model_dump(exclude={"updated_at"})
+            if after == before:
+                return agent
             content = encode(updated)
             if len(content.encode("utf-8")) > MAX_RECORD_BYTES:
                 raise ValueError("agent record exceeds 1 MiB")

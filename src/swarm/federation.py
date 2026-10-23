@@ -24,10 +24,34 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 from .relay import NODE_ID, PROTOCOL_VERSION
 
 log = logging.getLogger(__name__)
+
+
+class _NoCredentialRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, message, headers, newurl):
+        return None
+
+
 MAX_RPC_REQUEST = 512 * 1024
 MAX_RPC_RESPONSE = 129 * 1024 * 1024
 RPC_CHUNK = 384 * 1024
 ALLOWED_METHODS = {"GET", "POST", "PATCH", "DELETE"}
+_QUERY_CREDENTIALS = {
+    "api-key",
+    "api_key",
+    "access_token",
+    "auth",
+    "authorization",
+    "bearer",
+    "credential",
+    "key",
+    "password",
+    "token",
+}
+
+
+def _locked_state() -> dict[str, Any]:
+    """Return the only state safe to send before browser authentication."""
+    return {"agents": [], "home": "", "health": {}, "errors": {}, "auth_required": True}
 
 
 def _local_ssl_context() -> ssl.SSLContext:
@@ -126,10 +150,14 @@ class FederationClient:
         self,
         config: FederationConfig,
         state_provider: Callable[[], dict[str, Any]],
+        access: Any | None = None,
     ):
         config.validate()
         self.config = config
         self.state_provider = state_provider
+        # BrowserAccess is intentionally duck-typed so federation remains usable
+        # when authentication is disabled or while the auth module is optional.
+        self.access = access
         self.websocket = None
         self.ready = False
         self.last_error: str | None = None
@@ -156,6 +184,9 @@ class FederationClient:
         self.streams: dict[tuple[str, str], FederatedStream] = {}
         self.inbound_streams: dict[tuple[str, str], asyncio.Queue] = {}
         self.inbound_tasks: set[asyncio.Task] = set()
+        # Authorization is per requesting relay peer. A protected controller only
+        # adds an entry after that peer performs an authenticated state/check RPC.
+        self.authenticated_subscribers: dict[str, str] = {}
 
     def start(self) -> None:
         if not self.task:
@@ -180,6 +211,7 @@ class FederationClient:
         self._fail_connection(RuntimeError("federation client stopped"))
         self.ready = False
         self.nodes = {}
+        self.authenticated_subscribers.clear()
         await self._invalidate_remote_states()
         await self._notify_presence()
 
@@ -206,7 +238,8 @@ class FederationClient:
                                 "node_id": self.config.node_id,
                                 "name": self.config.name,
                                 "capabilities": {
-                                    "remote_restart": self.config.allow_remote_restart
+                                    "remote_restart": self.config.allow_remote_restart,
+                                    "password_required": self._auth_required(),
                                 },
                             }
                         )
@@ -223,6 +256,7 @@ class FederationClient:
                 self.websocket = None
                 self.ready = False
                 self.nodes = {}
+                self.authenticated_subscribers.clear()
                 self.presence_version = -1
                 await self._invalidate_remote_states()
                 await self._notify_presence()
@@ -263,12 +297,21 @@ class FederationClient:
                 if not isinstance(version, int) or version <= self.presence_version:
                     continue
                 self.presence_version = version
+                previous_nodes = self.nodes
                 self.nodes = {
                     item["id"]: item
                     for item in message.get("nodes", [])
                     if isinstance(item, dict) and isinstance(item.get("id"), str)
                 }
-                await self._invalidate_remote_states(set(self.nodes))
+                online = set(self.nodes)
+                replaced = {
+                    id
+                    for id in online & set(previous_nodes)
+                    if self.nodes[id].get("connected_at") != previous_nodes[id].get("connected_at")
+                }
+                for node_id in (set(self.authenticated_subscribers) - online) | replaced:
+                    self.authenticated_subscribers.pop(node_id, None)
+                await self._invalidate_remote_states(online - replaced)
                 await self._notify_presence()
                 self.queue_state()
             elif kind == "route":
@@ -315,15 +358,43 @@ class FederationClient:
             except Exception as exc:
                 log.warning("Could not publish federated state: %s", exc)
 
+    def _auth_required(self) -> bool:
+        return bool(self.access is not None and getattr(self.access, "required", False))
+
+    def _authorized(self, authorization: Any) -> bool:
+        if not self._auth_required():
+            return True
+        if not isinstance(authorization, str) or not authorization:
+            return False
+        try:
+            return bool(self.access.authorize(authorization, service_allowed=False))
+        except Exception:
+            return False
+
     async def publish_state(self) -> None:
         if not self.websocket:
             return
-        state = self.state_provider()
-        payload = {"type": "state", "state": state}
+        protected = self._auth_required()
+        full_state: dict[str, Any] | None = None
         for node_id in list(self.nodes):
-            if node_id != self.config.node_id:
-                with suppress(RuntimeError, ValueError, ConnectionClosed, TimeoutError):
-                    await self._route(node_id, payload)
+            if node_id == self.config.node_id:
+                continue
+            state: dict[str, Any]
+            if protected:
+                authorization = self.authenticated_subscribers.get(node_id, "")
+                if not self._authorized(authorization):
+                    self.authenticated_subscribers.pop(node_id, None)
+                    state = _locked_state()
+                else:
+                    if full_state is None:
+                        full_state = self.state_provider()
+                    state = full_state
+            else:
+                if full_state is None:
+                    full_state = self.state_provider()
+                state = full_state
+            with suppress(RuntimeError, ValueError, ConnectionClosed, TimeoutError):
+                await self._route(node_id, {"type": "state", "state": state})
 
     async def _invalidate_remote_states(self, online: set[str] | None = None) -> None:
         online = online or set()
@@ -348,11 +419,21 @@ class FederationClient:
             if node_id == self.config.node_id:
                 continue
             remote_state = self.remote_states.get(node_id)
+            capabilities = node.get("capabilities", {})
+            protected = isinstance(capabilities, dict) and bool(
+                capabilities.get("password_required")
+            )
             summaries.append(
                 node
                 | {
                     "online": True,
-                    "agent_count": len(remote_state.get("agents", [])) if remote_state else None,
+                    "agent_count": (
+                        None
+                        if protected
+                        else len(remote_state.get("agents", []))
+                        if remote_state
+                        else None
+                    ),
                     "state_ready": remote_state is not None,
                 }
             )
@@ -405,11 +486,33 @@ class FederationClient:
         if listeners:
             listeners.discard(queue)
 
+    @staticmethod
+    def _validate_query(query: str) -> None:
+        if not isinstance(query, str) or len(query) > 8192:
+            raise ValueError("invalid remote API query")
+        try:
+            names = (
+                name.lower() for name, _ in urllib.parse.parse_qsl(query, keep_blank_values=True)
+            )
+            if any(name in _QUERY_CREDENTIALS for name in names):
+                raise ValueError("credentials are forbidden in federated API queries")
+        except UnicodeError as exc:
+            raise ValueError("invalid remote API query") from exc
+
     async def request(
-        self, node_id: str, method: str, path: str, query: str, body: bytes
+        self,
+        node_id: str,
+        method: str,
+        path: str,
+        query: str,
+        body: bytes,
+        authorization: str = "",
     ) -> dict[str, Any]:
         if method not in ALLOWED_METHODS or not path.startswith("/api/"):
             raise ValueError("unsupported federated API request")
+        if not isinstance(authorization, str) or "\r" in authorization or "\n" in authorization:
+            raise ValueError("invalid federation authorization")
+        self._validate_query(query)
         if len(body) > MAX_RPC_REQUEST:
             raise ValueError("federated API request exceeds 512 KiB")
         request_id = str(uuid4())
@@ -425,6 +528,7 @@ class FederationClient:
                     "path": path,
                     "query": query,
                     "body": base64.b64encode(body).decode(),
+                    "authorization": authorization,
                 },
             )
             return await asyncio.wait_for(future, timeout=90)
@@ -434,8 +538,15 @@ class FederationClient:
             self.rpc_chunks.pop(request_id, None)
 
     async def open_terminal(
-        self, node_id: str, agent_id: str, cols: int, rows: int
+        self,
+        node_id: str,
+        agent_id: str,
+        cols: int,
+        rows: int,
+        authorization: str = "",
     ) -> FederatedStream:
+        if not isinstance(authorization, str) or "\r" in authorization or "\n" in authorization:
+            raise ValueError("invalid federation authorization")
         stream_id = str(uuid4())
         stream = FederatedStream(self, node_id, stream_id)
         self.streams[(node_id, stream_id)] = stream
@@ -450,6 +561,7 @@ class FederationClient:
                     "agent_id": agent_id,
                     "cols": cols,
                     "rows": rows,
+                    "authorization": authorization,
                 },
             )
             await asyncio.wait_for(future, timeout=20)
@@ -563,7 +675,27 @@ class FederationClient:
             if method not in ALLOWED_METHODS or not isinstance(path, str):
                 raise ValueError("invalid remote API request")
             self._validate_remote_path(path)
-            if path == "/api/controller/restart" and not self.config.allow_remote_restart:
+            body = base64.b64decode(payload.get("body", ""), validate=True)
+            query = payload.get("query", "")
+            self._validate_query(query)
+            authorization = payload.get("authorization", "")
+            if not isinstance(authorization, str) or "\r" in authorization or "\n" in authorization:
+                authorization = ""
+            if (
+                self._auth_required()
+                and path not in {"/api/auth/login", "/api/auth/status"}
+                and not self._authorized(authorization)
+            ):
+                # Public authentication endpoints must remain reachable for status/login.
+                # Every other path is checked here as well as by the local middleware,
+                # preventing an older peer from bypassing a protected controller.
+                response = {
+                    "status": 401,
+                    "content_type": "application/json",
+                    "content_disposition": None,
+                    "_body": b'{"detail":"authentication required"}',
+                }
+            elif path == "/api/controller/restart" and not self.config.allow_remote_restart:
                 response = {
                     "status": 403,
                     "content_type": "application/json",
@@ -571,11 +703,20 @@ class FederationClient:
                     "_body": b'{"detail":"remote controller restart is disabled"}',
                 }
             else:
-                body = base64.b64decode(payload.get("body", ""), validate=True)
-                query = payload.get("query", "")
-                if not isinstance(query, str) or len(query) > 8192:
-                    raise ValueError("invalid remote API query")
-                response = await asyncio.to_thread(self._local_request, method, path, query, body)
+                response = await asyncio.to_thread(
+                    self._local_request, method, path, query, body, authorization
+                )
+                if (
+                    self._auth_required()
+                    and method == "GET"
+                    and path in {"/api/auth/check", "/api/state"}
+                    and not body
+                    and ("subscribe", "false") not in urllib.parse.parse_qsl(query)
+                    and 200 <= response.get("status", 0) < 300
+                    and self._authorized(authorization)
+                ):
+                    self.authenticated_subscribers[sender] = authorization
+                    self.queue_state()
             content = response.pop("_body")
             if len(content) <= RPC_CHUNK:
                 await self._route(
@@ -617,16 +758,25 @@ class FederationClient:
                     },
                 )
 
-    def _local_request(self, method: str, path: str, query: str, body: bytes) -> dict[str, Any]:
+    def _local_request(
+        self,
+        method: str,
+        path: str,
+        query: str,
+        body: bytes,
+        authorization: str = "",
+    ) -> dict[str, Any]:
         url = self.config.local_api_url.rstrip("/") + path
         if query:
             url += "?" + query
         headers = {"Accept": "application/json"}
+        if authorization:
+            headers["Authorization"] = authorization
         data = body if body or method in {"POST", "PATCH"} else None
         if data is not None:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=data, method=method, headers=headers)
-        handlers = [urllib.request.ProxyHandler({})]
+        handlers = [urllib.request.ProxyHandler({}), _NoCredentialRedirects()]
         if self.config.local_api_url.lower().startswith("https://"):
             # Scoped to the loopback dashboard; never used for the remote relay.
             handlers.append(urllib.request.HTTPSHandler(context=_local_ssl_context()))
@@ -651,6 +801,11 @@ class FederationClient:
         queue: asyncio.Queue = asyncio.Queue(maxsize=128)
         self.inbound_streams[key] = queue
         try:
+            authorization = payload.get("authorization", "")
+            if not isinstance(authorization, str) or "\r" in authorization or "\n" in authorization:
+                authorization = ""
+            if self._auth_required() and not self._authorized(authorization):
+                raise PermissionError("authentication required")
             agent_id = payload.get("agent_id")
             cols, rows = int(payload.get("cols", 120)), int(payload.get("rows", 34))
             url = self.config.local_api_url.replace("http://", "ws://", 1).replace(
@@ -660,8 +815,10 @@ class FederationClient:
             # The local terminal websocket trusts the local CA only for wss://
             # loopback; ws:// needs no TLS and the remote relay is unaffected.
             local_ssl = _local_ssl_context() if url.lower().startswith("wss://") else None
+            headers = {"Authorization": authorization} if authorization else None
             async with connect(
                 url,
+                additional_headers=headers,
                 max_size=1_048_576,
                 compression=None,
                 ssl=local_ssl,
@@ -701,7 +858,15 @@ class FederationClient:
             with suppress(Exception):
                 await self._route(
                     sender,
-                    {"type": "stream.error", "stream_id": stream_id, "detail": str(exc)},
+                    {
+                        "type": "stream.error",
+                        "stream_id": stream_id,
+                        "detail": (
+                            "authentication required"
+                            if isinstance(exc, PermissionError)
+                            else "terminal connection failed"
+                        ),
+                    },
                 )
         finally:
             self.inbound_streams.pop(key, None)

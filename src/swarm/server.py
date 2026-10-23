@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .auth import MAX_LOGIN_BODY, AuthFailure, BrowserAccess, BrowserAuthMiddleware, loopback
 from .controller import Controller
 from .discovery import browse_folders, discover_models
 from .federation import MAX_RPC_REQUEST, FederationConfig
@@ -75,9 +76,12 @@ def create_app(
     api_url: str = "http://127.0.0.1:8787",
     restart_action: Callable[[], None] = restart_process,
     federation_config: FederationConfig | None = None,
+    password_file: Path | None = None,
 ) -> FastAPI:
     store = Store(home)
+    access = BrowserAccess(store.home, password_file)
     processes = Processes(store, pi, api_url)
+    processes.api_token_file = access.service_file if access.required else None
     controller = Controller(store, processes)
     orchestration = Orchestrator(controller)
     products = Products(controller)
@@ -87,7 +91,9 @@ def create_app(
     sessions = Sessions(store, session_roots)
     grok = GrokSessions(store, grok_session_roots)
     listeners: set[asyncio.Queue] = set()
-    relay_settings = RelaySettings(store, api_url, lambda: controller.state, federation_config)
+    relay_settings = RelaySettings(
+        store, api_url, lambda: controller.state, federation_config, access=access
+    )
     federation = relay_settings.client
 
     async def broadcast() -> None:
@@ -112,6 +118,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         with store.controller_lock():
+            await asyncio.to_thread(access.start)
             await asyncio.to_thread(products.collect)
             try:
                 await asyncio.to_thread(uploads.cleanup, True)
@@ -137,6 +144,7 @@ def create_app(
 
     app = FastAPI(title="Swarm", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.controller = controller
+    app.state.access = access
     app.state.orchestration = orchestration
     app.state.products = products
     app.state.uploads = uploads
@@ -150,6 +158,8 @@ def create_app(
         TrustedHostMiddleware, allowed_hosts=allowed_hosts or ["127.0.0.1", "localhost", "[::1]"]
     )
 
+    app.add_middleware(BrowserAuthMiddleware, access=access)
+
     @app.middleware("http")
     async def secure_local_access(request: Request, call_next):
         if not same_origin(request.headers):
@@ -162,7 +172,62 @@ def create_app(
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
             "connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'"
         )
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
         return response
+
+    @app.exception_handler(AuthFailure)
+    async def authentication_failure(request, exc):
+        return JSONResponse(
+            {"detail": str(exc)}, status_code=exc.status, headers={"Cache-Control": "no-store"}
+        )
+
+    async def auth_body(request: Request):
+        value = bytearray()
+        async for block in request.stream():
+            if len(value) + len(block) > MAX_LOGIN_BODY:
+                raise AuthFailure("Authentication request is too large", 413)
+            value.extend(block)
+        try:
+            body = json.loads(value)
+            if not isinstance(body, dict):
+                raise ValueError()
+            return body
+        except (ValueError, TypeError):
+            raise AuthFailure("Invalid authentication request", 400) from None
+
+    @app.get("/api/auth/status")
+    def auth_status():
+        return {"required": access.required}
+
+    @app.post("/api/auth/login")
+    async def auth_login(request: Request):
+        body = await auth_body(request)
+        if set(body) != {"password"} or not isinstance(body["password"], str):
+            raise AuthFailure("Invalid authentication request", 400)
+        return await asyncio.to_thread(access.login, body["password"])
+
+    @app.get("/api/auth/check")
+    def auth_check():
+        return {"authenticated": True}
+
+    @app.delete("/api/auth/session")
+    def auth_logout(request: Request):
+        access.logout(request.headers.get("authorization", ""))
+        return {"signed_out": True}
+
+    @app.post("/api/auth/ticket")
+    async def auth_ticket(request: Request):
+        body = await auth_body(request)
+        if set(body) != {"path"} or not isinstance(body["path"], str):
+            raise AuthFailure("Invalid access ticket request", 400)
+        ticket = access.ticket(
+            body["path"],
+            request.headers.get("authorization", ""),
+            request.headers.get("x-swarm-authorization", ""),
+            loopback(request.scope) and "origin" not in request.headers,
+        )
+        return {"ticket": ticket}
 
     @app.exception_handler(FileNotFoundError)
     async def not_found(request, exc):
@@ -284,6 +349,7 @@ def create_app(
                 "/" + remote_path.lstrip("/"),
                 request.url.query,
                 b"".join(chunks),
+                authorization=request.headers.get("x-swarm-authorization", ""),
             )
         except TimeoutError:
             return JSONResponse(
@@ -297,6 +363,8 @@ def create_app(
             "Content-Type": result.get("content_type", "application/octet-stream"),
             "Cache-Control": "no-store",
         }
+        if int(result.get("status", 502)) == 401:
+            headers["X-Swarm-Auth-Node"] = "remote"
         if result.get("content_disposition"):
             headers["Content-Disposition"] = result["content_disposition"]
         return Response(content, status_code=int(result.get("status", 502)), headers=headers)
@@ -610,10 +678,13 @@ def create_app(
         await broadcast()
         return result
 
-    async def queue_websocket(ws: WebSocket, queue: asyncio.Queue) -> None:
+    async def queue_websocket(ws: WebSocket, queue: asyncio.Queue, permission=None) -> None:
         async def sender():
             while True:
-                await ws.send_json(await queue.get())
+                value = await queue.get()
+                if permission is not None and not await permission():
+                    return
+                await ws.send_json(value)
 
         async def receiver():
             while True:
@@ -621,7 +692,15 @@ def create_app(
                 if message["type"] == "websocket.disconnect":
                     return
 
+        async def monitor_permission():
+            while True:
+                await asyncio.sleep(2)
+                if not await permission():
+                    return
+
         tasks = [asyncio.create_task(sender()), asyncio.create_task(receiver())]
+        if permission is not None:
+            tasks.append(asyncio.create_task(monitor_permission()))
         try:
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
@@ -661,15 +740,49 @@ def create_app(
         finally:
             federation.unsubscribe_presence(queue)
 
+    async def remote_browser_allowed(ws: WebSocket, node_id: str, subscribe: bool = True) -> bool:
+        # Shared peer caches never confer browser authorization. Check each connection
+        # at the destination controller, even when another browser already unlocked it.
+        try:
+            result = await federation.request(
+                node_id,
+                "GET",
+                "/api/auth/check",
+                "" if subscribe else "subscribe=false",
+                b"",
+                authorization=ws.headers.get("x-swarm-authorization", ""),
+            )
+            if int(result.get("status", 502)) == 404:
+                # Older unprotected peers have no auth-check route. Their data endpoint
+                # must itself allow the request; a protected peer still returns 401.
+                result = await federation.request(
+                    node_id,
+                    "GET",
+                    "/api/state",
+                    "",
+                    b"",
+                    authorization=ws.headers.get("x-swarm-authorization", ""),
+                )
+            if int(result.get("status", 502)) == 200:
+                return True
+        except (OSError, ValueError, RuntimeError, TimeoutError):
+            pass
+        await ws.close(code=4401, reason="Remote Swarm authentication required or unavailable")
+        return False
+
     @app.websocket("/ws/federation/{node_id}/state")
     async def federation_state_ws(ws: WebSocket, node_id: str):
         if not same_origin(ws.headers) or not federation:
             await ws.close(code=1008)
             return
+        if not await remote_browser_allowed(ws, node_id):
+            return
         await ws.accept()
         queue = federation.subscribe_state(node_id)
         try:
-            await queue_websocket(ws, queue)
+            await queue_websocket(
+                ws, queue, permission=lambda: remote_browser_allowed(ws, node_id, subscribe=False)
+            )
         finally:
             federation.unsubscribe_state(node_id, queue)
 
@@ -680,8 +793,16 @@ def create_app(
         if not same_origin(ws.headers) or not federation:
             await ws.close(code=1008)
             return
+        if not await remote_browser_allowed(ws, node_id):
+            return
         try:
-            stream = await federation.open_terminal(node_id, str(agent_id), cols, rows)
+            stream = await federation.open_terminal(
+                node_id,
+                str(agent_id),
+                cols,
+                rows,
+                authorization=ws.headers.get("x-swarm-authorization", ""),
+            )
         except (OSError, ValueError, RuntimeError, TimeoutError):
             await ws.close(code=1008, reason="remote terminal is unavailable")
             return

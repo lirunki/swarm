@@ -26,9 +26,9 @@ def payload(**changes):
 
 
 class FakeClient:
-    def __init__(self, config, state_provider):
+    def __init__(self, config, state_provider, access=None):
         config.validate()
-        self.config, self.state_provider = config, state_provider
+        self.config, self.state_provider, self.access = config, state_provider, access
         self.ready, self.last_error, self.websocket = False, None, None
         self.starts = self.closes = 0
 

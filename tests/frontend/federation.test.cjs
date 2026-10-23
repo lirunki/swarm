@@ -22,7 +22,7 @@ test('remote restart UI obeys advertised capability', () => {
 
 test('federation discovery always uses local backend rather than recursive proxy', () => {
   assert.match(source, /localApi\('\/api\/federation\/nodes'\)/);
-  assert.match(source, /wsURL\('\/ws\/federation\/presence'\)/);
+  assert.match(source, /authenticatedSocketURL\('\/ws\/federation\/presence'\)/);
 });
 
 

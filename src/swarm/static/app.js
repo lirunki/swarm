@@ -5,8 +5,8 @@ const node = (tag, cls = '', text = '') => { const el = document.createElement(t
 const button = (text, cls, action) => { const el = node('button', cls, text); el.type = 'button'; el.addEventListener('click', action); return el; };
 const labels = {running: 'Running', waiting: 'Waiting for input', dormant: 'Dormant', idle: 'Idle', done: 'Done'};
 let state = {agents: [], errors: {}, health: {}, home: ''};
-let activeTab = 'dashboard', restored = false, stateSocket, reconnectDelay = 1000;
-let restartingController = false, restartTimer, activeSwarm = 'local', stateGeneration = 0, presenceSocket;
+let activeTab = 'dashboard', restored = false, stateSocket, stateSocketPending = null, reconnectDelay = 1000;
+let restartingController = false, restartTimer, activeSwarm = 'local', stateGeneration = 0, presenceSocket, presenceSocketPending = false;
 let federationNodes = new Map(), federationRestored = false;
 let selectedSession = null, sessionData = [], wakeId = null, editId = null;
 let selectedGrokSession = null, grokSessionData = [], grokLoadSequence = 0;
@@ -22,12 +22,16 @@ function toast(message, error = false) {
 const apiPath = path => activeSwarm === 'local' ? path : `/api/federation/${encodeURIComponent(activeSwarm)}/proxy${path}`;
 const stateWSPath = () => activeSwarm === 'local' ? '/ws/state' : `/ws/federation/${encodeURIComponent(activeSwarm)}/state`;
 const terminalWSPath = id => activeSwarm === 'local' ? `/ws/terminal/${id}` : `/ws/federation/${encodeURIComponent(activeSwarm)}/terminal/${id}`;
+const browserAuth = globalThis.SwarmAuth?.BrowserAuth;
+const authenticatedFetch = (path, options) => browserAuth ? browserAuth.fetch(path, options) : fetch(path, options);
+const authenticatedSocketURL = path => browserAuth ? browserAuth.socketURL(path) : Promise.resolve(wsURL(path));
 function nonJsonResponseError(response) {
   const status = response.status || 'unknown';
   return new Error(`Server error ${status}; check backend logs. Request outcome unknown; check the card before retrying.`);
 }
 async function localApi(path, method = 'GET', body) {
-  const response = await fetch(path, {method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+  const request = typeof authenticatedFetch === 'function' ? authenticatedFetch : fetch;
+  const response = await request(path, {method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
   let value; try { value = await response.json(); } catch { throw nonJsonResponseError(response); }
   if (!response.ok) {
     const error = new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value));
@@ -36,7 +40,8 @@ async function localApi(path, method = 'GET', body) {
   return value;
 }
 async function api(path, method = 'GET', body) {
-  const response = await fetch(apiPath(path), {method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+  const request = typeof authenticatedFetch === 'function' ? authenticatedFetch : fetch;
+  const response = await request(apiPath(path), {method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
   let value; try { value = await response.json(); } catch { throw nonJsonResponseError(response); }
   if (!response.ok) {
     const error = new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value));
@@ -73,12 +78,20 @@ async function refresh() {
   try { const data = await api('/api/state'); if (generation === stateGeneration) applyState(data); }
   catch (error) { if (generation === stateGeneration) toast(error.message, true); }
 }
-function connectState() {
-  if (stateSocket && stateSocket.readyState < 2) return;
+async function connectState() {
+  if (stateSocketPending === stateGeneration || (stateSocket && stateSocket.readyState < 2)) return;
   const el = $('#connection'); el.textContent = 'Connecting…'; el.className = 'connection';
-  const generation = stateGeneration;
-  const socket = new WebSocket(wsURL(stateWSPath())); stateSocket = socket;
+  const generation = stateGeneration, path = stateWSPath(); stateSocketPending = generation;
+  let url;
+  try { url = await authenticatedSocketURL(path); }
+  catch (error) {
+    if (generation === stateGeneration) { el.textContent = error.name === 'AuthCancelledError' ? 'Sign in required' : 'Connection failed'; el.className = 'connection offline'; }
+    return;
+  } finally { if (stateSocketPending === generation) stateSocketPending = null; }
+  if (generation !== stateGeneration || path !== stateWSPath()) return;
+  const socket = new WebSocket(url); stateSocket = socket;
   socket.onopen = () => {
+    if (generation !== stateGeneration) { socket.close(); return; }
     reconnectDelay = 1000; el.textContent = activeSwarm === 'local' ? '● Live' : 'Connected'; el.className = activeSwarm === 'local' ? 'connection live' : 'connection'; refresh();
     if (restartingController) {
       restartingController = false; clearTimeout(restartTimer);
@@ -94,7 +107,9 @@ function connectState() {
       el.className = data.federation_offline ? 'connection offline' : 'connection live';
     } catch (error) { console.warn('Invalid state update', error); }
   };
-  socket.onclose = () => { if (generation !== stateGeneration) return; el.textContent = 'Reconnecting…'; el.className = 'connection offline'; setTimeout(connectState, reconnectDelay); reconnectDelay = Math.min(15000, reconnectDelay * 2); };
+  socket.onclose = (event = {}) => { if (generation !== stateGeneration) return; stateSocket = null;
+    if (event.code === 4401 && browserAuth) { browserAuth.invalidate(path); setTimeout(connectState, 1000); return; }
+    el.textContent = 'Reconnecting…'; el.className = 'connection offline'; setTimeout(connectState, reconnectDelay); reconnectDelay = Math.min(15000, reconnectDelay * 2); };
   socket.onerror = () => socket.close();
 }
 function updateRestartCapability() {
@@ -139,10 +154,15 @@ function renderSwarmSelector(data) {
 async function loadFederation() {
   try {
     const data = await localApi('/api/federation/nodes'); renderSwarmSelector(data);
-    if (!data.enabled || presenceSocket?.readyState < 2) return;
-    const socket = new WebSocket(wsURL('/ws/federation/presence')); presenceSocket = socket;
+    if (!data.enabled || presenceSocketPending || presenceSocket?.readyState < 2) return;
+    presenceSocketPending = true;
+    let url;
+    try { url = await authenticatedSocketURL('/ws/federation/presence'); } finally { presenceSocketPending = false; }
+    const socket = new WebSocket(url); presenceSocket = socket;
     socket.onmessage = event => { try { renderSwarmSelector({enabled: true, ...JSON.parse(event.data)}); } catch (error) { console.warn('Invalid federation presence', error); } };
-    socket.onclose = () => { if (presenceSocket === socket) { presenceSocket = null; setTimeout(loadFederation, 3000); } };
+    socket.onclose = (event = {}) => { if (presenceSocket === socket) { presenceSocket = null;
+      if (event.code === 4401 && browserAuth) browserAuth.invalidate('/api/state');
+      setTimeout(loadFederation, 3000); } };
     socket.onerror = () => socket.close();
   } catch (error) { console.warn('Federation discovery failed', error); }
 }
@@ -477,18 +497,29 @@ function syncTerminal(t) {
     overlay(t, compacting ? 'Session compaction is running.' : 'This agent is offline.', compacting ? 'The saved session is being updated. It stays stopped afterward; wake it explicitly when the job completes.' : 'Opening a terminal only attaches to a process. Wake the agent explicitly to continue its saved session.', a.managed && !compacting ? 'Wake agent ↗' : '', a.managed && !compacting ? () => wakeAgent(t.id) : null);
   }
 }
-function attachTerminal(t) {
-  if (t.closed || !t.term || t.ws?.readyState < 2) return;
+function attachTerminal(t) { void attachTerminalAuthenticated(t); }
+async function attachTerminalAuthenticated(t) {
+  if (t.closed || t.connecting || !t.term || t.ws?.readyState < 2) return;
   const agent = agentById(t.id);
   if (!terminalAttachable(agent)) { syncTerminal(t); return; }
-  clearTimeout(t.timer); t.timer = null;
+  clearTimeout(t.timer); t.timer = null; t.connecting = true;
+  const generation = stateGeneration;
   overlay(t, provisioningAgent(agent) ? 'Attaching setup terminal…' : 'Attaching terminal…', provisioningAgent(agent) ? 'Setup continues independently of this tab.' : 'The agent keeps running independently of this tab.');
-  const ws = new WebSocket(wsURL(`${terminalWSPath(t.id)}?cols=${t.term.cols}&rows=${t.term.rows}`)); ws.binaryType = 'arraybuffer'; t.ws = ws;
-  ws.onopen = () => { if (t.ws !== ws || t.closed) { ws.close(); return; } t.overlay.hidden = true; t.connected.textContent = '● Attached'; t.term.reset(); t.fit.fit(); t.mobileKeys?.update(); ws.send(JSON.stringify({type: 'resize', cols: t.term.cols, rows: t.term.rows})); };
+  const path = `${terminalWSPath(t.id)}?cols=${t.term.cols}&rows=${t.term.rows}`;
+  let url;
+  try { url = await authenticatedSocketURL(path); }
+  catch (error) {
+    if (!t.closed && generation === stateGeneration) overlay(t, 'Sign in required.', error.message, 'Sign in / reconnect', () => attachTerminal(t));
+    return;
+  } finally { t.connecting = false; }
+  if (t.closed || generation !== stateGeneration || !terminals.has(t.id)) return;
+  const ws = new WebSocket(url); ws.binaryType = 'arraybuffer'; t.ws = ws;
+  ws.onopen = () => { if (t.ws !== ws || t.closed || generation !== stateGeneration) { ws.close(); return; } t.overlay.hidden = true; t.connected.textContent = '● Attached'; t.term.reset(); t.fit.fit(); t.mobileKeys?.update(); ws.send(JSON.stringify({type: 'resize', cols: t.term.cols, rows: t.term.rows})); };
   ws.onmessage = event => { if (t.ws === ws && event.data instanceof ArrayBuffer) t.term.write(new Uint8Array(event.data)); };
   ws.onerror = () => ws.close();
-  ws.onclose = () => {
-    if (t.closed || t.ws !== ws) return;
+  ws.onclose = (event = {}) => {
+    if (t.closed || t.ws !== ws || generation !== stateGeneration) return;
+    if (event.code === 4401 && browserAuth) { browserAuth.invalidate(path); setTimeout(connectState, 1000); return; }
     t.connected.textContent = '○ Detached'; t.mobileKeys?.update();
     if (!terminalAttachable(agentById(t.id))) { syncTerminal(t); return; }
     overlay(t, 'Terminal disconnected.', 'Reattaching in a few seconds. The agent or setup process is not stopped by a tab disconnect.', 'Reconnect', () => { disconnectTerminal(t); attachTerminal(t); });
@@ -901,4 +932,16 @@ $('#adopt-button').addEventListener('click', () => { dashboardControls.adoption.
 $('#refresh-sessions').addEventListener('click', loadSessions); $('#session-search').addEventListener('input', renderSessions);
 $('#dashboard-tab').addEventListener('click', () => activate('dashboard')); $('#search').addEventListener('input', render);
 document.addEventListener('keydown', event => { if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && activeTab === 'dashboard' && !document.querySelector('dialog[open]')) { event.preventDefault(); $('#search').focus(); } });
+function clearUnauthorizedWorkspace(nodeId) {
+  if (nodeId !== 'local' && nodeId !== activeSwarm) return;
+  for (const id of [...terminals.keys()]) closeTerminal(id);
+  for (const dialog of document.querySelectorAll('dialog[open]')) if (dialog.id !== 'auth-dialog') dialog.close();
+  if (stateSocket) { stateSocket.onclose = null; stateSocket.close(); stateSocket = null; }
+  if (nodeId === 'local' && presenceSocket) { presenceSocket.onclose = null; presenceSocket.close(); presenceSocket = null; }
+  stateGeneration += 1; restored = false; state = {agents: [], errors: {}, health: {}, home: ''};
+  dashboardControls.status.reset(); $('#search').value = ''; activate('dashboard'); render();
+  $('#connection').textContent = 'Sign in required'; $('#connection').className = 'connection offline';
+}
+globalThis.addEventListener?.('swarm-auth-unauthorized', event => clearUnauthorizedWorkspace(event.detail?.node || 'local'));
+globalThis.addEventListener?.('swarm-auth-retry', () => { loadFederation(); refresh(); connectState(); });
 loadFederation(); refresh(); connectState();

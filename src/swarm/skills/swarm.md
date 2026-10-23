@@ -1,6 +1,6 @@
 ---
 name: swarm
-description: Report goals, activities, checkpoints, session metadata and status to the Swarm dashboard. Use throughout every Swarm-managed agent session, especially on status transitions and before ending a turn.
+description: Report goals, activities, checkpoints, session metadata and status to the Swarm dashboard. Use on real status transitions and material checkpoints without narrating routine work.
 ---
 
 # Swarm agent coordination
@@ -28,7 +28,21 @@ These companions are referenced instructions, not separately discovered `/skill:
 Do not look for or copy them under `~/.pi/agent/skills`. If this canonical file changes during
 an active Pi session, `/reload` refreshes it; then read the matching companion when needed.
 
-## Report before working, on activity transitions, and before ending every turn
+## Report real transitions and material checkpoints
+
+Report an actual status change immediately, especially entering `waiting` before a
+blocking question, entering `dormant` or scheduling/canceling a timer, encountering
+an error that changes the plan or ability to proceed, and completing the goal. While
+`running`, report only a major milestone or material plan change—not every tool call,
+test, thought, or minor activity transition. As a guideline, routine running updates
+should be no more frequent than about once every five minutes; this is not a reason to
+delay or drop a real transition.
+
+A simple task may skip an opening report when the record is already `running` and
+accurate. Before ending a turn, report only if the status changed or there is a
+material new checkpoint. Do not emit a duplicate end report merely because the turn
+is ending. Preserve meaningful uncertainty and recovery information even when that
+requires another checkpoint.
 
 Use the Python interpreter supplied by Swarm. It has the reporting tool installed:
 
@@ -38,13 +52,15 @@ Use the Python interpreter supplied by Swarm. It has the reporting tool installe
   --activities '[{"title":"Design parser","status":"done"},{"title":"Implement parser","status":"running"},{"title":"Test parser","status":"pending"}]'
 ```
 
-The command inherits SWARM_HOME and SWARM_AGENT_ID. It updates the existing
-record under a lock, atomically replaces it, and captures PI_SESSION_ID and
-PI_SESSION_FILE from pi's shell tool environment. Swarm supplies the process ID;
-do not report a shell PID as the agent PID. Preserve the goal unless it changes.
-Report actual metadata when it changes (`--branch`, `--worktree`, `--repository`,
-`--folder`). Never switch pi sessions with /new, /fork, /clone or /resume inside
-a managed process: Swarm must retain the exact session file it launched.
+The command inherits SWARM_HOME and SWARM_AGENT_ID. Success is quiet by default;
+use `--json` only when the complete updated record is explicitly needed. Errors remain
+nonzero and appear on stderr. It updates the existing record under a lock and captures
+PI_SESSION_ID and PI_SESSION_FILE from pi's shell tool environment. An update whose
+normalized substantive state is unchanged does not rewrite the record. Swarm supplies
+the process ID; do not report a shell PID as the agent PID. Preserve the goal unless
+it changes. Report actual metadata when it changes (`--branch`, `--worktree`,
+`--repository`, `--folder`). Never switch pi sessions with /new, /fork, /clone or
+/resume inside a managed process: Swarm must retain the exact session file it launched.
 
 Status values (use these exact spellings):
 
@@ -270,9 +286,12 @@ or other uncertain operations, inspect status before repeating a side effect.
 
 ## Checkpoints and recovery
 
-Use `--notes` to persist a concise Markdown checkpoint: completed work, current
-activity, exact next step, relevant URLs/PRs/artifacts, decisions, and any action
-whose result was uncertain at interruption. Notes become the Markdown body.
+Keep `--activity` concise (roughly 80 characters is a useful target). Use `--notes`
+to persist the latest checkpoint delta, not the whole session log: completed work,
+current activity, exact next step, relevant URLs/PRs/artifacts, decisions, and any
+action whose result was uncertain at interruption. About 3–6 bullets and 1,000
+characters is a useful guideline, not a hard truncation rule; retain important
+uncertainty, effects, and recovery details. Notes become the Markdown body.
 Record enough that a resumed agent can safely continue after a machine reboot.
 A "Resume where you were" prompt means read the record AND existing session
 history, verify actual Git/external state, then continue. Never blindly repeat a

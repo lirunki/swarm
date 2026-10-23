@@ -22,6 +22,7 @@ class Processes:
     def __init__(self, store: Store, pi: str = "pi", api_url: str = "http://127.0.0.1:8787"):
         self.store = store
         self.api_url = api_url
+        self.api_token_file: Path | None = None
         digest = hashlib.sha256(str(store.home).encode()).hexdigest()[:16]
         self.socket = f"swarm-{digest}"
         self.adapters: dict[str, Adapter] = {"pi": PiAdapter(pi)}
@@ -115,6 +116,8 @@ class Processes:
             "SWARM_PARENT_ID": str(agent.parent_id) if agent.parent_id else "",
             "TERM": "xterm-256color",
         }
+        if self.api_token_file is not None:
+            env["SWARM_API_TOKEN_FILE"] = str(self.api_token_file)
         # Pass the local controller CA down so child agents can verify an HTTPS dashboard.
         ca_file = os.environ.get("SWARM_API_CA_FILE")
         if ca_file:

@@ -7,20 +7,24 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=workspace-tabs-keyboard-1">
+  <link rel="stylesheet" href="/static/app.css?v=browser-auth-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=workspace-tabs-keyboard-1"></script>
-  <script defer src="/static/org-chart.js?v=workspace-tabs-keyboard-1"></script>
-  <script defer src="/static/relay-settings.js?v=workspace-tabs-keyboard-1"></script>
-  <script defer src="/static/terminal-touch.js?v=workspace-tabs-keyboard-1"></script>
-  <script defer src="/static/terminal-copy.js?v=workspace-tabs-keyboard-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=workspace-tabs-keyboard-1"></script>
-  <script defer src="/static/terminal-keys.js?v=workspace-tabs-keyboard-1"></script>
-  <script defer src="/static/agent-files.js?v=workspace-tabs-keyboard-1"></script>
-  <script defer src="/static/app.js?v=workspace-tabs-keyboard-1"></script>
+  <script defer src="/static/card-views.js?v=browser-auth-1"></script>
+  <script defer src="/static/org-chart.js?v=browser-auth-1"></script>
+  <script defer src="/static/relay-settings.js?v=browser-auth-1"></script>
+  <script defer src="/static/terminal-touch.js?v=browser-auth-1"></script>
+  <script defer src="/static/terminal-copy.js?v=browser-auth-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=browser-auth-1"></script>
+  <script defer src="/static/terminal-keys.js?v=browser-auth-1"></script>
+  <script defer src="/static/agent-files.js?v=browser-auth-1"></script>
+  <script defer src="/static/auth.js?v=browser-auth-1"></script>
+  <script defer src="/static/app.js?v=browser-auth-1"></script>
 </head>
 <body>
+  <aside id="auth-required" class="auth-required" role="status" hidden>
+    <span>Sign in is required to reconnect this workspace.</span><button id="auth-retry" type="button" class="small primary">Sign in</button>
+  </aside>
   <header class="topbar">
     <div class="brand-cluster">
       <a class="brand" href="/" aria-label="Swarm dashboard"><span class="brand-mark">⬡</span>swarm</a>
@@ -175,6 +179,16 @@
       <label>Instructions <span class="hint">optional · empty means no prompt</span><textarea name="message" rows="4" placeholder="Optional instructions…"></textarea></label>
       <p class="form-error" role="alert"></p>
       <footer class="dialog-footer"><button type="button" data-close>Cancel</button><button class="primary" type="submit">Wake agent ↗</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="auth-dialog" aria-labelledby="auth-title" aria-describedby="auth-description">
+    <form id="auth-form">
+      <header class="dialog-head"><div><div id="auth-workspace" class="eyebrow"></div><h2 id="auth-title">Sign in to Swarm</h2></div></header>
+      <p id="auth-description" class="hint">Enter the password for this workspace. Swarm keeps authorization only in memory; refreshing this page requires sign-in again.</p>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required autofocus></label>
+      <p id="auth-error" class="form-error" role="alert"></p>
+      <footer class="dialog-footer"><button type="button" data-auth-cancel>Cancel</button><button type="submit" class="primary">Sign in</button></footer>
     </form>
   </dialog>
 

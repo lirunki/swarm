@@ -33,6 +33,13 @@ is absent in another installation, use `"$SWARM_PYTHON" -m swarm.pr_monitor` for
 4. Set the shell-tool timeout slightly longer than `--timeout`; the command is intentionally
    blocking. Do not start a second monitor for the same PR while one is running.
 
+Treat starting the blocking monitor as a material `running` milestone, unless the Swarm record
+already says that accurately. Do not report each unchanged internal poll. When it exits, report
+an immediate real status change or material checkpoint based on both output files: for example,
+`waiting` before asking for a decision, `dormant` only when returning control for an external
+event/timer, or `done` only when the overall goal is complete. Skip a duplicate end report when
+neither status nor checkpoint materially changed.
+
 ## Run
 
 GHE (preferred/frequent path):

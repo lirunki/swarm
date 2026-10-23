@@ -32,11 +32,13 @@ class RelaySettings:
         local_api_url: str,
         state_provider: Callable[[], dict],
         initial: FederationConfig | None = None,
+        access=None,
     ):
         self.path = store.home / "relay-settings.json"
         self.local_api_url = initial.local_api_url if initial else local_api_url
         self.allow_remote_restart = bool(initial and initial.allow_remote_restart)
         self.state_provider = state_provider
+        self.access = access
         self.lock = asyncio.Lock()
         host = re.sub(r"[^A-Za-z0-9._-]", "-", socket.gethostname()).strip("-._") or "swarm"
         self.url = initial.url if initial else ""
@@ -53,7 +55,14 @@ class RelaySettings:
         self._load()
         if self._key and self.url:
             config = self._config(self.url, self.node_id, self.name, self._key)
-            self.client = FederationClient(config, state_provider)
+            self.client = self._new_client(config)
+
+    def _new_client(self, config: FederationConfig) -> FederationClient:
+        # Keep compatibility with auth-free integrations while ensuring a configured
+        # BrowserAccess object is shared by every replacement federation client.
+        if self.access is None:
+            return FederationClient(config, self.state_provider)
+        return FederationClient(config, self.state_provider, self.access)
 
     def _config(self, url: str, node_id: str, name: str, key: str) -> FederationConfig:
         config = FederationConfig(
@@ -161,7 +170,7 @@ class RelaySettings:
                 self.client.config = config
                 self.client.last_error = None
             else:
-                self.client = FederationClient(config, self.state_provider)
+                self.client = self._new_client(config)
             self.url, self.node_id, self.name, self._key = url, node_id, name, key
             self.enabled, self.load_error = True, None
             self.client.start()
