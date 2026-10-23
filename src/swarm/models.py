@@ -196,3 +196,21 @@ class WakeRequest(BaseModel):
     # Omitted preserves automated resume behavior; an explicit empty string means
     # "start/mark running without submitting a prompt".
     message: str | None = Field(default=None, max_length=32000)
+
+
+class TmuxActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal[
+        "split-horizontal",
+        "split-vertical",
+        "reset-layout",
+        "close-pane",
+        "new-window",
+        "zoom-pane",
+        "pane-up",
+        "pane-down",
+        "pane-left",
+        "pane-right",
+        "next-window",
+        "previous-window",
+    ]

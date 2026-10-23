@@ -475,6 +475,46 @@ class Processes:
         # Never kill by a PID supplied in a Markdown record (PID reuse after reboot).
         self.run("kill-session", "-t", self.target(agent), check=False)
 
+    def tmux_action(self, agent: Agent, action: str) -> None:
+        """Run a small allowlisted layout command in this managed agent's session."""
+        if not agent.managed:
+            raise ValueError("tmux controls require a managed agent")
+        if not self.alive(agent):
+            raise ValueError("tmux controls require a live agent")
+
+        target = self.target(agent)
+        commands = {
+            "split-horizontal": ("split-window", "-h"),
+            "split-vertical": ("split-window", "-v"),
+            "reset-layout": ("select-layout", "tiled"),
+            "new-window": ("new-window",),
+            "zoom-pane": ("resize-pane", "-Z"),
+            "pane-up": ("select-pane", "-U"),
+            "pane-down": ("select-pane", "-D"),
+            "pane-left": ("select-pane", "-L"),
+            "pane-right": ("select-pane", "-R"),
+            "next-window": ("next-window",),
+            "previous-window": ("previous-window",),
+        }
+        if action == "close-pane":
+            primary = self.identity(agent)
+            if primary is None:
+                raise RuntimeError("Could not verify the main agent pane; no pane was closed")
+            current = self.run(
+                "display-message", "-p", "-t", target, "#{pane_id}"
+            ).stdout.strip()
+            if not re.fullmatch(r"%[0-9]+", current):
+                raise RuntimeError("Could not identify the selected tmux pane; no pane was closed")
+            if current == primary["pane"]:
+                raise ValueError("Cannot close the main agent pane; select a split pane instead")
+            self.run("kill-pane", "-t", current)
+            return
+
+        command = commands.get(action)
+        if command is None:
+            raise ValueError("Unsupported tmux action")
+        self.run(*command, "-t", target)
+
     def attach_argv(self, agent: Agent) -> list[str]:
         return self.argv("attach-session", "-t", self.target(agent))
 

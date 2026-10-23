@@ -30,6 +30,50 @@ def make_app(tmp_path, **kwargs):
     return create_app(tmp_path / "swarm", recover=False, allowed_hosts=["testserver"], **kwargs)
 
 
+def test_tmux_action_api_accepts_only_allowlisted_actions(tmp_path, monkeypatch):
+    app = make_app(tmp_path)
+    controller = app.state.controller
+    agent = controller.store.create(
+        Agent(name="Worker", goal="Do work", folder=str(tmp_path), managed=True)
+    )
+    calls = []
+    monkeypatch.setattr(
+        controller.processes,
+        "tmux_action",
+        lambda selected, action: calls.append((str(selected.id), action)),
+    )
+    with TestClient(app) as client:
+        response = client.post(f"/api/agents/{agent.id}/tmux", json={"action": "split-horizontal"})
+        assert response.status_code == 200
+        assert response.json() == {"action": "split-horizontal", "sent": True}
+        invalid = client.post(f"/api/agents/{agent.id}/tmux", json={"action": "send-keys"})
+        assert invalid.status_code == 422
+    assert calls == [(str(agent.id), "split-horizontal")]
+
+
+def test_tmux_command_api_validates_and_routes_safe_actions(tmp_path, monkeypatch):
+    app = make_app(tmp_path)
+    controller = app.state.controller
+    agent = controller.store.create(
+        Agent(name="Worker", goal="Run tests", folder=str(tmp_path), managed=True)
+    )
+    actions = []
+    monkeypatch.setattr(
+        controller.processes,
+        "tmux_action",
+        lambda selected, action: actions.append((str(selected.id), action)),
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/agents/{agent.id}/tmux", json={"action": "split-horizontal"}
+        )
+        assert response.status_code == 200
+        assert response.json() == {"action": "split-horizontal", "sent": True}
+        invalid = client.post(f"/api/agents/{agent.id}/tmux", json={"action": "send-keys"})
+        assert invalid.status_code == 422
+    assert actions == [(str(agent.id), "split-horizontal")]
+
+
 def test_state_static_security_and_validation(tmp_path):
     app = make_app(tmp_path)
     with TestClient(app) as client:

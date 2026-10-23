@@ -58,7 +58,7 @@ test('versioned topbar menu opens a safe custom preview for only the selected Sw
   const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
   assert.match(html, /id="fleet-control-button"[^>]*>⋯<\/button>/);
   assert.ok(html.indexOf('fleet-control-button') < html.indexOf('restart-controller'));
-  for (const asset of ['app.css', 'fleet-control.js', 'app.js']) assert.ok(html.includes(`/static/${asset}?v=fleet-control-1`));
+  for (const asset of ['app.css', 'fleet-control.js', 'app.js']) assert.ok(html.includes(`/static/${asset}?v=fleet-control-2`));
   const t = fixture(standardApi); t.elements['#fleet-control-button'].click(); await tick(); await tick();
   assert.equal(t.elements['#fleet-restart-dialog'].open, true); assert.equal(t.elements['#fleet-restart-cancel'].focused, true);
   assert.deepEqual(t.calls.map(call => call[0]), ['/api/fleet/restarts', '/api/fleet/restarts/preview']);

@@ -18,7 +18,7 @@ from urllib.parse import quote, urlsplit
 from uuid import UUID
 
 from anyio import CancelScope
-from fastapi import BackgroundTasks, FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -34,7 +34,7 @@ from .files import FileRequest, FileUnavailable
 from .importers.grok import GrokImportRequest, GrokSessions
 from .messaging import MessageRequest
 from .meta_compact import MetaCompactor, MetaCompactRequest, require_not_busy
-from .models import AgentPatch, CreateAgent, WakeRequest
+from .models import AgentPatch, CreateAgent, TmuxActionRequest, WakeRequest
 from .orchestration import ChildMessage, ChildStop, Orchestrator, OwnershipError, SpawnRequest
 from .processes import Processes
 from .products import ProductRequest, Products
@@ -501,6 +501,23 @@ def create_app(
         return JSONResponse(
             {"detail": str(exc)}, status_code=exc.status, headers={"Cache-Control": "no-store"}
         )
+
+    @app.post("/api/agents/{agent_id}/tmux")
+    async def tmux_action(agent_id: UUID, request: TmuxActionRequest):
+        def run_action():
+            with controller.lock:
+                agent = store.get(agent_id)
+                require_not_busy(agent)
+                require_not_restarting(agent)
+                if agent.stop_pending or agent.orchestration_stop:
+                    raise RuntimeError("Agent is stopping; tmux controls are unavailable")
+                processes.tmux_action(agent, request.action)
+
+        try:
+            await asyncio.to_thread(run_action)
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return {"action": request.action, "sent": True}
 
     @app.get("/api/agents/{agent_id}/files")
     def list_agent_files(agent_id: UUID):

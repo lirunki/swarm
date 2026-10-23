@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import subprocess
+
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -66,6 +68,97 @@ def test_launch_omits_ca_file_when_unset(tmp_path, monkeypatch):
 
     env = _new_session_env(_launching(proc, agent))
     assert env == []
+
+
+@pytest.mark.parametrize(
+    "action,expected",
+    [
+        ("split-horizontal", ("split-window", "-h")),
+        ("split-vertical", ("split-window", "-v")),
+        ("reset-layout", ("select-layout", "tiled")),
+        ("new-window", ("new-window",)),
+        ("zoom-pane", ("resize-pane", "-Z")),
+        ("pane-up", ("select-pane", "-U")),
+        ("pane-down", ("select-pane", "-D")),
+        ("pane-left", ("select-pane", "-L")),
+        ("pane-right", ("select-pane", "-R")),
+        ("next-window", ("next-window",)),
+        ("previous-window", ("previous-window",)),
+    ],
+)
+def test_tmux_menu_dispatches_only_mapped_layout_commands(tmp_path, action, expected):
+    store = Store(tmp_path / "registry")
+    agent = _make_agent(store, tmp_path / "work")
+    proc = Processes(store)
+    commands = []
+
+    def run(*args, **kwargs):
+        commands.append(args)
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    proc.run = run
+    proc.alive = lambda _: True
+    proc.tmux_action(agent, action)
+
+    assert commands == [(*expected, "-t", proc.target(agent))]
+
+
+def test_tmux_close_split_preserves_primary_agent_pane(tmp_path):
+    store = Store(tmp_path / "registry")
+    agent = _make_agent(store, tmp_path / "work")
+    proc = Processes(store)
+    commands = []
+
+    def run(*args, **kwargs):
+        commands.append(args)
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout="%1\n" if args[0] == "display-message" else "",
+            stderr="",
+        )
+
+    proc.run = run
+    proc.alive = lambda _: True
+    proc.identity = lambda _: {"pane": "%1"}
+    with pytest.raises(ValueError, match="main agent pane"):
+        proc.tmux_action(agent, "close-pane")
+    assert [command[0] for command in commands] == ["display-message"]
+
+
+def test_tmux_close_split_targets_non_primary_pane_only(tmp_path):
+    store = Store(tmp_path / "registry")
+    agent = _make_agent(store, tmp_path / "work")
+    proc = Processes(store)
+    commands = []
+
+    def run(*args, **kwargs):
+        commands.append(args)
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout="%2\n" if args[0] == "display-message" else "",
+            stderr="",
+        )
+
+    proc.run = run
+    proc.alive = lambda _: True
+    proc.identity = lambda _: {"pane": "%1"}
+    proc.tmux_action(agent, "close-pane")
+    assert commands[-1] == ("kill-pane", "-t", "%2")
+
+
+def test_tmux_menu_rejects_unmanaged_and_unknown_actions(tmp_path):
+    store = Store(tmp_path / "registry")
+    agent = _make_agent(store, tmp_path / "work")
+    proc = Processes(store)
+    agent.managed = False
+    with pytest.raises(ValueError, match="managed agent"):
+        proc.tmux_action(agent, "new-window")
+    agent.managed = True
+    proc.alive = lambda _: True
+    with pytest.raises(ValueError, match="Unsupported tmux action"):
+        proc.tmux_action(agent, "send-keys")
 
 
 def test_launch_still_passes_api_url(tmp_path, monkeypatch):

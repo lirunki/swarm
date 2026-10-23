@@ -248,6 +248,79 @@ function openAgentFiles(id) {
   const workspace = activeSwarm === 'local' ? 'Local Swarm' : federationNodes.get(activeSwarm)?.name || activeSwarm;
   agentFilesDialog.open(agent, apiPath(`/api/agents/${encodeURIComponent(id)}/files`), workspace);
 }
+const tmuxMenuItems = [
+  {heading: 'Layout'},
+  {label: 'Split vertical · side-by-side', action: 'split-horizontal'},
+  {label: 'Split horizontal · top/bottom', action: 'split-vertical'},
+  {label: 'Reset layout (tiled)', action: 'reset-layout'},
+  {label: 'Close current split', action: 'close-pane', title: 'Closes the selected split pane; the main agent pane is protected.'},
+  {label: 'Zoom / restore pane', action: 'zoom-pane'},
+  {heading: 'Focus pane'},
+  {label: 'Focus left pane', action: 'pane-left'},
+  {label: 'Focus right pane', action: 'pane-right'},
+  {label: 'Focus pane above', action: 'pane-up'},
+  {label: 'Focus pane below', action: 'pane-down'},
+  {heading: 'Windows'},
+  {label: 'Open terminal (new window)', action: 'new-window'},
+  {label: 'Next window', action: 'next-window'},
+  {label: 'Previous window', action: 'previous-window'},
+];
+function setTmuxMenuOpen(control, open) {
+  control.menu.hidden = !open;
+  control.toggle.setAttribute('aria-expanded', String(open));
+}
+function createTmuxControls(id) {
+  const wrapper = node('div', 'terminal-tmux-control');
+  const toggle = button('tmux', 'small terminal-tmux-button', () => {
+    const open = toggle.getAttribute('aria-expanded') !== 'true';
+    for (const t of terminals.values()) if (t.tmuxControl && t.tmuxControl !== control) setTmuxMenuOpen(t.tmuxControl, false);
+    setTmuxMenuOpen(control, open);
+  });
+  const menu = node('div', 'terminal-tmux-menu');
+  menu.id = `tmux-menu-${id}`; menu.hidden = true; menu.setAttribute('role', 'group'); menu.setAttribute('aria-label', 'Tmux commands');
+  toggle.setAttribute('aria-expanded', 'false'); toggle.setAttribute('aria-controls', menu.id);
+  toggle.title = 'Pane and window commands for this agent tmux session';
+  const control = {wrapper, toggle, menu, buttons: []};
+  for (const command of tmuxMenuItems) {
+    if (command.heading) { menu.append(node('div', 'terminal-tmux-heading', command.heading)); continue; }
+    const item = button(command.label, 'terminal-tmux-item', async () => {
+      if (item.disabled) return;
+      item.disabled = true; item.dataset.busy = 'true';
+      try {
+        await api(`/api/agents/${encodeURIComponent(id)}/tmux`, 'POST', {action: command.action});
+        toast(`${command.label} sent to tmux.`);
+      } catch (error) {
+        toast(error.status ? error.message : `Tmux action outcome is unknown; inspect the pane layout before retrying. ${error.message}`, true);
+      } finally {
+        delete item.dataset.busy;
+        setTmuxMenuOpen(control, false);
+        syncTmuxControls(control, agentById(id));
+      }
+    });
+    item.title = command.title || command.label;
+    menu.append(item); control.buttons.push(item);
+  }
+  wrapper.append(toggle, menu);
+  return control;
+}
+function syncTmuxControls(control, agent) {
+  const ready = !!agent?.managed && agent.alive === true && !agent.stop_pending && !agent.orchestration_stop && !restartInProgress(agent) && !compactionBlocked(agent);
+  control.toggle.disabled = !ready;
+  if (!ready) setTmuxMenuOpen(control, false);
+  control.toggle.title = ready ? 'Pane and window commands for this agent tmux session' : 'Tmux controls require a live, managed agent that is not stopping or busy';
+  for (const item of control.buttons) item.disabled = !ready || item.disabled && item.dataset.busy === 'true';
+}
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('pointerdown', event => {
+    for (const t of terminals.values()) if (t.tmuxControl && !t.tmuxControl.wrapper.contains(event.target)) setTmuxMenuOpen(t.tmuxControl, false);
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    for (const t of terminals.values()) if (t.tmuxControl?.toggle.getAttribute('aria-expanded') === 'true') {
+      setTmuxMenuOpen(t.tmuxControl, false); t.tmuxControl.toggle.focus(); event.preventDefault();
+    }
+  });
+}
 function openAgentMessages(id) {
   const agent = agentById(id); if (!agent?.managed) return;
   const workspace = activeSwarm === 'local' ? 'Local Swarm' : federationNodes.get(activeSwarm)?.name || activeSwarm;
@@ -468,13 +541,14 @@ function openTerminal(id, focus = true) {
     const title = node('strong'), info = node('span', 'hint terminal-info'), connected = node('span', 'hint terminal-connection', 'Detached');
     const copyButton = node('button', 'small terminal-copy-button', 'Copy text'); copyButton.type = 'button'; copyButton.hidden = true; copyButton.dataset.agentId = id;
     const filesButton = button('Files', 'small terminal-files', () => openAgentFiles(id));
-    header.append(title, info, connected, copyButton, filesButton, button('↻ Reconnect', 'small', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); }));
+    const tmuxControl = createTmuxControls(id);
+    header.append(title, info, connected, copyButton, filesButton, tmuxControl.wrapper, button('↻ Reconnect', 'small', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); }));
     const surface = node('div', 'terminal-surface'), screen = node('div', 'terminal-screen'), overlay = node('div', 'terminal-overlay');
     surface.append(screen, overlay); pane.append(header, surface); $('#terminals').append(pane);
     const group = node('span', 'tab-group'), tab = button('', 'tab', () => activate(id));
     const tabLabel = node('span', 'tab-label'); tab.append(node('span', '', '›_'), tabLabel);
     group.append(tab, button('×', 'tab-close', () => closeTerminal(id))); $('.tab-close', group).setAttribute('aria-label', 'Close terminal tab'); $('#tabs').append(group);
-    const t = {id, pane, title, info, connected, screen, overlay, group, tab, tabLabel, copyButton, filesButton, term: null, fit: null, ws: null, timer: null, closed: false};
+    const t = {id, pane, title, info, connected, screen, overlay, group, tab, tabLabel, copyButton, filesButton, tmuxControl, term: null, fit: null, ws: null, timer: null, closed: false};
     terminals.set(id, t); syncTerminal(t);
   }
   if (focus) activate(id); else remember();
@@ -518,6 +592,7 @@ function terminalAttachable(a) {
 function syncTerminal(t) {
   const a = agentById(t.id); if (!a) return;
   syncFilesButton(t.filesButton, a);
+  syncTmuxControls(t.tmuxControl, a);
   t.mobileKeys?.update();
   t.title.textContent = a.name; t.title.title = a.name; t.tabLabel.textContent = a.name;
   t.group.dataset.status = a.status;

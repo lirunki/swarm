@@ -1090,6 +1090,12 @@ def test_workspace_tabs_pin_dashboard_show_status_and_frame_active_title(static_
             dashboard = page.locator("#dashboard-tab")
             groups = page.locator(".tab-group")
             playwright.expect(groups).to_have_count(18)
+            playwright.expect(dashboard).to_have_css("color", "rgb(255, 161, 106)")
+            playwright.expect(page.locator(".terminal-files + .terminal-tmux-control")).to_have_count(18)
+            playwright.expect(page.locator(".terminal-tmux-button").first).to_be_disabled()
+            playwright.expect(
+                page.locator(".terminal-tmux-item").filter(has_text="Split vertical · side-by-side")
+            ).to_have_count(18)
             for index, status in enumerate(palette):
                 playwright.expect(groups.nth(index).locator(".tab-label")).to_have_css(
                     "color", palette[status]
@@ -1127,6 +1133,7 @@ def test_workspace_tabs_pin_dashboard_show_status_and_frame_active_title(static_
             playwright.expect(dashboard).to_have_attribute("aria-current", "page")
             playwright.expect(active).to_have_attribute("aria-current", "false")
             playwright.expect(page.locator("#dashboard")).to_be_visible()
+            playwright.expect(dashboard).to_have_css("color", "rgb(255, 161, 106)")
             assert dashboard.evaluate("e => getComputedStyle(e,'::after').borderTopWidth") == "1px"
             assert page.evaluate("document.body.scrollWidth <= innerWidth")
             assert not errors

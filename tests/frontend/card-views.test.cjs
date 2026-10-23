@@ -540,15 +540,17 @@ test('compact terminal visibility does not depend on a new helper version', () =
   }
 });
 
-test('terminal toolbar keeps reconnect but removes redundant Wake and Close tab', () => {
+test('terminal toolbar keeps reconnect and exposes a scoped tmux command menu', async () => {
   const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
-  const a = fullAgent('running', true), calls = [], panels = new Element('div'), tabs = new Element('div');
+  const a = fullAgent('running', true), calls = [], tmuxCalls = [], panels = new Element('div'), tabs = new Element('div');
   const node = (tag, cls = '', text = '') => { const el = new Element(tag); el.className = cls; if (text) el.textContent = text; return el; };
   const context = vm.createContext({
     node, button: (text, cls, fn) => { const el = node('button', cls, text); el.addEventListener('click', fn); return el; },
+    document: {createElement: tag => new Element(tag)},
     $: (selector, root) => root ? find(root, selector.slice(1)) : selector === '#terminals' ? panels : tabs,
     agentById: id => id === a.id ? a : null, terminals: new Map(), labels: {running: 'Running'},
-    compactionBlocked: () => false, remember() {}, activate: id => calls.push(['activate', id]),
+    api: async (...args) => tmuxCalls.push(args), toast() {},
+    compactionBlocked: () => false, restartInProgress: () => false, remember() {}, activate: id => calls.push(['activate', id]),
     closeTerminal: id => calls.push(['close', id]), wakeAgent: id => calls.push(['wake', id]),
     disconnectTerminal: t => calls.push(['disconnect', t.id]), attachTerminal: t => calls.push(['attach', t.id]),
     overlay: (...args) => calls.push(['overlay', ...args.slice(1)]),
@@ -556,13 +558,27 @@ test('terminal toolbar keeps reconnect but removes redundant Wake and Close tab'
   const open = source.slice(source.indexOf('function openTerminal('), source.indexOf('function initTerminal('));
   const sync = source.slice(source.indexOf('function terminalAttachable('), source.indexOf('function attachTerminal('));
   const filesState = source.slice(source.indexOf('function agentFileCount('), source.indexOf('function openAgentFiles('));
+  const tmuxState = source.slice(source.indexOf('const tmuxMenuItems'), source.indexOf('function openAgentMessages('));
   const setupState = source.slice(source.indexOf('const provisioningAgent'), source.indexOf('function badge('));
-  vm.runInContext(setupState + '\n' + filesState + '\n' + open + '\n' + sync, context);
+  vm.runInContext(setupState + '\n' + filesState + '\n' + tmuxState + '\n' + open + '\n' + sync, context);
   context.openTerminal(a.id);
   const t = context.terminals.get(a.id), header = t.pane.childNodes[0];
-  assert.deepEqual(walk(header).filter(el => el.tagName === 'BUTTON' && !el.hidden).map(el => el.textContent), ['Files', '↻ Reconnect']);
+  assert.deepEqual(header.childNodes.filter(el => el.tagName === 'BUTTON' && !el.hidden).map(el => el.textContent), ['Files', '↻ Reconnect']);
+  assert.equal(t.tmuxControl.toggle.textContent, 'tmux');
   assert.equal('wakeButton' in t, false);
   assert.equal(t.filesButton, find(header, 'terminal-files'));
+  assert.equal(t.tmuxControl.toggle, find(header, 'terminal-tmux-button'));
+  assert.equal(t.tmuxControl.menu.hidden, true);
+  t.tmuxControl.toggle.click();
+  assert.equal(t.tmuxControl.menu.hidden, false);
+  const split = find(t.tmuxControl.menu, 'terminal-tmux-item');
+  assert.ok(split.textContent.startsWith('Split vertical'));
+  await split.events.get('click')();
+  assert.equal(tmuxCalls.length, 1);
+  assert.equal(tmuxCalls[0][0], `/api/agents/${a.id}/tmux`);
+  assert.equal(tmuxCalls[0][1], 'POST');
+  assert.equal(tmuxCalls[0][2].action, 'split-horizontal');
+  assert.equal(t.tmuxControl.menu.hidden, true);
   assert.equal(t.filesButton.classList.contains('has-files'), false);
   a.file_count = 2; context.syncTerminal(t);
   assert.equal(t.filesButton.classList.contains('has-files'), true);
@@ -643,6 +659,12 @@ test('expanded cards show persistent timer delivery and retry details', () => {
   assert.match(visibleText(render(a)), /Handed to agent process/);
 });
 
+
+test('Dashboard tab label keeps the orange accent when active or inactive', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.css'), 'utf8');
+  assert.match(css, /#dashboard-tab\{[^}]*color:var\(--accent\)[^}]*\}/);
+  assert.match(css, /--accent:#ffa16a/);
+});
 
 test('tab activation marks only the selected title current, including pinned Dashboard', () => {
   const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
