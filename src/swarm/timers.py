@@ -41,6 +41,7 @@ def eligible(agent: Agent) -> bool:
         and agent.auto_resume
         and agent.status != Status.done
         and not busy(agent)
+        and not getattr(agent, "restart_job_id", None)
         and agent.spawn_state in {None, "ready"}
         and not getattr(agent, "stop_pending", False)
         and not getattr(agent, "orchestration_stop", None)

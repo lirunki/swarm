@@ -141,6 +141,7 @@ class Store:
             agent.status in {Status.dormant, Status.done}
             or getattr(agent, "stop_pending", False)
             or getattr(agent, "orchestration_stop", None)
+            or getattr(agent, "restart_job_id", None)
         ):
             return
         directory = self.home / "control" / str(agent.id)

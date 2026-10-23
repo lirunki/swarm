@@ -397,6 +397,8 @@ class MetaCompactor:
 
     def eligible(self, agent: Agent) -> Path:
         require_not_busy(agent)
+        if getattr(agent, "restart_job_id", None):
+            raise RuntimeError("Agent restart is in progress; compaction is unavailable")
         if not agent.managed or agent.backend != "pi" or not agent.session_file:
             raise ValueError("Meta-compact requires a managed Pi agent with a saved session")
         if self.controller.processes.alive(agent):

@@ -328,6 +328,7 @@ class Messages:
             agent.managed
             and agent.status not in {Status.dormant, Status.done}
             and agent.spawn_state in {None, "ready"}
+            and not getattr(agent, "restart_job_id", None)
             and not busy(agent)
             and not getattr(agent, "stop_pending", False)
             and not getattr(agent, "orchestration_stop", None)

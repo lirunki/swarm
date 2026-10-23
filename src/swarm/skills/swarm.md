@@ -260,6 +260,27 @@ offline. Finish the current turn after queuing; do not poll in a tool or invoke 
 second command directly to force it. `/compact` can make a charged model request.
 A live `/model` change does not overwrite a configured Swarm startup-model pin.
 
+## Operator fleet restarts
+
+The dashboard's **⋯ Master control** can gracefully restart a frozen set of live
+managed processes. This is an operator action requiring explicit user approval;
+do not initiate fleet restarts on your own or emulate them through tmux.
+
+An active `restart_job_id`/`restart` record reserves your process. Finish/checkpoint
+current work normally; the native extension waits for idle/pending-message drain,
+then handles the controller's private prepare/commit shutdown request. Do not clear
+those fields or report fabricated completion. The controller monitors actual exit
+and reopens the same session/worktree without a work prompt. Your latest goal,
+status, checkpoint, timers and child waits are preserved. Ordinary mail and automatic
+wakes are held while the reservation is active and may resume afterwards.
+
+A timeout never authorizes an automatic kill. Legacy `/quit` and Force restart
+are separately warned operator fallbacks, not model-callable self-commands. The
+`swarm_session_command` tool still rejects `/quit` and session-switching commands.
+Explicit Stop cancels relaunch intent using normal Stop semantics. This applies only
+to selected live processes on one Swarm; stopped agents are not woken by the batch.
+Unsent terminal drafts can be lost on exit, so do not promise their preservation.
+
 ## Orchestrating direct children
 
 A managed agent may create and control only its **direct children** through the local

@@ -39,6 +39,7 @@ from .orchestration import ChildMessage, ChildStop, Orchestrator, OwnershipError
 from .processes import Processes
 from .products import ProductRequest, Products
 from .relay_settings import RelayConnectRequest, RelaySettings
+from .restarts import RestartAction, RestartRequest, require_not_restarting
 from .sessions import AdoptRequest, Sessions
 from .store import Store
 from .terminal import bridge
@@ -69,14 +70,10 @@ class ClientIPAllowlistMiddleware:
             if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
                 address = address.ipv4_mapped
             raw_port = (
-                client[1]
-                if client and len(client) > 1 and isinstance(client[1], int)
-                else None
+                client[1] if client and len(client) > 1 and isinstance(client[1], int) else None
             )
             peer = (str(address) if address else "unknown", raw_port)
-            peer_label = (
-                f"[{peer[0]}]:{peer[1]}" if ":" in peer[0] else f"{peer[0]}:{peer[1]}"
-            )
+            peer_label = f"[{peer[0]}]:{peer[1]}" if ":" in peer[0] else f"{peer[0]}:{peer[1]}"
             if peer not in self._logged_peers:
                 if len(self._peer_order) >= 1024:
                     self._logged_peers.discard(self._peer_order.popleft())
@@ -85,9 +82,7 @@ class ClientIPAllowlistMiddleware:
                 if address in self.allowed_ips:
                     client_log.info("Accepted new IP-allowlisted client %s", peer_label)
                 else:
-                    client_log.warning(
-                        "Rejected new client %s: IP is not allowlisted", peer_label
-                    )
+                    client_log.warning("Rejected new client %s: IP is not allowlisted", peer_label)
             if address not in self.allowed_ips:
                 if scope["type"] == "websocket":
                     await send(
@@ -193,6 +188,7 @@ def create_app(
                 await asyncio.to_thread(uploads.cleanup, True)
             except (OSError, ValueError, RuntimeError):
                 log.exception("Could not clean expired upload sessions")
+            await asyncio.to_thread(controller.restarts.recover)
             await asyncio.to_thread(orchestration.recover)
             await asyncio.to_thread(tool_input_compactor.recover)
             await asyncio.to_thread(meta_compactor.recover)
@@ -357,6 +353,35 @@ def create_app(
         controller.refresh()
         return controller.state
 
+    @app.get("/api/fleet/restarts/preview")
+    async def fleet_restart_preview():
+        return await asyncio.to_thread(controller.restarts.preview)
+
+    @app.post("/api/fleet/restarts", status_code=202)
+    async def fleet_restart_start(request: RestartRequest):
+        result = await asyncio.to_thread(controller.restarts.start, request)
+        try:
+            await broadcast()
+        except Exception:
+            log.exception("Restart job persisted; deferred broadcast")
+        return result
+
+    @app.get("/api/fleet/restarts")
+    async def fleet_restart_jobs():
+        return await asyncio.to_thread(controller.restarts.list)
+
+    @app.get("/api/fleet/restarts/{job_id}")
+    async def fleet_restart_job(job_id: UUID):
+        return await asyncio.to_thread(controller.restarts.get, job_id)
+
+    @app.post("/api/fleet/restarts/{job_id}/{action}")
+    async def fleet_restart_action(job_id: UUID, action: str, request: RestartAction):
+        if action not in {"force", "legacy", "cancel"}:
+            raise ValueError("Unknown restart action")
+        result = await asyncio.to_thread(controller.restarts.action, job_id, request, action)
+        await broadcast()
+        return result
+
     @app.post("/api/controller/restart", status_code=202)
     async def restart_controller(background_tasks: BackgroundTasks):
         # Starlette starts background tasks only after sending the response. The
@@ -462,6 +487,7 @@ def create_app(
         def update():
             with controller.lock:
                 require_not_busy(store.get(agent_id))
+                require_not_restarting(store.get(agent_id))
                 agent = store.update(agent_id, request.model_dump(exclude_unset=True))
                 controller.refresh()
                 return agent.model_dump(mode="json") | {"alive": processes.alive(agent)}

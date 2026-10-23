@@ -695,12 +695,24 @@ class FederationClient:
                     "content_disposition": None,
                     "_body": b'{"detail":"authentication required"}',
                 }
-            elif path == "/api/controller/restart" and not self.config.allow_remote_restart:
+            elif (
+                path == "/api/controller/restart"
+                or (
+                    path.startswith("/api/fleet/restarts")
+                    and method in {"POST", "PUT", "PATCH", "DELETE"}
+                )
+            ) and not self.config.allow_remote_restart:
                 response = {
                     "status": 403,
                     "content_type": "application/json",
                     "content_disposition": None,
-                    "_body": b'{"detail":"remote controller restart is disabled"}',
+                    "_body": json.dumps(
+                        {
+                            "detail": "remote controller restart is disabled"
+                            if path == "/api/controller/restart"
+                            else "remote fleet restart is disabled; enable --allow-remote-restart"
+                        }
+                    ).encode(),
                 }
             else:
                 response = await asyncio.to_thread(

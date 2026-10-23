@@ -161,6 +161,7 @@ class Orchestrator:
     def active(self, agent: Agent) -> bool:
         return (
             agent.spawn_state == "provisioning"
+            or bool(getattr(agent, "restart_job_id", None))
             or self.controller.processes.alive(agent)
             or (agent.managed and agent.auto_resume and agent.status != Status.done)
         )
@@ -266,6 +267,7 @@ class Orchestrator:
             require_not_busy(child)
             if (
                 force
+                or getattr(child, "restart_job_id", None)
                 or child.spawn_state == "provisioning"
                 or child.status != Status.running
                 or not self.controller.processes.alive(child)
@@ -301,6 +303,8 @@ class Orchestrator:
             return self.describe(self.store.get(child.id))
 
     def attention(self, child: Agent) -> bool:
+        if getattr(child, "restart_job_id", None):
+            return False  # A planned process exit is not a child failure/completion event.
         if child.spawn_state == "provisioning" and not child.last_error:
             return False  # Queued setup is legitimate work even before its pane is launched.
         return (
@@ -339,7 +343,7 @@ class Orchestrator:
     def tick(self) -> bool:
         with self.controller.lock:
             for agent in self.store.scan():
-                if busy(agent):
+                if busy(agent) or getattr(agent, "restart_job_id", None):
                     continue
                 stop = getattr(agent, "orchestration_stop", None)
                 if stop:

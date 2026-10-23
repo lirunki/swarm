@@ -183,6 +183,56 @@ function mailboxExtension(pi) {
       (item.sender_name === undefined || typeof item.sender_name === "string");
   }
 
+  function validLifecycleRequest(state, request) {
+    return request && isUUID(request.id) && isUUID(request.agent_id) && isUUID(request.epoch) &&
+      isUUID(request.session_id) && request.agent_id === state.config.agentId &&
+      request.epoch === state.config.epoch && request.session_id === state.sessionId &&
+      request.action === "shutdown" && (request.phase === "prepare" || request.phase === "commit") &&
+      typeof request.requested_at === "string" && !Number.isNaN(Date.parse(request.requested_at));
+  }
+
+  function readLifecycleRequest(state) {
+    try {
+      const request = readJsonBounded(path.join(state.config.directory, "lifecycle.json"), MAX_RECEIPT_BYTES);
+      return validLifecycleRequest(state, request) ? request : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function readLifecycleAck(state) {
+    try {
+      const ack = readJsonBounded(path.join(state.config.directory, "lifecycle-ack.json"), MAX_RECEIPT_BYTES);
+      if (ack && isUUID(ack.id) && ack.agent_id === state.config.agentId &&
+          ack.epoch === state.config.epoch && ack.session_id === state.sessionId &&
+          ["waiting_for_idle", "ready", "shutdown_requested", "failed"].includes(ack.state)) return ack;
+    } catch (_) { /* A missing, partial, or foreign acknowledgement is not authoritative. */ }
+    return null;
+  }
+
+  function writeLifecycleAck(state, request, ackState, error) {
+    const existing = readLifecycleAck(state);
+    const normalizedError = error ? String(error).slice(0, 2000) : undefined;
+    if (existing && existing.id === request.id && existing.state === ackState &&
+        existing.error === normalizedError) return existing;
+    const ack = {
+      id: request.id,
+      agent_id: state.config.agentId,
+      epoch: state.config.epoch,
+      session_id: state.sessionId,
+      state: ackState,
+      instance: state.instance,
+      updated_at: new Date().toISOString(),
+    };
+    if (normalizedError) ack.error = normalizedError;
+    atomicJson(path.join(state.config.directory, "lifecycle-ack.json"), ack);
+    return ack;
+  }
+
+  function lifecycleIdle(state, ctx) {
+    return ctx.isIdle() && !ctx.hasPendingMessages() && !state.commandBusy && state.pendingReloads.size === 0;
+  }
+
   async function compact(ctx, instructions) {
     await new Promise((resolve, reject) => {
       ctx.compact({ customInstructions: instructions || undefined, onComplete: resolve, onError: reject });
@@ -249,6 +299,7 @@ function mailboxExtension(pi) {
 
     writeReceipt(state, item.id, "executing", { command: parsed.command });
     commandEntry(item.id, "executing", parsed.command);
+    state.commandBusy = true;
     try {
       const result = await executeCommand(state, item, parsed, ctx);
       if (result === "reload-pending" || runtime !== state || state.stopped) return;
@@ -259,6 +310,8 @@ function mailboxExtension(pi) {
       const message = error instanceof Error ? error.message : String(error);
       writeReceipt(state, item.id, "failed", { command: parsed.command, error: message.slice(0, 2000) });
       commandEntry(item.id, "failed", parsed.command, message);
+    } finally {
+      state.commandBusy = false;
     }
   }
 
@@ -289,7 +342,7 @@ function mailboxExtension(pi) {
     state.queuedMessages.set(item.id, now);
   }
 
-  function heartbeat(state) {
+  function heartbeat(state, ctx) {
     if (runtime !== state || state.stopped) return;
     atomicJson(path.join(state.config.directory, "heartbeat.json"), {
       epoch: state.config.epoch,
@@ -297,12 +350,54 @@ function mailboxExtension(pi) {
       updated_at: new Date().toISOString(),
       instance: state.instance,
       protocol: 1,
+      capabilities: { graceful_shutdown: typeof ctx.shutdown === 'function' },
+      idle: lifecycleIdle(state, ctx),
     }, false);
+  }
+
+  function pollLifecycle(state, ctx) {
+    if (runtime !== state || state.stopped) return;
+    const request = readLifecycleRequest(state);
+    if (!request) return;
+
+    const prior = readLifecycleAck(state);
+    if (prior && prior.id === request.id && prior.state === "shutdown_requested") return;
+    if (state.shutdownJobs.has(request.id)) return;
+
+    if (!lifecycleIdle(state, ctx)) {
+      writeLifecycleAck(state, request, "waiting_for_idle");
+      return;
+    }
+    if (request.phase === "prepare") {
+      writeLifecycleAck(state, request, "ready");
+      return;
+    }
+
+    // Re-read the privileged request at the last possible point. A deleted prepare is a cancellation;
+    // after commit the controller does not cancel the request.
+    const latest = readLifecycleRequest(state);
+    if (!latest || latest.id !== request.id || latest.phase !== "commit") return;
+
+    state.shutdownJobs.add(request.id);
+    if (typeof ctx.shutdown !== "function") {
+      writeLifecycleAck(state, request, "failed", "Pi graceful shutdown API is unavailable");
+      return;
+    }
+    writeLifecycleAck(state, request, "shutdown_requested");
+    try {
+      ctx.shutdown();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      writeLifecycleAck(state, request, "failed", message);
+    }
   }
 
   async function poll(state, ctx) {
     if (runtime !== state || state.stopped) return;
-    heartbeat(state);
+    heartbeat(state, ctx);
+    // A lifecycle request is privileged control state, not an inbox message. While it is present,
+    // do not start ordinary delivery even if the backend has not paused the inbox yet.
+    if (readLifecycleRequest(state)) return;
     let inbox;
     try {
       inbox = readJsonBounded(path.join(state.config.directory, "inbox.json"), MAX_INBOX_BYTES);
@@ -320,6 +415,14 @@ function mailboxExtension(pi) {
       if (item.kind === "message") handleMessage(state, item, ctx, durableIds, now);
       else await handleCommand(state, item, ctx, states);
     }
+  }
+
+  function requestLifecyclePoll(state, ctx) {
+    if (runtime !== state || state.stopped || state.lifecycleInFlight) return state.lifecycleInFlight;
+    state.lifecycleInFlight = Promise.resolve().then(() => pollLifecycle(state, ctx)).catch(() => {}).finally(() => {
+      state.lifecycleInFlight = null;
+    });
+    return state.lifecycleInFlight;
   }
 
   function requestPoll(state, ctx) {
@@ -397,12 +500,20 @@ function mailboxExtension(pi) {
       stopped: false,
       timer: null,
       inFlight: null,
+      lifecycleInFlight: null,
+      commandBusy: false,
       queuedMessages: new Map(),
       pendingReloads: new Map(),
+      shutdownJobs: new Set(),
     };
     runtime = state;
-    state.timer = setInterval(() => { try { heartbeat(state); } catch { /* Retry on next tick. */ } requestPoll(state, ctx); }, POLL_MS);
+    state.timer = setInterval(() => {
+      try { heartbeat(state, ctx); } catch { /* Retry on next tick. */ }
+      requestLifecyclePoll(state, ctx);
+      requestPoll(state, ctx);
+    }, POLL_MS);
     if (state.timer && typeof state.timer.unref === "function") state.timer.unref();
+    requestLifecyclePoll(state, ctx);
     requestPoll(state, ctx);
   });
 

@@ -7,20 +7,21 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=messaging-1">
+  <link rel="stylesheet" href="/static/app.css?v=fleet-control-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=messaging-1"></script>
-  <script defer src="/static/org-chart.js?v=messaging-1"></script>
-  <script defer src="/static/relay-settings.js?v=messaging-1"></script>
-  <script defer src="/static/terminal-touch.js?v=messaging-1"></script>
-  <script defer src="/static/terminal-copy.js?v=messaging-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=messaging-1"></script>
-  <script defer src="/static/terminal-keys.js?v=messaging-1"></script>
-  <script defer src="/static/agent-files.js?v=messaging-1"></script>
-  <script defer src="/static/agent-messages.js?v=messaging-1"></script>
-  <script defer src="/static/auth.js?v=messaging-1"></script>
-  <script defer src="/static/app.js?v=messaging-1"></script>
+  <script defer src="/static/card-views.js?v=fleet-control-1"></script>
+  <script defer src="/static/org-chart.js?v=fleet-control-1"></script>
+  <script defer src="/static/relay-settings.js?v=fleet-control-1"></script>
+  <script defer src="/static/terminal-touch.js?v=fleet-control-1"></script>
+  <script defer src="/static/terminal-copy.js?v=fleet-control-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=fleet-control-1"></script>
+  <script defer src="/static/terminal-keys.js?v=fleet-control-1"></script>
+  <script defer src="/static/agent-files.js?v=fleet-control-1"></script>
+  <script defer src="/static/agent-messages.js?v=fleet-control-1"></script>
+  <script defer src="/static/auth.js?v=fleet-control-1"></script>
+  <script defer src="/static/fleet-control.js?v=fleet-control-1"></script>
+  <script defer src="/static/app.js?v=fleet-control-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -32,7 +33,7 @@
       <label id="swarm-switcher" class="swarm-switcher" hidden><select id="swarm-selector" aria-label="Active Swarm"><option value="local">Local</option></select></label>
       <span class="edition">FEDERATED WORKSPACE</span>
     </div>
-    <div class="top-meta"><span id="health"></span><span id="connection" class="connection">Connecting…</span><button id="restart-controller" class="restart-controller header-icon" type="button" aria-label="Restart backend" aria-busy="false" title="Restart the active Swarm backend controller">↻</button><button id="help-button" class="header-icon" type="button" aria-label="Help" title="Swarm help" aria-haspopup="dialog" aria-controls="help-dialog">?</button><button id="settings-button" class="settings-button header-icon" type="button" aria-label="Settings" title="Settings" aria-haspopup="dialog" aria-controls="settings-dialog">⚙</button></div>
+    <div class="top-meta"><span id="health"></span><button id="help-button" class="header-icon" type="button" aria-label="Help" title="Swarm help" aria-haspopup="dialog" aria-controls="help-dialog">?</button><button id="settings-button" class="settings-button header-icon" type="button" aria-label="Settings" title="Settings" aria-haspopup="dialog" aria-controls="settings-dialog">⚙</button><button id="fleet-control-button" class="fleet-control-button header-icon" type="button" aria-label="Master control" title="Master control: restart live agent processes" aria-haspopup="dialog" aria-controls="fleet-restart-dialog">⋯</button><span id="connection" class="connection">Connecting…</span><button id="restart-controller" class="restart-controller header-icon" type="button" aria-label="Restart backend" aria-busy="false" title="Restart the active Swarm backend controller">↻</button></div>
   </header>
   <nav id="tabs" class="tabs" aria-label="Workspace tabs"><button id="dashboard-tab" class="tab active" type="button" aria-current="page">◫ &nbsp;Dashboard</button></nav>
   <main id="dashboard">
@@ -62,6 +63,24 @@
     <footer class="page-footer"><span><i class="tiny-dot"></i> LOCAL-FIRST · FILE-BASED · ALWAYS YOURS</span><code id="home-path">~/.swarm/agents</code></footer>
   </main>
   <section id="terminals" aria-label="Agent terminal workspace" hidden></section>
+
+  <dialog id="fleet-restart-dialog" class="wide-dialog fleet-restart-dialog" aria-labelledby="fleet-restart-title">
+    <header class="dialog-head"><div><div class="eyebrow" id="fleet-restart-workspace">Local Swarm</div><h2 id="fleet-restart-title">Master control</h2></div><button id="fleet-restart-close" type="button" class="icon-button" data-close aria-label="Close fleet restart control">×</button></header>
+    <p class="fleet-restart-warning">Restart awake agents: only the eligible live managed Pi processes shown in this snapshot. Stopped agents are never launched, no work prompt is sent, and another Swarm is never included. Graceful restart waits for idle and never auto-forces. Unsent terminal drafts may be lost when Pi exits.</p>
+    <section class="fleet-preview-section" aria-labelledby="fleet-preview-title">
+      <div class="fleet-section-head"><div><h3 id="fleet-preview-title">Current process snapshot</h3><code id="fleet-preview-home"></code></div><button id="fleet-preview-refresh" class="small" type="button">↻ Refresh preview</button></div>
+      <div id="fleet-preview-targets" class="fleet-preview-targets"></div>
+      <div id="fleet-skipped-section" hidden><h4>Skipped</h4><ul id="fleet-preview-skipped" class="fleet-preview-skipped"></ul></div>
+      <p class="hint">Names and process-bound tokens are captured by this preview. If a process changes—even if the same agent later returns—the backend rejects the old snapshot; refresh and confirm again.</p>
+    </section>
+    <section id="fleet-job-section" class="fleet-job-section" aria-labelledby="fleet-job-title" hidden>
+      <div class="fleet-section-head"><div><h3 id="fleet-job-title">Restart job</h3><p><strong id="fleet-job-status"></strong><span id="fleet-job-counts"></span></p></div><button id="fleet-job-cancel" class="small" type="button">Cancel pre-commit</button></div>
+      <ul id="fleet-job-targets" class="fleet-job-targets"></ul>
+      <p class="hint">Closing this panel does not cancel a submitted job. Cancel pre-commit stops only targets whose exit was not committed. Blocked agents may finish later when they become idle and exit. Force and Legacy /quit are always separate explicit choices. Existing timers or queued mail can resume previously authorized work after restart.</p>
+    </section>
+    <p id="fleet-restart-error" class="form-error" role="alert"></p>
+    <footer class="dialog-footer"><button id="fleet-restart-cancel" type="button" data-close autofocus>Cancel</button><button id="fleet-restart-start" class="primary" type="button" disabled>Restart selected</button></footer>
+  </dialog>
 
   <dialog id="messages-dialog" class="wide-dialog" aria-labelledby="messages-title">
     <header class="dialog-head"><div><div class="eyebrow" id="messages-workspace">Local Swarm</div><h2 id="messages-title">Messages</h2></div><button type="button" class="icon-button" data-close aria-label="Close messages">×</button></header>

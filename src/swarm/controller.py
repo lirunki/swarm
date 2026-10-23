@@ -16,6 +16,8 @@ from .meta_compact import busy, require_not_busy
 from .models import Agent, CreateAgent, Status
 from .paths import agent_path, local_path
 from .processes import Processes
+from .restarts import Restarts, require_not_restarting
+from .restarts import active as restarting
 from .store import Store
 from .timers import ScheduledWakes, scheduled
 
@@ -50,6 +52,7 @@ class Controller:
         self.files = AgentFiles(store)
         self.wakes = ScheduledWakes(self)
         self.messages = Messages(self)
+        self.restarts = Restarts(self)
         self.state: dict = {}
         self.fingerprint = ""
         self.snapshot_fingerprint = ""
@@ -152,11 +155,22 @@ class Controller:
             if agent is not None:
                 mark_failed(self.store, str(agent.id), f"Cannot start setup terminal: {exc}")
 
-    def _launch(self, agent: Agent, prompt: str | None) -> bool:
+    def _launch(
+        self,
+        agent: Agent,
+        prompt: str | None,
+        *,
+        restart_id: str | None = None,
+        restart_identity: dict | None = None,
+    ) -> bool:
         try:
             from .sessions import Sessions
 
             require_not_busy(agent)
+            if restart_id is None:
+                require_not_restarting(agent)
+            elif str(getattr(agent, "restart_job_id", None)) != restart_id:
+                raise RuntimeError("Restart ownership changed before launch")
             if agent.spawn_state not in {None, "ready"}:
                 raise RuntimeError("Child workspace setup is incomplete; inspect its spawn error")
             if getattr(agent, "stop_pending", False):
@@ -165,8 +179,14 @@ class Controller:
                 from .orchestration import verify_workspace
 
                 verify_workspace(agent)
-            agent = Sessions(self.store).ensure_agent_portable(agent)
-            pid = self.processes.launch(agent, prompt)
+            if restart_id is None:
+                agent = Sessions(self.store).ensure_agent_portable(agent)
+            if restart_id is not None and hasattr(self.processes, "launch_restart"):
+                if restart_identity is None:
+                    raise ValueError("Captured process identity is required for restart")
+                pid = self.processes.launch_restart(agent, restart_identity)
+            else:
+                pid = self.processes.launch(agent, prompt)
             self.store.update(agent.id, {"pid": pid, "last_error": None})
             return True
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
@@ -177,7 +197,11 @@ class Controller:
     def recover(self) -> None:
         """Restore unscheduled sessions once; explicitly scheduled wakes use a durable outbox."""
         with self.lock:
+            self.restarts.recover()
             for agent in self.store.scan():
+                if restarting(agent):
+                    self.restarts.guard(agent)
+                    continue
                 if getattr(agent, "stop_pending", False):
                     try:
                         self.stop(str(agent.id))
@@ -215,6 +239,7 @@ class Controller:
         with self.lock:
             agent = self.store.get(agent_id)
             require_not_busy(agent)
+            require_not_restarting(agent)
             if not agent.managed:
                 raise ValueError("observed agents must be explicitly adopted before waking")
             if agent.spawn_state not in {None, "ready"}:
@@ -262,6 +287,7 @@ class Controller:
         with self.lock:
             agent = self.store.get(agent_id)
             require_not_busy(agent)
+            require_not_restarting(agent)
             if agent.spawn_state not in {None, "ready"}:
                 raise RuntimeError("Agent setup is incomplete; references cannot be inserted yet")
             if not agent.managed or not self.processes.alive(agent):
@@ -284,6 +310,7 @@ class Controller:
             require_not_busy(agent)
             if not agent.managed:
                 raise ValueError("Swarm cannot stop an externally observed process")
+            self.restarts.operator_stop(agent)
             # Persist intent first; a reboot during stop must not resurrect this process.
             agent = self.store.update(
                 agent.id,
@@ -319,6 +346,7 @@ class Controller:
         with self.lock:
             agent = self.store.get(agent_id)
             require_not_busy(agent)
+            require_not_restarting(agent)
             alive = self.processes.alive(agent)
             if alive and agent.status == Status.running:
                 raise RuntimeError("Agent is actively running. Stop it before forgetting it.")
@@ -337,8 +365,12 @@ class Controller:
 
     def tick(self) -> bool:
         with self.lock:
+            self.restarts.recover()
             agents = self.store.scan()
             for agent in agents:
+                if restarting(agent):
+                    self.restarts.guard(agent)
+                    continue
                 if f"{agent.id}.md" in self.store.errors or busy(agent):
                     continue
                 if getattr(agent, "stop_pending", False):
@@ -403,7 +435,13 @@ class Controller:
                     | files
                     | messages
                 )
+            try:
+                restart_jobs = self.restarts.list()["jobs"]
+            except (OSError, ValueError):
+                restart_jobs = []
+                errors["restarts"] = "Restart jobs could not be read"
             self.state = {
+                "restart_jobs": restart_jobs,
                 "agents": entries,
                 "errors": errors,
                 "home": str(self.store.home),

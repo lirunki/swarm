@@ -131,9 +131,10 @@ test('expanded controller caches by base and revision and explains observed agen
   assert.equal(t.calls.length, 2);
 });
 
-test('request id fallback is UUID-shaped and assets use messaging version', () => {
+test('request id fallback is UUID-shaped and messaging assets share the app version', () => {
   assert.match(requestId(), /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
-  assert.ok(html.indexOf('/static/agent-messages.js?v=messaging-1') < html.indexOf('/static/app.js?v=messaging-1'));
-  assert.match(html, /id="messages-dialog"/); assert.match(html, /app\.css\?v=messaging-1/);
+  const version = html.match(/app\.js\?v=([^"]+)/)[1];
+  assert.ok(html.indexOf(`/static/agent-messages.js?v=${version}`) < html.indexOf(`/static/app.js?v=${version}`));
+  assert.match(html, /id="messages-dialog"/); assert.ok(html.includes(`/static/app.css?v=${version}`));
 });

@@ -72,8 +72,13 @@ function createHarness(options = {}) {
     hasPendingMessages: () => pending,
     compact(config) { calls.push(['compact', config]); config.onComplete({}); },
     async reload() { calls.push(['reload']); },
+    shutdown() {
+      calls.push(['shutdown']);
+      if (options.shutdownError) throw new Error(options.shutdownError);
+    },
     ui: new Proxy({}, { get() { throw new Error('mailbox must not access UI/editor APIs'); } }),
   };
+  if (options.shutdownUnavailable) delete ctx.shutdown;
   function writeInbox(items, override = {}) {
     fs.writeFileSync(path.join(directory, 'inbox.json'), JSON.stringify({
       epoch: env.SWARM_CONTROL_EPOCH,
@@ -83,6 +88,22 @@ function createHarness(options = {}) {
       items,
       ...override,
     }));
+  }
+  function writeLifecycle(phase, override = {}) {
+    fs.writeFileSync(path.join(directory, 'lifecycle.json'), JSON.stringify({
+      id: randomUUID(),
+      agent_id: env.SWARM_AGENT_ID,
+      epoch: env.SWARM_CONTROL_EPOCH,
+      session_id: sessionId,
+      action: 'shutdown',
+      phase,
+      requested_at: new Date().toISOString(),
+      ...override,
+    }));
+  }
+  function lifecycleAck() {
+    const filename = path.join(directory, 'lifecycle-ack.json');
+    return fs.existsSync(filename) ? JSON.parse(fs.readFileSync(filename, 'utf8')) : null;
   }
   function receipt(id) {
     const filename = path.join(directory, 'acks', `${id}.json`);
@@ -94,7 +115,7 @@ function createHarness(options = {}) {
   }
   return {
     directory, env, sessionId, entries, calls, handlers, commands, get tool() { return tool; }, ctx, timers,
-    writeInbox, receipt, flush,
+    writeInbox, writeLifecycle, lifecycleAck, receipt, flush,
     setIdle(value) { idle = value; },
     setPending(value) { pending = value; },
   };
@@ -300,4 +321,114 @@ test('message_end notification cannot deadlock a compaction waiting on its handl
   };
   await h.handlers.get('session_start')({type:'session_start',reason:'startup'},h.ctx);await h.flush();
   assert.equal(h.receipt(cmd.id).status,'delivered');
+});
+
+test('heartbeat advertises graceful shutdown and lifecycle ignores inbox awake state', async t => {
+  const h=createHarness();t.after(()=>fs.rmSync(h.directory,{recursive:true,force:true}));
+  h.writeInbox([], {awake:false});
+  const id=randomUUID();h.writeLifecycle('prepare',{id});
+  await h.handlers.get('session_start')({type:'session_start',reason:'startup'},h.ctx);await h.flush();
+  const heartbeat=JSON.parse(fs.readFileSync(path.join(h.directory,'heartbeat.json'),'utf8'));
+  assert.deepEqual(heartbeat.capabilities,{graceful_shutdown:true});
+  assert.equal(heartbeat.idle,true);
+  assert.equal(h.lifecycleAck().id,id);
+  assert.equal(h.lifecycleAck().state,'ready');
+  assert.equal(h.calls.filter(call=>call[0]==='shutdown').length,0);
+});
+
+test('foreign lifecycle requests neither acknowledge nor suppress ordinary delivery', async t => {
+  const h=createHarness();t.after(()=>fs.rmSync(h.directory,{recursive:true,force:true}));
+  const item=message();h.writeInbox([item]);
+  h.writeLifecycle('commit',{agent_id:randomUUID()});
+  await h.handlers.get('session_start')({type:'session_start',reason:'startup'},h.ctx);await h.flush();
+  assert.equal(h.lifecycleAck(),null);
+  assert.equal(h.calls.filter(call=>call[0]==='shutdown').length,0);
+  assert.equal(h.calls.filter(call=>call[0]==='sendMessage').length,1);
+
+  h.writeLifecycle('commit',{epoch:randomUUID()});h.timers[0].callback();await h.flush();
+  h.writeLifecycle('commit',{session_id:randomUUID()});h.timers[0].callback();await h.flush();
+  h.writeLifecycle('commit',{id:'not-a-uuid'});h.timers[0].callback();await h.flush();
+  assert.equal(h.lifecycleAck(),null);
+  assert.equal(h.calls.filter(call=>call[0]==='shutdown').length,0);
+});
+
+test('prepare is changed-only and commit requests native shutdown exactly once', async t => {
+  const h=createHarness();t.after(()=>fs.rmSync(h.directory,{recursive:true,force:true}));
+  const id=randomUUID();h.writeLifecycle('prepare',{id});
+  await h.handlers.get('session_start')({type:'session_start',reason:'startup'},h.ctx);await h.flush();
+  const ready=fs.readFileSync(path.join(h.directory,'lifecycle-ack.json'),'utf8');
+  const readyAt=h.lifecycleAck().updated_at;
+  h.timers[0].callback();await h.flush();
+  assert.equal(fs.readFileSync(path.join(h.directory,'lifecycle-ack.json'),'utf8'),ready);
+  assert.equal(h.lifecycleAck().updated_at,readyAt);
+  assert.equal(h.calls.filter(call=>call[0]==='shutdown').length,0);
+
+  h.writeLifecycle('commit',{id});h.timers[0].callback();await h.flush();
+  const ack=h.lifecycleAck();
+  assert.equal(ack.state,'shutdown_requested');
+  assert.equal(ack.id,id);
+  assert.equal(ack.agent_id,h.env.SWARM_AGENT_ID);
+  assert.equal(ack.epoch,h.env.SWARM_CONTROL_EPOCH);
+  assert.equal(ack.session_id,h.sessionId);
+  assert.match(ack.instance,/^[0-9a-f-]{36}$/i);
+  assert.equal(h.calls.filter(call=>call[0]==='shutdown').length,1);
+  h.timers[0].callback();h.timers[0].callback();await h.flush();
+  assert.equal(h.calls.filter(call=>call[0]==='shutdown').length,1);
+});
+
+test('commit waits for an in-flight command without blocking lifecycle polling', async t => {
+  const h=createHarness();t.after(()=>fs.rmSync(h.directory,{recursive:true,force:true}));
+  const cmd=command('/compact Preserve lifecycle state');h.writeInbox([cmd]);
+  let finish;h.ctx.compact=options=>{finish=options.onComplete;};
+  await h.handlers.get('session_start')({type:'session_start',reason:'startup'},h.ctx);await h.flush();
+  assert.equal(typeof finish,'function');
+  const id=randomUUID();h.writeLifecycle('commit',{id});
+  h.timers[0].callback();await h.flush();
+  assert.equal(h.lifecycleAck().state,'waiting_for_idle');
+  assert.equal(h.calls.filter(call=>call[0]==='shutdown').length,0);
+  finish({});await h.flush();
+  h.timers[0].callback();await h.flush();
+  assert.equal(h.lifecycleAck().state,'shutdown_requested');
+  assert.equal(h.calls.filter(call=>call[0]==='shutdown').length,1);
+});
+
+test('valid lifecycle state suppresses inbox delivery and deleted prepare cancels it', async t => {
+  const h=createHarness();t.after(()=>fs.rmSync(h.directory,{recursive:true,force:true}));
+  const item=message();h.writeInbox([item]);
+  h.writeLifecycle('prepare');
+  await h.handlers.get('session_start')({type:'session_start',reason:'startup'},h.ctx);await h.flush();
+  assert.equal(h.lifecycleAck().state,'ready');
+  assert.equal(h.calls.filter(call=>call[0]==='sendMessage').length,0);
+  assert.equal(h.calls.filter(call=>call[0]==='shutdown').length,0);
+  fs.unlinkSync(path.join(h.directory,'lifecycle.json'));
+  h.timers[0].callback();await h.flush();
+  assert.equal(h.calls.filter(call=>call[0]==='sendMessage').length,1);
+  assert.equal(h.calls.filter(call=>call[0]==='shutdown').length,0);
+});
+
+test('unavailable graceful shutdown API produces a durable failed acknowledgement', async t => {
+  const h=createHarness({shutdownUnavailable:true});t.after(()=>fs.rmSync(h.directory,{recursive:true,force:true}));
+  const id=randomUUID();h.writeLifecycle('commit',{id});
+  await h.handlers.get('session_start')({type:'session_start',reason:'startup'},h.ctx);await h.flush();
+  assert.equal(h.lifecycleAck().state,'failed');
+  assert.match(h.lifecycleAck().error,/unavailable/i);
+  assert.equal(h.lifecycleAck().id,id);
+  h.timers[0].callback();await h.flush();
+  assert.equal(h.lifecycleAck().state,'failed');
+});
+
+test('shutdown_requested acknowledgement from a prior instance is not reinvoked', async t => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'pi-mailbox-lifecycle-'));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const first=createHarness({directory});
+  const id=randomUUID();first.writeLifecycle('commit',{id});
+  await first.handlers.get('session_start')({type:'session_start',reason:'startup'},first.ctx);await first.flush();
+  assert.equal(first.calls.filter(call=>call[0]==='shutdown').length,1);
+  const prior=first.lifecycleAck();
+  await first.handlers.get('session_shutdown')({type:'session_shutdown',reason:'quit'},first.ctx);
+
+  const second=createHarness({directory,epoch:first.env.SWARM_CONTROL_EPOCH,agentId:first.env.SWARM_AGENT_ID,sessionId:first.sessionId});
+  await second.handlers.get('session_start')({type:'session_start',reason:'startup'},second.ctx);await second.flush();
+  assert.equal(second.calls.filter(call=>call[0]==='shutdown').length,0);
+  assert.deepEqual(second.lifecycleAck(),prior);
 });

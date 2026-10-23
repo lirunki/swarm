@@ -62,6 +62,7 @@ function remember() { try { localStorage.setItem(tabStorageKey(), JSON.stringify
 function applyState(data) {
   if (!Array.isArray(data.agents)) return;
   state = data;
+  fleetControl?.applyState(data);
   for (const id of terminals.keys()) if (!agentById(id)) closeTerminal(id);
   render();
   if (!restored) {
@@ -116,6 +117,8 @@ function updateRestartCapability() {
   const button = $('#restart-controller');
   const allowed = activeSwarm === 'local' || federationNodes.get(activeSwarm)?.capabilities?.remote_restart;
   button.disabled = !allowed || restartingController;
+  const fleet = $('#fleet-control-button');
+  if (fleet) { fleet.disabled = !allowed || restartingController; fleet.title = allowed ? 'Master control' : 'Remote fleet restarts require --allow-remote-restart'; }
   button.textContent = '↻';
   button.setAttribute('aria-label', restartingController ? 'Restarting backend' : 'Restart backend');
   button.setAttribute('aria-busy', String(restartingController));
@@ -200,11 +203,13 @@ async function restartController() {
 $('#restart-controller').addEventListener('click', restartController);
 const provisioningAgent = a => a?.spawn_state === 'provisioning';
 const incompleteSetup = a => ['provisioning', 'failed', 'cancelled'].includes(a?.spawn_state);
+const restartInProgress = a => !!a?.restart?.job_id && !['completed', 'cancelled'].includes(a.restart.state);
 function creationStage(a) {
   if (typeof a?.creation?.stage === 'string' && a.creation.stage.trim()) return a.creation.stage.trim();
   return {queued: 'Queued', running: 'Setting up…', completed: 'Setup complete', failed: 'Setup failed', cancelled: 'Setup cancelled'}[a?.creation?.state] || (provisioningAgent(a) ? 'Queued' : 'Setup failed');
 }
 function displayBadge(a) {
+  if (restartInProgress(a)) return {state: 'restarting', text: 'Restarting'};
   if (provisioningAgent(a)) return {state: 'provisioning', text: 'Setting up'};
   if (['failed', 'cancelled'].includes(a?.spawn_state)) return {state: 'setup-failed', text: 'Setup failed'};
   return {state: a.status, text: labels[a.status] || a.status};
@@ -272,9 +277,12 @@ function productLink(a) {
 }
 function renderCard(a) {
   const card = node('article', 'agent-card'); card.dataset.agentId = a.id;
-  const activityHint = a.activity || 'No activity reported yet', stage = (a.creation || incompleteSetup(a)) ? creationStage(a) : '';
-  const setupHint = stage ? `\nSetup: ${stage}` : '';
-  card.title = `${a.name}\n${displayBadge(a).text} · ${a.alive ? 'Process online' : 'Offline'}${setupHint}\nActivity: ${activityHint}`;
+  const activityHint = a.activity || 'No activity reported yet', setupStage = (a.creation || incompleteSetup(a)) ? creationStage(a) : '';
+  const restartStage = restartInProgress(a) ? (a.restart.stage || a.restart.state || 'Restart in progress') : '';
+  const stage = restartStage || setupStage;
+  const setupHint = setupStage ? `\nSetup: ${setupStage}` : '';
+  const restartHint = restartStage ? `\nRestart: ${restartStage}` : '';
+  card.title = `${a.name}\n${displayBadge(a).text} · ${a.alive ? 'Process online' : 'Offline'}${setupHint}${restartHint}\nActivity: ${activityHint}`;
   card.classList.toggle('has-process', !!a.alive);
   card.classList.toggle('is-provisioning', provisioningAgent(a));
   const inside = node('div', 'card-inner'), summary = node('header', 'card-summary'), header = node('div', 'card-head');
@@ -331,9 +339,15 @@ function renderCard(a) {
   toggle.setAttribute('aria-describedby', activity.id);
   activity.append(node('span', 'activity-label', 'CURRENT ACTIVITY'), document.createTextNode(activityHint));
   details.append(goal);
+  if (restartInProgress(a)) {
+    const restart = node('section', 'restart-status');
+    restart.append(node('span', 'activity-label', 'RESTART IN PROGRESS'), node('strong', 'restart-status-stage', restartStage));
+    if (a.restart.error) restart.append(node('p', 'fleet-target-error', a.restart.error));
+    details.append(restart);
+  }
   if (a.creation || incompleteSetup(a)) {
     const setup = node('section', `creation-status${['failed', 'cancelled'].includes(a.spawn_state) ? ' failed' : ''}`);
-    setup.append(node('span', 'activity-label', 'SETUP'), node('strong', 'creation-status-stage', stage));
+    setup.append(node('span', 'activity-label', 'SETUP'), node('strong', 'creation-status-stage', setupStage));
     if (a.creation?.error) setup.append(node('p', 'creation-error', a.creation.error));
     if (a.creation?.log) {
       const log = node('p', 'creation-log', 'Setup log: '); log.append(node('code', '', a.creation.log)); setup.append(log);
@@ -375,11 +389,13 @@ function renderCard(a) {
   if (a.last_error) details.append(node('div', 'card-error', a.last_error));
   const foot = node('div', 'card-foot'); foot.id = `card-actions-${a.id}`;
   const runtime = node('span', `runtime${a.alive ? ' online' : ''}`, `${a.alive ? '● Online' : '○ Offline'} · ${since(a.updated_at)}`); runtime.title = a.updated_at;
-  const actions = node('div', 'actions'), compacting = compactionBlocked(a), setupBlocked = incompleteSetup(a);
-  actions.append(button('Terminal ↗', 'small', () => openTerminal(a.id)), button('Edit', 'small', () => editAgent(a.id)));
+  const actions = node('div', 'actions'), compacting = compactionBlocked(a), setupBlocked = incompleteSetup(a), restarting = restartInProgress(a);
+  const edit = button('Edit', 'small', () => editAgent(a.id)); edit.disabled = restarting; if (restarting) edit.title = 'Edit is disabled while restart is active';
+  actions.append(button('Terminal ↗', 'small', () => openTerminal(a.id)), edit);
   if (a.managed) {
-    const wake = button('Wake', 'small', () => wakeAgent(a.id)); wake.disabled = compacting || setupBlocked;
-    if (setupBlocked) wake.title = provisioningAgent(a) ? 'Setup is still running' : 'Setup did not complete';
+    const wake = button('Wake', 'small', () => wakeAgent(a.id)); wake.disabled = compacting || setupBlocked || restarting;
+    if (restarting) wake.title = 'Restart is in progress';
+    else if (setupBlocked) wake.title = provisioningAgent(a) ? 'Setup is still running' : 'Setup did not complete';
     else if (compacting) wake.title = metaCompactionRunning(a) ? 'Meta-compaction is running' : 'Tool input compaction is running';
     actions.append(wake);
     if (a.alive || a.auto_resume || provisioningAgent(a)) actions.append(button('Stop', 'small danger', () => stopAgent(a.id)));
@@ -519,7 +535,8 @@ function syncTerminal(t) {
     const message = [stage, a.creation?.error, a.creation?.log ? `Setup log: ${a.creation.log}` : ''].filter(Boolean).join('\n');
     overlay(t, a.spawn_state === 'cancelled' ? 'Setup was cancelled.' : 'Setup failed.', message || 'The agent setup process did not complete.');
   } else if (!a.alive) {
-    overlay(t, compacting ? 'Session compaction is running.' : 'This agent is offline.', compacting ? 'The saved session is being updated. It stays stopped afterward; wake it explicitly when the job completes.' : 'Opening a terminal only attaches to a process. Wake the agent explicitly to continue its saved session.', a.managed && !compacting ? 'Wake agent ↗' : '', a.managed && !compacting ? () => wakeAgent(t.id) : null);
+    const restarting = restartInProgress(a);
+    overlay(t, restarting ? 'Restart in progress.' : compacting ? 'Session compaction is running.' : 'This agent is offline.', restarting ? (a.restart.stage || 'Waiting for the restart service. No wake is needed.') : compacting ? 'The saved session is being updated. It stays stopped afterward; wake it explicitly when the job completes.' : 'Opening a terminal only attaches to a process. Wake the agent explicitly to continue its saved session.', a.managed && !compacting && !restarting ? 'Wake agent ↗' : '', a.managed && !compacting && !restarting ? () => wakeAgent(t.id) : null);
   }
 }
 function attachTerminal(t) { void attachTerminalAuthenticated(t); }
@@ -564,7 +581,9 @@ function closeTerminal(id) {
 }
 function showDialog(id) { const dlg = $(id); $('.form-error', dlg).textContent = ''; dlg.showModal(); }
 function editAgent(id) {
-  const a = agentById(id); if (!a) return; editId = id;
+  const a = agentById(id); if (!a) return;
+  if (restartInProgress(a)) { toast('Wait for the fleet restart to finish before editing this agent.', true); return; }
+  editId = id;
   const form = $('#edit-form'); form.elements.name.value = a.name; form.elements.goal.value = a.goal; form.elements.status.value = a.status; form.elements.auto_resume.checked = a.auto_resume;
   form.elements.meta_model.value = ''; form.elements.overlap_tokens.value = '10000'; form.elements.chunk_count.value = '2'; $('#meta-compact-controls').hidden = true; $('#meta-compact-toggle').textContent = 'Meta-compact…';
   $('#revert-allow-history-loss').checked = false;
@@ -573,8 +592,10 @@ function editAgent(id) {
 function updateForgetAvailability() {
   const a = agentById(editId);
   const active = a?.alive && a.status === 'running', compacting = compactionBlocked(a);
-  $('#forget-agent').disabled = forgettingAgent || !a || active || compacting;
-  $('#forget-explanation').textContent = !a ? 'This agent is no longer registered.' : compacting
+  const restarting = !!a?.restart?.job_id && !['completed', 'cancelled'].includes(a.restart.state);
+  $('#forget-agent').disabled = forgettingAgent || !a || active || compacting || restarting;
+  $('#forget-explanation').textContent = !a ? 'This agent is no longer registered.' : restarting
+    ? 'Forget is disabled while fleet restart is active. Stop remains available on the card.' : compacting
     ? 'Forget is disabled while session compaction is running.'
     : active ? 'This agent is actively running. Stop it before forgetting it.'
     : 'Forget stops any remaining Swarm-owned process and removes the card. Saved session history stays in its current location.';
@@ -583,16 +604,19 @@ function updateEditAvailability() {
   updateForgetAvailability();
   const a = agentById(editId), job = a?.meta_compaction, toolJob = a?.tool_input_compaction;
   const running = metaCompactionRunning(a), toolRunning = toolInputCompactionRunning(a), starting = metaCompactingId === editId, toolStarting = toolInputCompactingId === editId;
-  const blocked = running || toolRunning || starting || toolStarting;
+  const restarting = restartInProgress(a);
+  const blocked = running || toolRunning || starting || toolStarting || restarting;
   const eligible = !!a && a.managed === true && a.backend === 'pi' && !!a.session_file && !a.alive;
   let availability = 'Available while this managed Pi agent is stopped.';
   if (!a) availability = 'This agent is no longer registered.';
+  else if (restarting) availability = 'Fleet restart is active. Editing and compaction are disabled.';
   else if (running) availability = 'Compacting the saved session. It will remain stopped when complete.';
   else if (toolRunning || toolStarting) availability = 'Tool input compaction is running. It will remain stopped when complete.';
   else if (!a.managed || a.backend !== 'pi') availability = 'Only managed Pi agents can be meta-compacted.';
   else if (!a.session_file) availability = 'A persisted Pi session is required.';
   else if (a.alive) availability = 'Stop this agent before meta-compacting its session.';
   $('#meta-compact-availability').textContent = availability;
+  for (const field of ['name', 'goal', 'status', 'auto_resume']) $('#edit-form').elements[field].disabled = restarting;
   $('#meta-compact-toggle').disabled = !eligible || blocked;
   $('#start-meta-compact').disabled = !eligible || blocked;
   const optionsHidden = $('#meta-compact-controls').hidden;
@@ -610,6 +634,7 @@ function updateEditAvailability() {
   }
   let toolAvailability = 'Available while this managed Pi agent is stopped.';
   if (!a) toolAvailability = 'This agent is no longer registered.';
+  else if (restarting) toolAvailability = 'Fleet restart is active. Editing and compaction are disabled.';
   else if (running || starting) toolAvailability = 'Meta-compaction is running. Wait for it to finish.';
   else if (toolRunning || toolStarting) toolAvailability = 'Updating the saved tool-input session. It will remain stopped when complete.';
   else if (!a.managed || a.backend !== 'pi') toolAvailability = 'Only managed Pi agents can compact tool inputs.';
@@ -693,7 +718,7 @@ async function revertToolInputs() {
 async function forgetAgent() {
   const id = editId, a = agentById(id);
   if (!a || forgettingAgent) return;
-  if ((a.alive && a.status === 'running') || compactionBlocked(a)) { updateForgetAvailability(); return; }
+  if ((a.alive && a.status === 'running') || compactionBlocked(a) || (!!a.restart?.job_id && !['completed', 'cancelled'].includes(a.restart.state))) { updateForgetAvailability(); return; }
   const history = a.session_file ? `Saved session history will be kept at:\n${a.session_file}` : 'Any saved session history will be kept.';
   if (!confirm(`Forget ${a.name}? This stops any remaining Swarm-owned process and removes the dashboard card.\n\n${history}`)) return;
   const form = $('#edit-form'); $('.form-error', form).textContent = '';
@@ -720,17 +745,19 @@ $('#meta-compact-toggle').addEventListener('click', () => {
 });
 $('#start-meta-compact').addEventListener('click', startMetaCompaction);
 function updateWakeAvailability() {
-  const a = agentById(wakeId), blocked = compactionBlocked(a) || incompleteSetup(a);
+  const a = agentById(wakeId), blocked = compactionBlocked(a) || incompleteSetup(a) || restartInProgress(a);
   $('[type=submit]', $('#wake-form')).disabled = blocked;
 }
 function wakeAgent(id) {
   const a = agentById(id); if (!a) return;
   if (incompleteSetup(a)) { toast(provisioningAgent(a) ? 'Wait for setup to finish before waking this agent.' : 'This agent cannot wake because setup did not complete.', true); return; }
+  if (restartInProgress(a)) { toast('Restart is already in progress; no Wake is needed.', true); return; }
   if (compactionBlocked(a)) { toast('Wait for session compaction to finish before waking this agent.', true); return; }
   wakeId = id; $('#wake-form').reset(); $('#wake-title').textContent = `Wake ${a.name || 'agent'}`; updateWakeAvailability(); showDialog('#wake-dialog');
 }
 async function stopAgent(id) {
-  if (!confirm(`Stop ${agentById(id)?.name}? This stops the process and disables automatic restore. Its goal and session are retained.`)) return;
+  const agent = agentById(id), restartNote = restartInProgress(agent) ? ' The active fleet restart is cancelled for this agent.' : '';
+  if (!confirm(`Stop ${agent?.name}? This stops the process and disables automatic restore.${restartNote} Its goal and session are retained.`)) return;
   try { await api(`/api/agents/${id}/stop`, 'POST'); toast('Agent stopped. Saved session retained.'); await refresh(); } catch (e) { toast(e.message, true); }
 }
 async function submit(form, action) {
@@ -928,6 +955,14 @@ $('#import-grok-form').addEventListener('submit', event => {
 $('#import-grok-button').addEventListener('click', () => { dashboardControls.adoption.close(true); $('#import-grok-form').reset(); $('#grok-session-search').value = ''; $('#grok-roots').textContent = ''; showDialog('#import-grok-dialog'); loadGrokSessions(); });
 $('#refresh-grok-sessions').addEventListener('click', loadGrokSessions);
 $('#grok-session-search').addEventListener('input', renderGrokSessions);
+const fleetControl = new SwarmFleetControl.FleetControl({
+  apiPath,
+  api: localApi,
+  currentSwarm: () => activeSwarm,
+  currentGeneration: () => stateGeneration,
+  canMutate: () => activeSwarm === 'local' || !!federationNodes.get(activeSwarm)?.capabilities?.remote_restart,
+  onChange: refresh,
+});
 const agentFilesDialog = new SwarmAgentFiles.AgentFilesDialog({
   api: localApi,
   onChange: refresh,

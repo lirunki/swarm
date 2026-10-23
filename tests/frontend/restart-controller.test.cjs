@@ -16,7 +16,7 @@ function restartHarness(confirmResult = true, reject = false) {
     activeSwarm: 'local',
     federationNodes: new Map(),
     confirm: message => { calls.push(['confirm', message]); return confirmResult; },
-    $: selector => { assert.equal(selector, '#restart-controller'); return restart; },
+    $: selector => { if (selector === '#fleet-control-button') return null; assert.equal(selector, '#restart-controller'); return restart; },
     api: async (url, method) => { calls.push(['api', url, method]); if (reject) throw Error('restart failed'); return {restarting: true}; },
     toast: (message, error) => calls.push(['toast', message, error]),
     setTimeout: (callback, delay) => { calls.push(['timeout', delay]); return {callback}; },

@@ -140,7 +140,7 @@ def parser() -> argparse.ArgumentParser:
     serve.add_argument(
         "--allow-remote-restart",
         action="store_true",
-        help="allow trusted federated Swarms to restart this controller",
+        help='allow authenticated federated requests for backend and fleet agent restarts',
     )
     relay = commands.add_parser("relay", help="operate the HTTPS/WSS federation relay")
     relay_commands = relay.add_subparsers(dest="relay_command", required=True)

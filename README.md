@@ -435,6 +435,9 @@ conservatively blocks while any native Pi has an unknown working folder.
   label. Its dropdown is 136.5px wide (1.3× the previous 105px); long workspace names
   remain available in the option list and selected-value tooltip, with an accessible
   “Active Swarm” label. Header controls stay on one line when space permits.
+- **⋯ Master control** opens a preview/confirmation panel for restarting live agent
+  processes on the selected Swarm. It is separate from backend restart; see the
+  [graceful fleet lifecycle](#master-control-restart-awake-agent-processes) below.
 - **↻ Restart backend** is icon-only in the top-right header, with an accessible
   label and tooltip (including while restarting). It confirms, then replaces only the Swarm
   controller process and reconnects the dashboard automatically. Agent processes remain
@@ -589,6 +592,100 @@ Up to 16 dashboard setups can be queued at a time; normal child spawning limits
 still apply. Setup plans and logs contain user instructions and should be treated
 as private session data. Automatic model work is never performed by the setup
 worker; only the requested Pi launch starts the agent.
+
+## Master control: restart awake agent processes
+
+The discreet **⋯ Master control** icon beside the top-right controls opens the fleet
+restart panel. It never restarts anything by opening the panel. Review the process
+snapshot, select targets, then confirm **Restart selected**. Cancel is initially
+focused; once a job exists the footer says Close, which only closes the panel.
+
+“Awake” here means a **live, managed Pi process** on the currently selected Swarm.
+This includes live terminals whose goal status is idle, waiting, done or dormant.
+Stopped agents are never started by the batch. Observed agents, incomplete setup,
+compaction, pending stops, missing/mismatched session history and existing restart
+reservations are skipped with reasons. Names and process-bound tokens are frozen
+by the preview: a changed/replaced process requires a new preview and confirmation,
+even when the agent UUID is unchanged. Other Swarms are not included automatically.
+
+### Graceful default
+
+1. Persist the job and per-agent reservation under `$SWARM_HOME/restarts/`.
+2. Pause automatic wakes and new mailbox delivery without clearing their intent.
+3. Ask the mailbox extension to **prepare**. Pi reports ready only when idle with
+   no pending messages/commands. Preparation never exits the process.
+4. Persist a shutdown **commit**, then let the extension call native
+   `ctx.shutdown()` (the supported graceful exit API), not editor/keyboard input.
+5. Observe the captured process actually exit. An acknowledgement alone, a failed
+   tmux query or a missing pane is not proof of exit.
+6. Reopen the exact tracked session/workspace **without a user prompt** and verify
+   the replacement mailbox is connected.
+
+The agent ID, session ID/file, goal, checkpoint, status, auto-resume setting,
+`wake_at`/pending wake delivery and child waits are preserved. Latest user/agent
+reports are not overwritten with an older metadata snapshot. Existing schedules
+and previously queued mail may resume authorized work once restart finishes; the
+restart itself submits no new work. **Unsent terminal drafts can be lost when Pi
+exits.** This is process restart, not `/new`, `/fork` or a new worktree.
+
+Jobs survive backend restarts. A safely unstarted launch can resume; once a new
+launch epoch was persisted and the outcome is unknown, Swarm does not blindly
+repeat it. Failed/uncertain dead launches pause automatic recovery and require
+explicit attention/Wake. Up to two replacements launch per monitor cycle. The
+last 100 terminal job records are retained (active/orphan leases are not collected),
+and the API/panel lists the most recent 20 jobs.
+
+Tmux identity inspection is fail-closed. Relaunch respawns only the captured dead
+pane without `-k`, or atomically creates a missing session with a startup barrier.
+It never unconditionally kills a reusable session name. Native readiness is checked
+before releasing the reservation. A malformed/missing job leaves only that agent
+paused with a repair warning; other fleet work continues and explicit Stop remains
+available.
+
+### Attention and explicit fallbacks
+
+- The default five-minute attention deadline **never kills or auto-forces**. A
+  blocked job can still finish when Pi becomes idle/exits later. Use Cancel
+  pre-commit to withdraw waiting targets. Once exit is committed it cannot be
+  recalled. Failed prepare cleanup keeps cancellation pending rather than claiming
+  success while leaving Pi's mailbox paused.
+- **Legacy /quit…** is a separately confirmed, one-time fallback for older agents
+  without the shutdown-capable extension. It types `/quit` and Enter into the
+  captured original pane. **Check the editor is empty first:** an existing draft
+  could be submitted instead of quitting, and active work may be interrupted.
+  This action is never automatically retried after an uncertain outcome.
+- **Force restart…** has its own warning. It terminates only the captured owned
+  pane after revalidation, never an arbitrary PID or replacement process. Tool
+  calls/external effects may already have happened and cannot be rolled back.
+- Normal **Stop** cancels the restart's relaunch intent and stops that agent using
+  ordinary Stop semantics (including disabling auto-resume). Wake, edits, Forget,
+  compaction and file Insert are blocked while the restart reservation is active.
+- Through federation, mutating fleet actions require the destination's
+  **`--allow-remote-restart`** opt-in as well as its browser authentication. Preview
+  and job viewing can remain read-only. This opt-in now covers fleet restart and
+  backend restart; ordinary individual agent controls retain their existing rules.
+
+These are operator actions, not arbitrary slash messages or model-callable `/quit`.
+The self-command tool continues to reject `/quit` and session-switching commands.
+No batch runs merely because the UI or controller was updated. Restart the updated
+backend and refresh the dashboard to activate the panel; upgrade/opt in remote
+controllers separately when needed.
+
+### Fleet restart API
+
+- `GET /api/fleet/restarts/preview`: eligible process-bound targets and skip reasons.
+- `POST /api/fleet/restarts`: `{request_id: UUID, targets: [{id, token}],
+  timeout_seconds: 300, confirmed: true}` returns HTTP 202 with `{job, reused}`.
+  Reusing an ID with identical input returns the same job; different input is refused.
+- `GET /api/fleet/restarts` / `GET /api/fleet/restarts/{job_id}`: progress/history.
+- `POST /api/fleet/restarts/{job_id}/cancel|legacy|force` with
+  `{agent_ids: [UUID], confirmed: true}`: explicit target-scoped actions.
+
+Only literal JSON `true` counts as confirmation. The target list is bounded to
+128 and a persisted job to 2 MiB. Jobs expose stage/error/counts without their
+private process/history binding data. They are also published through the normal
+state/WebSocket stream as `restart_jobs` and per-agent `restart` metadata. Keep
+request IDs after uncertain HTTP outcomes and inspect the saved job before retrying.
 
 ## Agent Files library (references and browser uploads)
 

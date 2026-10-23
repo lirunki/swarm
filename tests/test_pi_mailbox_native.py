@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import threading
 import time
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -17,7 +18,7 @@ from swarm.importers.pi_history import PiHistory
 from swarm.messaging import MessageRequest, prepare_bridge
 from swarm.models import Agent
 from swarm.paths import agent_path
-from swarm.store import Store
+from swarm.store import Store, atomic_write
 
 
 @pytest.mark.skipif(not shutil.which("pi"), reason="Installed Pi is optional")
@@ -181,6 +182,28 @@ def test_native_pi_extension_loads_and_executes_self_name_and_reload_without_mod
             for line in session.read_text().splitlines()
         )
         assert "Failed to load extension" not in "".join(errors)
+        job_id = str(uuid4())
+        request = {
+            "id": job_id,
+            "agent_id": str(agent.id),
+            "epoch": epoch,
+            "session_id": session_id,
+            "action": "shutdown",
+            "phase": "prepare",
+            "requested_at": datetime.now(UTC).isoformat(),
+        }
+        atomic_write(directory / "lifecycle.json", json.dumps(request))
+        receipt = directory / "lifecycle-ack.json"
+        wait(lambda: receipt.exists() and json.loads(receipt.read_text()).get("state") == "ready")
+        assert process.poll() is None
+        atomic_write(directory / "lifecycle.json", json.dumps(request | {"phase": "commit"}))
+        wait(lambda: json.loads(receipt.read_text()).get("state") == "shutdown_requested")
+        # RPC mode observes deferred shutdown at the next command boundary; the
+        # interactive tmux test separately proves exit without a browser/input poke.
+        process.stdin.write(json.dumps({"type": "get_state"}) + "\n")
+        process.stdin.flush()
+        process.wait(timeout=15)
+        assert json.loads(receipt.read_text())["state"] == "shutdown_requested"
     finally:
         process.stdin.close()
         try:
