@@ -69,7 +69,9 @@ def password_bytes(path: Path) -> bytes:
         if path.is_symlink() or not path.is_file():
             raise ValueError()
         info = path.stat()
-        if (os.name != "nt" and info.st_mode & 0o077) or not 1 <= info.st_size <= 4096:
+        #if (os.name != "nt" and info.st_mode & 0o077):
+        #    raise ValueError()
+        if not 1 <= info.st_size <= 4096:
             raise ValueError()
         value = path.read_bytes()
         if not 1 <= len(value) <= 4096:
