@@ -179,6 +179,7 @@ def test_dense_org_chart_layout_and_interactions(static_url, tmp_path, width):
             playwright.expect(page.locator("#terminals")).to_be_visible()
             assert page.locator(".terminal-header button:visible").all_text_contents() == [
                 "Files",
+                "tmux",
                 "↻ Reconnect",
             ]
             page.locator(".tab-group .tab-close").click()
@@ -506,6 +507,7 @@ def test_native_mobile_copy_overlay_and_unchanged_desktop(static_url, mobile):
                 playwright.expect(copy).to_be_hidden()
                 assert page.locator(".terminal-header button:visible").all_text_contents() == [
                     "Files",
+                    "tmux",
                     "↻ Reconnect",
                 ]
                 playwright.expect(page.locator(".terminal-copy-text")).to_be_hidden()
@@ -1091,7 +1093,9 @@ def test_workspace_tabs_pin_dashboard_show_status_and_frame_active_title(static_
             groups = page.locator(".tab-group")
             playwright.expect(groups).to_have_count(18)
             playwright.expect(dashboard).to_have_css("color", "rgb(255, 161, 106)")
-            playwright.expect(page.locator(".terminal-files + .terminal-tmux-control")).to_have_count(18)
+            playwright.expect(
+                page.locator(".terminal-files + .terminal-tmux-control")
+            ).to_have_count(18)
             playwright.expect(page.locator(".terminal-tmux-button").first).to_be_disabled()
             playwright.expect(
                 page.locator(".terminal-tmux-item").filter(has_text="Split vertical · side-by-side")

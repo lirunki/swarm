@@ -7,21 +7,21 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=fleet-control-2">
+  <link rel="stylesheet" href="/static/app.css?v=output-repair-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=fleet-control-2"></script>
-  <script defer src="/static/org-chart.js?v=fleet-control-2"></script>
-  <script defer src="/static/relay-settings.js?v=fleet-control-2"></script>
-  <script defer src="/static/terminal-touch.js?v=fleet-control-2"></script>
-  <script defer src="/static/terminal-copy.js?v=fleet-control-2"></script>
-  <script defer src="/static/dashboard-controls.js?v=fleet-control-2"></script>
-  <script defer src="/static/terminal-keys.js?v=fleet-control-2"></script>
-  <script defer src="/static/agent-files.js?v=fleet-control-2"></script>
-  <script defer src="/static/agent-messages.js?v=fleet-control-2"></script>
-  <script defer src="/static/auth.js?v=fleet-control-2"></script>
-  <script defer src="/static/fleet-control.js?v=fleet-control-2"></script>
-  <script defer src="/static/app.js?v=fleet-control-2"></script>
+  <script defer src="/static/card-views.js?v=output-repair-1"></script>
+  <script defer src="/static/org-chart.js?v=output-repair-1"></script>
+  <script defer src="/static/relay-settings.js?v=output-repair-1"></script>
+  <script defer src="/static/terminal-touch.js?v=output-repair-1"></script>
+  <script defer src="/static/terminal-copy.js?v=output-repair-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=output-repair-1"></script>
+  <script defer src="/static/terminal-keys.js?v=output-repair-1"></script>
+  <script defer src="/static/agent-files.js?v=output-repair-1"></script>
+  <script defer src="/static/agent-messages.js?v=output-repair-1"></script>
+  <script defer src="/static/auth.js?v=output-repair-1"></script>
+  <script defer src="/static/fleet-control.js?v=output-repair-1"></script>
+  <script defer src="/static/app.js?v=output-repair-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -263,6 +263,17 @@
           <p id="tool-input-compact-archive-row" hidden>Original archive: <code id="tool-input-compact-archive"></code></p>
           <p id="tool-input-compact-directory-row" hidden>Result directory: <code id="tool-input-compact-directory"></code></p>
           <p id="tool-input-revert-backup-row" hidden>Session backup before revert: <code id="tool-input-revert-backup"></code></p>
+        </div>
+      </section>
+      <section class="tool-output-repair-section" aria-labelledby="tool-output-repair-heading">
+        <div class="tool-output-repair-head"><div><h3 id="tool-output-repair-heading">Oversized tool outputs</h3><p id="tool-output-repair-availability" class="hint"></p></div><button id="repair-tool-outputs" type="button">Repair oversized outputs</button></div>
+        <p class="hint tool-output-repair-description">Fix Copilot's 10,485,760-character single-output limit using bounded previews and full archives. This is distinct from overall context-window compaction.</p>
+        <div id="tool-output-repair-status" class="meta-compact-status" aria-live="polite" hidden>
+          <p><strong id="tool-output-repair-state"></strong></p>
+          <p id="tool-output-repair-result" hidden><span id="tool-output-repair-count"></span> outputs repaired · <span id="tool-output-repair-original-bytes"></span> original bytes · <span id="tool-output-repair-preview-bytes"></span> preview bytes</p>
+          <p id="tool-output-repair-error" class="meta-compact-error" hidden></p>
+          <p id="tool-output-repair-archive-row" hidden>Original archive: <code id="tool-output-repair-archive"></code></p>
+          <p id="tool-output-repair-directory-row" hidden>Result directory: <code id="tool-output-repair-directory"></code></p>
         </div>
       </section>
       <p id="forget-explanation" class="hint forget-explanation">Forget stops any remaining Swarm-owned process and removes the card. Saved session history stays in its current location.</p>

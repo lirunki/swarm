@@ -22,6 +22,7 @@ from .processes import Processes
 from .sessions import AdoptRequest, Sessions
 from .store import Store
 from .tool_inputs import retrieve
+from .tool_outputs import retrieve_output
 
 
 def _tls_arguments(command: argparse.ArgumentParser) -> None:
@@ -140,7 +141,7 @@ def parser() -> argparse.ArgumentParser:
     serve.add_argument(
         "--allow-remote-restart",
         action="store_true",
-        help='allow authenticated federated requests for backend and fleet agent restarts',
+        help="allow authenticated federated requests for backend and fleet agent restarts",
     )
     relay = commands.add_parser("relay", help="operate the HTTPS/WSS federation relay")
     relay_commands = relay.add_subparsers(dest="relay_command", required=True)
@@ -154,6 +155,12 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("list", help="list agent records as JSON")
     commands.add_parser("p", help="alias for list (all agent records as JSON)")
     commands.add_parser("doctor", help="check runtime prerequisites")
+    output = commands.add_parser(
+        "tool-output", help="read a page of archived tool output; never rerun the command"
+    )
+    output.add_argument("output_id")
+    output.add_argument("--offset", type=int, default=0, help="character offset (default 0)")
+    output.add_argument("--limit", type=int, default=8000, help="characters per page (1–64000)")
     commands.add_parser("sessions", help="list adoptable pi sessions as JSON")
     tool_input = commands.add_parser(
         "tool-input", help="read archived tool input; never execute it"
@@ -428,7 +435,13 @@ def _validate_command(value: str) -> str:
     if name == "/model" and argument.strip() and len(argument.split()) == 1:
         return text
     if name == "/thinking" and argument.strip() in {
-        "off", "minimal", "low", "medium", "high", "xhigh", "max"
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
     }:
         return text
     if name == "/name" and argument.strip():
@@ -686,6 +699,12 @@ def main(argv: list[str] | None = None) -> None:
             record = run_report(store, args)
             if args.json:
                 print(json.dumps(record, indent=2))
+        elif args.command == "tool-output":
+            print(
+                json.dumps(
+                    retrieve_output(store, args.output_id, args.offset, args.limit), indent=2
+                )
+            )
         elif args.command == "tool-input":
             print(json.dumps(retrieve(store, args.toolrun_id, args.offset, args.limit), indent=2))
         elif args.command == "sessions":

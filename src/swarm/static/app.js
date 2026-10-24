@@ -12,6 +12,7 @@ let selectedSession = null, sessionData = [], wakeId = null, editId = null;
 let selectedGrokSession = null, grokSessionData = [], grokLoadSequence = 0;
 let folderBrowserPath = null, folderLoadSequence = 0;
 let forgettingAgent = false, metaCompactingId = null, toolInputCompactingId = null;
+const toolOutputRepairRequests = new Map();
 const terminals = new Map();
 const cardViews = new SwarmCardViews.CardViews();
 let toastTimer;
@@ -203,7 +204,8 @@ async function restartController() {
 $('#restart-controller').addEventListener('click', restartController);
 const provisioningAgent = a => a?.spawn_state === 'provisioning';
 const incompleteSetup = a => ['provisioning', 'failed', 'cancelled'].includes(a?.spawn_state);
-const restartInProgress = a => !!a?.restart?.job_id && !['completed', 'cancelled'].includes(a.restart.state);
+const restartInProgress = a => a && Object.prototype.hasOwnProperty.call(a,'restart_job_id')
+  ? !!a.restart_job_id : !!a?.restart?.job_id && !['completed','cancelled','failed'].includes(a.restart.state);
 function creationStage(a) {
   if (typeof a?.creation?.stage === 'string' && a.creation.stage.trim()) return a.creation.stage.trim();
   return {queued: 'Queued', running: 'Setting up…', completed: 'Setup complete', failed: 'Setup failed', cancelled: 'Setup cancelled'}[a?.creation?.state] || (provisioningAgent(a) ? 'Queued' : 'Setup failed');
@@ -224,9 +226,29 @@ function metadata(list, label, value) {
 }
 const metaCompactionRunning = a => a?.meta_compaction?.status === 'running';
 const toolInputCompactionRunning = a => a?.tool_input_compaction?.status === 'running';
-const compactionRunning = a => metaCompactionRunning(a) || toolInputCompactionRunning(a);
-const compactionRequestInFlight = a => !!a && (metaCompactingId === a.id || toolInputCompactingId === a.id);
+const toolOutputRepairRunning = a => a?.tool_output_repair?.status === 'running';
+const toolOutputRepairInFlight = a => {
+  const requests = typeof toolOutputRepairRequests === 'undefined' ? null : toolOutputRepairRequests;
+  const request = a && requests?.get(a.id);
+  return !!request && request.generation === stateGeneration && request.swarm === activeSwarm;
+};
+const compactionRunning = a => metaCompactionRunning(a) || toolInputCompactionRunning(a) || toolOutputRepairRunning(a);
+const compactionRequestInFlight = a => !!a && (metaCompactingId === a.id || toolInputCompactingId === a.id || toolOutputRepairInFlight(a));
 const compactionBlocked = a => compactionRunning(a) || compactionRequestInFlight(a);
+const persistedManagedPi = a => !!a && a.managed === true && a.backend === 'pi' && !!a.session_file;
+const outputRepairStopping = a => !!a && (!!a.stop_pending || !!a.orchestration_stop);
+const outputRepairUnavailableReason = a => {
+  if (!a) return 'This agent is no longer registered.';
+  if (!a.managed || a.backend !== 'pi') return 'Only managed Pi agents can repair oversized tool outputs.';
+  if (!a.session_file) return 'A persisted Pi session is required.';
+  if (restartInProgress(a)) return 'Fleet restart is active. Wait for it to finish.';
+  if (incompleteSetup(a)) return provisioningAgent(a) ? 'Setup is still running.' : 'Setup did not complete.';
+  if (a.alive || outputRepairStopping(a)) return 'Stop first. Output repair requires a stopped agent.';
+  if (compactionBlocked(a)) return toolOutputRepairRunning(a) || toolOutputRepairInFlight(a)
+    ? 'Repairing oversized outputs. The agent will remain stopped.'
+    : 'Another saved-session operation is running. Wait for it to finish.';
+  return '';
+};
 function canRevertToolInputs(a) {
   const job = a?.tool_input_compaction;
   return !!(job?.archive && job.source_sha256 && job.replacement_sha256 &&
@@ -469,8 +491,13 @@ function renderCard(a) {
     const wake = button('Wake', 'small', () => wakeAgent(a.id)); wake.disabled = compacting || setupBlocked || restarting;
     if (restarting) wake.title = 'Restart is in progress';
     else if (setupBlocked) wake.title = provisioningAgent(a) ? 'Setup is still running' : 'Setup did not complete';
-    else if (compacting) wake.title = metaCompactionRunning(a) ? 'Meta-compaction is running' : 'Tool input compaction is running';
+    else if (compacting) wake.title = toolOutputRepairRunning(a) || toolOutputRepairInFlight(a) ? 'Oversized tool-output repair is running' : metaCompactionRunning(a) ? 'Meta-compaction is running' : 'Tool input compaction is running';
     actions.append(wake);
+    if (persistedManagedPi(a)) {
+      const repair = button('Fix output limit…', 'small repair-tool-outputs-card', () => repairToolOutputs(a.id));
+      const repairReason = outputRepairUnavailableReason(a); repair.disabled = !!repairReason; repair.title = repairReason || 'Repair oversized tool outputs in this stopped session';
+      actions.append(repair);
+    }
     if (a.alive || a.auto_resume || provisioningAgent(a)) actions.append(button('Stop', 'small danger', () => stopAgent(a.id)));
   }
   foot.append(runtime, actions); inside.append(summary, details); card.append(inside, foot);
@@ -667,7 +694,7 @@ function editAgent(id) {
 function updateForgetAvailability() {
   const a = agentById(editId);
   const active = a?.alive && a.status === 'running', compacting = compactionBlocked(a);
-  const restarting = !!a?.restart?.job_id && !['completed', 'cancelled'].includes(a.restart.state);
+  const restarting = restartInProgress(a);
   $('#forget-agent').disabled = forgettingAgent || !a || active || compacting || restarting;
   $('#forget-explanation').textContent = !a ? 'This agent is no longer registered.' : restarting
     ? 'Forget is disabled while fleet restart is active. Stop remains available on the card.' : compacting
@@ -677,16 +704,18 @@ function updateForgetAvailability() {
 }
 function updateEditAvailability() {
   updateForgetAvailability();
-  const a = agentById(editId), job = a?.meta_compaction, toolJob = a?.tool_input_compaction;
-  const running = metaCompactionRunning(a), toolRunning = toolInputCompactionRunning(a), starting = metaCompactingId === editId, toolStarting = toolInputCompactingId === editId;
+  const a = agentById(editId), job = a?.meta_compaction, toolJob = a?.tool_input_compaction, outputJob = a?.tool_output_repair;
+  const running = metaCompactionRunning(a), toolRunning = toolInputCompactionRunning(a), outputRunning = toolOutputRepairRunning(a);
+  const starting = metaCompactingId === editId, toolStarting = toolInputCompactingId === editId, outputStarting = toolOutputRepairInFlight(a);
   const restarting = restartInProgress(a);
-  const blocked = running || toolRunning || starting || toolStarting || restarting;
-  const eligible = !!a && a.managed === true && a.backend === 'pi' && !!a.session_file && !a.alive;
+  const blocked = running || toolRunning || outputRunning || starting || toolStarting || outputStarting || restarting;
+  const eligible = !!a && a.managed === true && a.backend === 'pi' && !!a.session_file && !a.alive && !outputRepairStopping(a) && !incompleteSetup(a);
   let availability = 'Available while this managed Pi agent is stopped.';
   if (!a) availability = 'This agent is no longer registered.';
   else if (restarting) availability = 'Fleet restart is active. Editing and compaction are disabled.';
   else if (running) availability = 'Compacting the saved session. It will remain stopped when complete.';
   else if (toolRunning || toolStarting) availability = 'Tool input compaction is running. It will remain stopped when complete.';
+  else if (outputRunning || outputStarting) availability = 'Oversized tool-output repair is running. It will remain stopped when complete.';
   else if (!a.managed || a.backend !== 'pi') availability = 'Only managed Pi agents can be meta-compacted.';
   else if (!a.session_file) availability = 'A persisted Pi session is required.';
   else if (a.alive) availability = 'Stop this agent before meta-compacting its session.';
@@ -711,6 +740,7 @@ function updateEditAvailability() {
   if (!a) toolAvailability = 'This agent is no longer registered.';
   else if (restarting) toolAvailability = 'Fleet restart is active. Editing and compaction are disabled.';
   else if (running || starting) toolAvailability = 'Meta-compaction is running. Wait for it to finish.';
+  else if (outputRunning || outputStarting) toolAvailability = 'Oversized tool-output repair is running. Wait for it to finish.';
   else if (toolRunning || toolStarting) toolAvailability = 'Updating the saved tool-input session. It will remain stopped when complete.';
   else if (!a.managed || a.backend !== 'pi') toolAvailability = 'Only managed Pi agents can compact tool inputs.';
   else if (!a.session_file) toolAvailability = 'A persisted Pi session is required.';
@@ -735,10 +765,26 @@ function updateEditAvailability() {
     $('#tool-input-compact-directory-row').hidden = !toolJob.directory; $('#tool-input-compact-directory').textContent = toolJob.directory || '';
     $('#tool-input-revert-backup-row').hidden = !toolJob.compacted_backup; $('#tool-input-revert-backup').textContent = toolJob.compacted_backup || '';
   }
+  const outputReason = outputRepairUnavailableReason(a);
+  $('#tool-output-repair-availability').textContent = outputReason || 'Available while this managed Pi agent is stopped.';
+  $('#repair-tool-outputs').disabled = !!outputReason;
+  $('#repair-tool-outputs').title = outputReason || 'Repair oversized tool outputs in this stopped session';
+  const outputStatus = $('#tool-output-repair-status'); outputStatus.hidden = !outputJob;
+  if (outputJob) {
+    $('#tool-output-repair-state').textContent = outputJob.status || 'unknown';
+    const hasOutputResult = ['completed', 'unchanged'].includes(outputJob.status) || outputJob.outputs_repaired != null;
+    $('#tool-output-repair-result').hidden = !hasOutputResult;
+    $('#tool-output-repair-count').textContent = String(outputJob.outputs_repaired ?? 0);
+    $('#tool-output-repair-original-bytes').textContent = String(outputJob.original_bytes ?? 0);
+    $('#tool-output-repair-preview-bytes').textContent = String(outputJob.preview_bytes ?? 0);
+    $('#tool-output-repair-error').hidden = !outputJob.error; $('#tool-output-repair-error').textContent = outputJob.error || '';
+    $('#tool-output-repair-archive-row').hidden = !outputJob.archive; $('#tool-output-repair-archive').textContent = outputJob.archive || '';
+    $('#tool-output-repair-directory-row').hidden = !outputJob.directory; $('#tool-output-repair-directory').textContent = outputJob.directory || '';
+  }
 }
 async function startMetaCompaction() {
   const id = editId, a = agentById(id), form = $('#edit-form');
-  if (!a || metaCompactingId || toolInputCompactingId || compactionRunning(a) || !a.managed || a.backend !== 'pi' || !a.session_file || a.alive) { updateEditAvailability(); return; }
+  if (!a || metaCompactingId || toolInputCompactingId || compactionRunning(a) || (typeof toolOutputRepairRequests !== 'undefined' && toolOutputRepairInFlight(a)) || !a.managed || a.backend !== 'pi' || !a.session_file || a.alive) { updateEditAvailability(); return; }
   const overlapInput = form.elements.overlap_tokens, chunkInput = form.elements.chunk_count;
   if (!overlapInput.reportValidity() || !chunkInput.reportValidity()) return;
   const overlapTokens = Number(overlapInput.value), chunkCount = Number(chunkInput.value), model = form.elements.meta_model.value.trim();
@@ -758,7 +804,7 @@ async function startMetaCompaction() {
 }
 async function compactToolInputs() {
   const id = editId, a = agentById(id), form = $('#edit-form');
-  if (!a || metaCompactingId || toolInputCompactingId || compactionRunning(a) || !a.managed || a.backend !== 'pi' || !a.session_file || a.alive) { updateEditAvailability(); return; }
+  if (!a || metaCompactingId || toolInputCompactingId || compactionRunning(a) || (typeof toolOutputRepairRequests !== 'undefined' && toolOutputRepairInFlight(a)) || !a.managed || a.backend !== 'pi' || !a.session_file || a.alive) { updateEditAvailability(); return; }
   if (!confirm(`Compact completed tool inputs for ${a.name}?\n\nNo model calls are made. Long completed tool inputs are replaced by 100-character previews and toolrun IDs. Tool output contents are preserved. Completed tool exchanges become inert history and cannot execute as tool calls.\n\nThe full original session is archived, and the active branch is retained. This agent stays stopped until you explicitly Wake it.\n\nSession:\n${a.session_file}`)) return;
   $('.form-error', form).textContent = ''; toolInputCompactingId = id; updateEditAvailability();
   try {
@@ -772,7 +818,7 @@ async function compactToolInputs() {
 }
 async function revertToolInputs() {
   const id = editId, a = agentById(id), form = $('#edit-form');
-  if (!a || metaCompactingId || toolInputCompactingId || compactionRunning(a) || !canRevertToolInputs(a) || !a.managed || a.backend !== 'pi' || !a.session_file || a.alive) { updateEditAvailability(); return; }
+  if (!a || metaCompactingId || toolInputCompactingId || compactionRunning(a) || (typeof toolOutputRepairRequests !== 'undefined' && toolOutputRepairInFlight(a)) || !canRevertToolInputs(a) || !a.managed || a.backend !== 'pi' || !a.session_file || a.alive) { updateEditAvailability(); return; }
   const allowHistoryLoss = $('#revert-allow-history-loss').checked;
   const historyWarning = allowHistoryLoss
     ? 'WARNING: You enabled history loss. Newer history and other changes will be discarded from the active session and retained only in the backup.'
@@ -790,10 +836,48 @@ async function revertToolInputs() {
   } catch (error) { if (editId === id) $('.form-error', form).textContent = error.message; else toast(error.message, true); }
   finally { if (toolInputCompactingId === id) toolInputCompactingId = null; if ($('#edit-dialog').open) updateEditAvailability(); }
 }
+function outputRepairSummary(report) {
+  if (report.status === 'failed') return report.error || 'Oversized tool-output repair failed.';
+  if (report.status === 'unchanged') return 'No oversized tool outputs needed repair.';
+  const count = Number.isInteger(report.outputs_repaired) ? report.outputs_repaired : 0;
+  const original = Number.isFinite(report.original_bytes) ? report.original_bytes : 0;
+  const preview = Number.isFinite(report.preview_bytes) ? report.preview_bytes : 0;
+  return `Repaired ${count} oversized tool output${count === 1 ? '' : 's'} (${original} original bytes → ${preview} preview bytes).`;
+}
+async function repairToolOutputs(agentId = editId) {
+  const id = agentId, a = agentById(id), reason = outputRepairUnavailableReason(a);
+  if (reason) { if (editId === id && $('#edit-dialog').open) updateEditAvailability(); return; }
+  const message = `Repair oversized tool outputs for ${a.name}?\n\nThis addresses Copilot's single tool-output string limit (10,485,760 characters). The full original session is archived. Active output text larger than 1 MiB is elided to an approximately 32 KiB preview with lookup references. No model calls are made. Incomplete or raw history is retained, and images and tool inputs are unchanged.\n\nThe original remains archived and the agent stays stopped until you manually Wake it. This is not overall conversation compaction; other context overflow errors may still need Meta-compact.\n\nSession:\n${a.session_file}`;
+  if (!confirm(message)) return;
+  const context = {generation: stateGeneration, swarm: activeSwarm};
+  const requestPath = apiPath(`/api/agents/${encodeURIComponent(id)}/repair-tool-outputs`);
+  const request = {...context, path: requestPath};
+  toolOutputRepairRequests.set(id, request);
+  if (editId === id && $('#edit-dialog').open) $('.form-error', $('#edit-form')).textContent = '';
+  render();
+  try {
+    const report = await localApi(requestPath, 'POST', {});
+    if (context.generation !== stateGeneration || context.swarm !== activeSwarm) return;
+    const current = agentById(id); if (current) current.tool_output_repair = report;
+    toast(outputRepairSummary(report), report.status === 'failed' || !!report.error);
+    render();
+    await refresh();
+  } catch (error) {
+    if (context.generation !== stateGeneration || context.swarm !== activeSwarm) return;
+    let message = error.message;
+    if (error.status === 404) message = 'The selected controller does not support oversized tool-output repair yet. Update that controller and try again.';
+    else if (!error.status && !/outcome unknown/i.test(message)) message = `${message} Request outcome unknown; check the persisted repair report before retrying.`;
+    if (editId === id && $('#edit-dialog').open) $('.form-error', $('#edit-form')).textContent = message;
+    else toast(message, true);
+  } finally {
+    if (toolOutputRepairRequests.get(id) === request) toolOutputRepairRequests.delete(id);
+    if (context.generation === stateGeneration && context.swarm === activeSwarm) render();
+  }
+}
 async function forgetAgent() {
   const id = editId, a = agentById(id);
   if (!a || forgettingAgent) return;
-  if ((a.alive && a.status === 'running') || compactionBlocked(a) || (!!a.restart?.job_id && !['completed', 'cancelled'].includes(a.restart.state))) { updateForgetAvailability(); return; }
+  if ((a.alive && a.status === 'running') || compactionBlocked(a) || restartInProgress(a)) { updateForgetAvailability(); return; }
   const history = a.session_file ? `Saved session history will be kept at:\n${a.session_file}` : 'Any saved session history will be kept.';
   if (!confirm(`Forget ${a.name}? This stops any remaining Swarm-owned process and removes the dashboard card.\n\n${history}`)) return;
   const form = $('#edit-form'); $('.form-error', form).textContent = '';
@@ -811,6 +895,7 @@ async function forgetAgent() {
   finally { forgettingAgent = false; updateForgetAvailability(); $('[type=submit]', form).disabled = compactionBlocked(agentById(editId)); }
 }
 $('#forget-agent').addEventListener('click', forgetAgent);
+$('#repair-tool-outputs').addEventListener('click', () => repairToolOutputs(editId));
 $('#compact-tool-inputs').addEventListener('click', compactToolInputs);
 $('#revert-tool-input-compaction').addEventListener('click', revertToolInputs);
 $('#meta-compact-toggle').addEventListener('click', () => {

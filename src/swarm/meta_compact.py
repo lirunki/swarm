@@ -49,7 +49,7 @@ class MetaCompactRequest(BaseModel):
 def busy(agent: Agent) -> bool:
     return any(
         isinstance(job := getattr(agent, key, None), dict) and job.get("status") == "running"
-        for key in ("meta_compaction", "tool_input_compaction")
+        for key in ("meta_compaction", "tool_input_compaction", "tool_output_repair")
     )
 
 
@@ -104,6 +104,11 @@ def content_text(content) -> str:
 def session_context(data: bytes) -> tuple[dict, list[dict], list[dict], str | None]:
     """Parse the active path and its compaction-aware entries without flattening payloads."""
     records = [json.loads(line) for line in data.decode("utf-8-sig").split("\n") if line.strip()]
+    return context_entries(records)
+
+
+def context_entries(records: list[dict]) -> tuple[dict, list[dict], list[dict], str | None]:
+    """Project parsed records without copying them (used by append-only repairs)."""
     if not records or not all(isinstance(r, dict) for r in records):
         raise ValueError("invalid Pi JSONL session")
     header, entries = records[0], records[1:]
@@ -395,7 +400,7 @@ class MetaCompactor:
         atomic_write(Path(job["directory"]) / "job.json", json.dumps(job, indent=2) + "\n")
         self.store.update(agent_id, {"meta_compaction": dict(job)})
 
-    def eligible(self, agent: Agent) -> Path:
+    def eligible(self, agent: Agent, *, read_snapshot: bool = True) -> Path:
         require_not_busy(agent)
         if getattr(agent, "restart_job_id", None):
             raise RuntimeError("Agent restart is in progress; compaction is unavailable")
@@ -404,7 +409,10 @@ class MetaCompactor:
         if self.controller.processes.alive(agent):
             raise RuntimeError("Stop the agent before meta-compaction (even if it is idle)")
         path = Path(agent.session_file).expanduser().absolute()
-        read_source(path)
+        if read_snapshot:
+            read_source(path)
+        elif path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_SOURCE_BYTES:
+            raise ValueError("Session must be a regular non-symlink file at most 128 MiB")
         for other in self.store.scan():
             if (
                 other.id != agent.id

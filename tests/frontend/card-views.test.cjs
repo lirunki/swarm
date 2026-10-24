@@ -420,7 +420,8 @@ function forgetDialog({active = false, confirm = true, reject = false} = {}) {
     applyState: next => { context.state = next; },
     toast: text => calls.push(['toast', text]), refresh: async () => calls.push(['refresh']),
   });
-  vm.runInContext(source.slice(source.indexOf('function updateForgetAvailability()'), source.indexOf("\n$('#forget-agent').addEventListener")), context);
+  const restart = source.slice(source.indexOf('const restartInProgress ='), source.indexOf('\nfunction creationStage('));
+  vm.runInContext(restart + '\n' + source.slice(source.indexOf('function updateForgetAvailability()'), source.indexOf("\n$('#forget-agent').addEventListener")), context);
   return {context, calls, errors, save, forget, explanation, dialog};
 }
 

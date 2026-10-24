@@ -44,6 +44,7 @@ from .sessions import AdoptRequest, Sessions
 from .store import Store
 from .terminal import bridge
 from .tool_inputs import RevertToolInputsRequest, ToolInputCompactor
+from .tool_outputs import ToolOutputRepair
 from .uploads import MAX_CHUNK_BODY, UploadChunk, UploadRequest, Uploads
 
 log = logging.getLogger(__name__)
@@ -152,6 +153,7 @@ def create_app(
     uploads = Uploads(controller)
     meta_compactor = MetaCompactor(controller, pi)
     tool_input_compactor = ToolInputCompactor(meta_compactor)
+    output_repair = ToolOutputRepair(meta_compactor)
     sessions = Sessions(store, session_roots)
     grok = GrokSessions(store, grok_session_roots)
     listeners: set[asyncio.Queue] = set()
@@ -191,6 +193,7 @@ def create_app(
             await asyncio.to_thread(controller.restarts.recover)
             await asyncio.to_thread(orchestration.recover)
             await asyncio.to_thread(tool_input_compactor.recover)
+            await asyncio.to_thread(output_repair.recover)
             await asyncio.to_thread(meta_compactor.recover)
             if recover:
                 await asyncio.to_thread(controller.recover)
@@ -215,6 +218,7 @@ def create_app(
     app.state.uploads = uploads
     app.state.meta_compactor = meta_compactor
     app.state.tool_input_compactor = tool_input_compactor
+    app.state.output_repair = output_repair
     app.state.sessions = sessions
     app.state.grok_sessions = grok
     app.state.federation = federation
@@ -509,7 +513,9 @@ def create_app(
                 agent = store.get(agent_id)
                 require_not_busy(agent)
                 require_not_restarting(agent)
-                if agent.stop_pending or agent.orchestration_stop:
+                if getattr(agent, "stop_pending", False) or getattr(
+                    agent, "orchestration_stop", None
+                ):
                     raise RuntimeError("Agent is stopping; tmux controls are unavailable")
                 processes.tmux_action(agent, request.action)
 
@@ -741,6 +747,13 @@ def create_app(
         await asyncio.to_thread(controller.refresh)
         await broadcast()
         return job
+
+    @app.post("/api/agents/{agent_id}/repair-tool-outputs")
+    async def repair_tool_outputs(agent_id: UUID):
+        result = await asyncio.to_thread(output_repair.repair, str(agent_id))
+        await asyncio.to_thread(controller.refresh)
+        await broadcast()
+        return result
 
     @app.post("/api/agents/{agent_id}/compact-tool-inputs")
     async def compact_tool_inputs(agent_id: UUID):

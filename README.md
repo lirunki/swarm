@@ -1090,6 +1090,99 @@ all adoption; on macOS, `lsof` is used to resolve folders. Refresh after quittin
 the original pi. These are point-in-time local process checks, not locks shared
 with unmanaged pi: do not open the same saved session elsewhere after adoption.
 
+## Fix oversized tool-output fields
+
+An error such as:
+
+```text
+Invalid 'input[7].output': string too long.
+maximum length 10485760, got 23318071
+```
+
+is a **single output-string limit** in the Copilot API, not necessarily the model's
+aggregate context-window limit. Ordinary `/compact` or changing model is not a
+reliable fix when the same giant tool result is still replayed.
+
+Use **Stop → expand card → Fix output limit…**, or **Edit → Oversized tool outputs →
+Repair oversized outputs**. Confirm the archive/preview operation, then explicitly
+**Wake** and retry/continue your prompt. The action makes **no model calls** and never
+automatically wakes or submits a prompt. It requires a stopped, managed Pi agent
+with a valid saved session. Other Pi writers in the same workspace and shared
+session ownership must be stopped/resolved first. Setup, restart and other maintenance
+operations block repair.
+
+Swarm examines the active branch's effective model context, honoring existing
+compactions and context edits. Each recognized tool-output text field **over 1 MiB
+of UTF-8 text** is archived and replaced in future context by a preview of **at most
+32 KiB total**, including the retrieval instructions and reference. It combines
+all text blocks of a result before checking the threshold, just as the provider
+serializer does. The conservative byte budget stays well below Copilot's
+10,485,760-character limit, including for Unicode output. Head/tail excerpts are
+retained; the omitted middle can be retrieved in bounded pages.
+
+The repair is **append-only**: original file bytes, branches, tool arguments,
+call/result IDs, error flags, images, reasoning and other metadata are retained.
+New `context_edit` entries change only future model-visible content. A non-context
+metadata entry records the repair; no user-like guide message is inserted after a
+pending call, so incomplete exchanges keep their original order. Each preview
+contains its own recovery instructions. Native Pi results, Swarm's historical
+Windows/Grok tool-result imports and input-elided historical outputs are supported.
+Unknown large user/assistant messages and binary image payloads are not shortened.
+
+The action also saves a byte-exact full original at:
+
+```text
+$SWARM_HOME/tool-output-repairs/<repair-id>/
+  original.jsonl
+  replacement.jsonl
+  index.json
+  job.json
+  toolout_<repair-id>_<entry-hash>.json
+```
+
+The extracted output archive contains the exact joined text that would have been
+sent as the tool-output field; full original block structure remains in
+`original.jsonl`. These are private session artifacts, not automatically published
+products or library downloads. Keep them while their references are needed.
+
+The agent can read **one output** without dumping the whole session:
+
+```bash
+"$SWARM_PYTHON" -m swarm tool-output TOOL_OUTPUT_ID --offset 0 --limit 8000
+```
+
+Offsets/limits are characters. The JSON response contains `output`, `next_offset`,
+`total_chars` and `eof`; the maximum page is 64,000 characters. Each archive payload
+is checksum-verified. This is read-only retrieval, never a request to rerun the
+historical tool. Do not print the whole original output back into the conversation,
+which would recreate the failure.
+
+Before replacement Swarm rechecks agent/session ownership, maintenance/restart state,
+liveness, external writers and the source hash under the agent record lock. Failures
+leave the source unchanged and retain any created archive. Replacement is atomic;
+restart reconciles interrupted commits by hash without repeating the operation.
+The session ID/path and checkpoint remain unchanged. Automatic recovery is disabled;
+Wake or re-enabling recovery is a separate operator action. Saved timer intent is not erased. Repeating repair is a no-op
+when the active outputs are already bounded. Edit shows counts, before/preview text
+bytes, errors and archive paths. An unchanged report can reference the previous repair
+archive; that archive is not a snapshot of later conversation history.
+
+This fixes the **per-field string problem**, not every possible API/context error.
+It reduces tool-output text in model context but does not shrink the raw session
+file or summarize the rest of the conversation. Navigating to a point before the
+new edits can reveal the oversized value again; repair that active branch if needed.
+Sessions are limited to 128 MiB, extracted output payloads to 512 MiB and lookup
+indexes to 1 MiB. Near the raw session limit, use separate compaction/archive
+maintenance rather than append an unreadable file. To undo manually, stop all writers,
+back up the current session, verify no newer history will be lost, and restore
+`original.jsonl`—which also restores the original oversized-output problem.
+
+API: `POST /api/agents/<id>/repair-tool-outputs` returns the report. The last report
+is persisted as `agent.tool_output_repair` and included in state. Existing password,
+origin, IP and federation protections apply; a relay repair executes only on the
+selected destination machine. Restart upgraded controllers and refresh the UI to
+activate the endpoint; it does not repair any session merely by upgrading.
+
 ## Compact large tool inputs without model calls
 
 Use **Stop → Edit → Compact tool inputs** to move bulky historical tool arguments

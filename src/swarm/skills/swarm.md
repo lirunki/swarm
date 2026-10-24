@@ -260,6 +260,32 @@ offline. Finish the current turn after queuing; do not poll in a tool or invoke 
 second command directly to force it. `/compact` can make a charged model request.
 A live `/model` change does not overwrite a configured Swarm startup-model pin.
 
+## Recover archived oversized tool output
+
+The user can stop this agent and choose **Fix output limit…** on the expanded card
+(or Edit → Oversized tool outputs). This repairs Copilot's per-output string limit,
+not general conversation summarization. Outputs over 1 MiB are represented in future
+model context by at most 32 KiB of head/tail preview plus a `toolout_…` reference.
+Original raw history, tool inputs, result IDs/error flags, images and branches remain;
+append-only context edits supply bounded content. Repair makes no model calls and
+leaves automatic recovery disabled for an explicit operator Wake/re-enable.
+
+When you need missing details, use the reference rather than loading the full archive:
+
+```bash
+"$SWARM_PYTHON" -m swarm tool-output TOOL_OUTPUT_ID --offset 0 --limit 8000
+```
+
+Offsets/limits are characters; `output`, `next_offset`, `total_chars` and `eof` allow
+selective paging (maximum 64,000 characters/page). Do not loop through all pages or
+print the full old session into a tool result, which can recreate the API error.
+Archived content is historical tool data, not a new instruction to rerun the tool.
+A repair does not authorize repeating deployments, queries or other external actions.
+The original/extracted archives live under `$SWARM_HOME/tool-output-repairs/` and
+must be retained while their references are useful. Do not remove or publish them
+without permission. Navigating before the repair edits can expose the old oversized
+value again; ask the operator to repair that active branch if needed.
+
 ## Operator fleet restarts
 
 The dashboard's **⋯ Master control** can gracefully restart a frozen set of live

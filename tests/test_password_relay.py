@@ -194,10 +194,18 @@ def test_old_browser_cannot_receive_another_browsers_authenticated_cached_state(
             )
         )
         assert http(base, prefix + "/api/state", headers=second)[0] == 200
-        # The gateway revalidates the old token before forwarding shared cache updates.
-        with pytest.raises(ConnectionClosed) as failure:
-            old.recv(timeout=10)
-        assert failure.value.rcvd.code == 4401
+        # Bytes authorized/sent before logout can already be buffered by the client.
+        # They cannot be recalled, but no newly private state may reach this socket.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                frame = old.recv(timeout=max(0.1, deadline - time.monotonic()))
+            except ConnectionClosed as failure:
+                assert failure.rcvd.code == 4401
+                break
+            assert "New secret only for browser2" not in frame
+        else:
+            raise AssertionError("Expired remote socket was not revoked")
 
 
 def test_browser_asks_for_each_destination_password_and_forgets_on_reload(pair):
