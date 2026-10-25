@@ -28,7 +28,7 @@ function loadExtension(env, clock = {}) {
     Object(properties) { return { type: 'object', properties }; },
     String(options = {}) { return { type: 'string', ...options }; },
   };
-  const localRequire = name => name === 'typebox' ? { Type: typeStub } : require(name);
+  const localRequire = name => name === 'typebox' ? { Type: typeStub } : name === './output-spill.js' ? {default: () => {}} : require(name);
   const wrapper = vm.runInContext(`(function(require,module,exports,__filename,__dirname){${extensionSource}\n})`, context);
   wrapper(localRequire, module, module.exports, extensionPath, path.dirname(extensionPath));
   return { extension: module.exports, timers };

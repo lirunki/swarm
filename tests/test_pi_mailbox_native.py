@@ -153,6 +153,7 @@ def test_native_pi_extension_loads_and_executes_self_name_and_reload_without_mod
         assert commands["success"] and any(
             c["name"] == "swarm-control-reload" for c in commands["data"]["commands"]
         )
+        assert any(c["name"] == "output-spill" for c in commands["data"]["commands"])
         first = controller.messages.send(
             str(agent.id),
             MessageRequest(text="/name Mailbox controlled session", sender_id=agent.id),

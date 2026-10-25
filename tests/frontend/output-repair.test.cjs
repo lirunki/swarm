@@ -37,14 +37,14 @@ function fixture({agent = {}, confirmResult = true, response, rejection, swarm =
 
 const evaluate = (fixture, expression) => vm.runInContext(expression, fixture.context);
 
-test('edit markup, card action, styling, and asset version are present without changing compact dimensions', () => {
+test('repair is available only in Edit, with styling and versioned assets without changing compact dimensions', () => {
   assert.match(html, /<h3 id="tool-output-repair-heading">Oversized tool outputs<\/h3>/);
-  assert.match(html, /id="repair-tool-outputs"[^>]*>Repair oversized outputs<\/button>/);
-  assert.match(source, /button\('Fix output limit…', 'small repair-tool-outputs-card'/);
-  assert.match(source, /if \(persistedManagedPi\(a\)\)/);
+  assert.match(html, /id="repair-tool-outputs"[^>]*>Fix output limit…<\/button>/);
+  assert.doesNotMatch(source, /repair-tool-outputs-card/);
+  assert.match(source, /\$\('#repair-tool-outputs'\)\.addEventListener\('click', \(\) => repairToolOutputs\(editId\)\)/);
   assert.match(css, /\.tool-output-repair-section/);
   assert.match(css, /\.agent-card\.is-compact\{width:128px;height:128px/);
-  for (const asset of ['app.css', 'app.js']) assert.ok(html.includes(`/static/${asset}?v=output-repair-1`));
+  for (const asset of ['app.css', 'app.js']) assert.ok(html.includes(`/static/${asset}?v=output-repair-edit-1`));
 });
 
 test('repair availability requires a stopped persisted managed Pi session and guards setup, awake, stopping, restart, and server jobs', () => {

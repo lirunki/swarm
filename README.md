@@ -1090,6 +1090,141 @@ all adoption; on macOS, `lsof` is used to resolve folders. Refresh after quittin
 the original pi. These are point-in-time local process checks, not locks shared
 with unmanaged pi: do not open the same saved session elsewhere after adoption.
 
+## Automatically spill large Pi tool output to files
+
+Swarm's trusted Pi mailbox entry point now loads `extensions/output-spill.js`.
+For newly finalized, model-facing **tool-result text**, it joins all text blocks,
+measures UTF-8 bytes, and archives results over the configured threshold **before
+Pi saves the result or sends it in the next model request**. The replacement says
+which local file contains the output, retains a bounded head/tail preview, and
+provides paged retrieval instructions. Tool-call IDs, error flags, usage and other
+tool metadata remain unchanged. Assistant answers/reasoning, user prompts and image
+payloads are not intercepted. Nested programmatic tool calls keep their original
+schemas/data; only the outer result committed to the conversation is transformed.
+
+Defaults are **on, 1 MiB threshold, 4 KiB notice/preview target**. File configuration:
+
+- Managed Swarm: `$SWARM_HOME/output-spill.json`, inferred from the agent-native
+  `SWARM_CONTROL_DIR` (including native Windows path translation).
+- Standalone Pi: `${PI_CODING_AGENT_DIR:-~/.pi/agent}/output-spill.json`.
+- Override the config path with **`PI_OUTPUT_SPILL_CONFIG`** (absolute path).
+
+```json
+{
+  "enabled": true,
+  "maxBytes": 1048576,
+  "previewBytes": 4096,
+  "maxArchiveBytes": 536870912
+}
+```
+
+The file is optional; missing means defaults. Edit it to change defaults for all
+sessions using it; file changes are picked up on the next result/command. Malformed
+or unknown configuration retains the last valid settings (or initial safe defaults)
+and warns rather than silently disabling protection. A UTF-8 BOM is accepted.
+No existing Pi `settings.json` is edited or overwritten.
+
+### `/output-spill` controls
+
+```text
+/output-spill                         # status, paths and effective limits
+/output-spill off                     # only this session
+/output-spill on
+/output-spill limit 128KiB
+/output-spill preview 4KiB
+/output-spill preview 0               # file notice only, no excerpts
+/output-spill reload                  # reread file, retain session overrides
+/output-spill defaults                # clear session overrides, follow the file
+/output-spill save                    # explicitly persist effective defaults
+```
+
+`on/off/limit/preview` changes are session-scoped, saved as non-context custom
+entries and restored from the active branch on `/reload` or ordinary session
+reopening. They do **not** silently change other agents. `save` writes the selected
+config file atomically, preserving its archive settings, then clears session
+overrides so the file becomes authoritative. It refuses to clobber malformed or
+unknown existing configuration. A cooperative `.lock` prevents concurrent saves;
+a stale lock after an abrupt process death requires manual inspection/removal.
+The threshold is 4 KiB–128 MiB; the preview target is 0–64 KiB and cannot exceed the
+threshold. B/KB/KiB/MB/MiB suffixes are accepted (K/M shorthand uses binary units).
+The mandatory file notice can exceed a very small preview target but never the
+threshold. Keep the threshold comfortably below your provider's per-field limit.
+
+### Archive location and retrieval
+
+Default archives are private persistent files **under the actual Pi session
+folder**, for both Swarm-managed and standalone sessions:
+
+```text
+<directory containing the active session .jsonl>/
+  <session>.jsonl
+  output-spills/
+    session-<session-hash>/
+      <output-id>.txt
+      <output-id>.json
+      <output-id>.meta.json
+```
+
+This follows custom/imported session-file locations too, rather than using the
+working directory, Swarm home, or Pi's global config folder. If no session file
+is available, Pi's session directory is used; if neither is available, archival
+retains the original with a warning rather than writing elsewhere.
+Set an absolute `archiveDir` in the config file, or **`PI_OUTPUT_SPILL_DIR`**
+(which takes precedence), to explicitly choose another root. `save` does not
+persist a derived session directory as a shared override. Existing archives in
+previous locations remain readable; they are not automatically moved or deleted.
+
+Each spill produces a UUID-named **`.txt`** joined output, **`.json`** full original
+tool-result message, and **`.meta.json`** session/checksum manifest. The text file
+is normal UTF-8; JSON preserves original block structure and escaped code units.
+Files and directory entries are synced where the filesystem supports it.
+POSIX directories/files are private (0700/0600); on Windows choose a private
+location with appropriate inherited ACLs. No files are automatically published to
+the Files library or as products, since tool output may contain sensitive data.
+Images and tool-specific `details`/nested metadata are preserved in the session
+for rendering/state compatibility; a tool that duplicates its output in metadata
+can therefore still make raw history large. That metadata is not model text.
+
+The new read-only model tool **`swarm_read_output`** accepts an exact generated
+`.txt`/`.json` path, optional **byte** `offset`, and `limit` (default 8,000, max 64,000).
+It returns a bounded page with visible `next_offset`, `total_bytes` and `eof`.
+Follow `next_offset` for UTF-8-safe paging; do not dump the whole archive back into
+context or rerun the original tool merely to recover output. Pages are reduced
+when necessary to remain below the current threshold and cannot recursively spill
+themselves. Arbitrary paths, other-session references and symlinks are rejected.
+Checksums are verified once per unchanged file identity, with page-read stability
+checks; altered archives are rejected. Historical roots are retained in the bounded
+private `<config-path>.roots.json` sidecar so same-session references can survive
+manual/offline compaction and a later archive-root change. Retain those manifests
+and archive files while references may be useful; there is no automatic deletion.
+
+Large strings are streamed to archive files, with bounded JSON metadata serialization,
+rather than making multiple complete output buffers. Total archives are capped at
+`maxArchiveBytes` (at most 512 MiB), and complex JSON metadata has a 64 MiB skeleton
+safety limit. **If archival cannot be completed, the original result is retained
+and a warning is shown** (stderr in non-UI modes). This favors data preservation;
+it can mean the provider still rejects that result. It never claims a nonexistent
+file, retries the tool or makes a summarization/model call. If appending the session
+reference has an uncertain outcome, already-durable files are kept rather than
+breaking a possibly committed reference.
+
+### Activation and limits
+
+Existing mailbox-capable managed Pi sessions can load this through **`/reload`**;
+new launches load it automatically. Agents predating the mailbox need one relaunch.
+For standalone use:
+
+```bash
+pi --extension /path/to/swarm/extensions/output-spill.js
+```
+
+Do not load the standalone copy a second time when Swarm's mailbox already owns it.
+Other extensions can rewrite results later; place it after other output rewriters
+when composing standalone extensions. Partial streaming UI events are not filtered.
+This prevents **new** giant tool text; it does not rewrite existing oversized
+history. Use the separate Edit repair below for the old Copilot error. It is not
+reasoning suppression or whole-conversation compaction.
+
 ## Fix oversized tool-output fields
 
 An error such as:
@@ -1103,8 +1238,7 @@ is a **single output-string limit** in the Copilot API, not necessarily the mode
 aggregate context-window limit. Ordinary `/compact` or changing model is not a
 reliable fix when the same giant tool result is still replayed.
 
-Use **Stop → expand card → Fix output limit…**, or **Edit → Oversized tool outputs →
-Repair oversized outputs**. Confirm the archive/preview operation, then explicitly
+Use **Stop → Edit → Oversized tool outputs → Fix output limit…**. Confirm the archive/preview operation, then explicitly
 **Wake** and retry/continue your prompt. The action makes **no model calls** and never
 automatically wakes or submits a prompt. It requires a stopped, managed Pi agent
 with a valid saved session. Other Pi writers in the same workspace and shared

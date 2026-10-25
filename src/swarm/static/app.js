@@ -493,11 +493,6 @@ function renderCard(a) {
     else if (setupBlocked) wake.title = provisioningAgent(a) ? 'Setup is still running' : 'Setup did not complete';
     else if (compacting) wake.title = toolOutputRepairRunning(a) || toolOutputRepairInFlight(a) ? 'Oversized tool-output repair is running' : metaCompactionRunning(a) ? 'Meta-compaction is running' : 'Tool input compaction is running';
     actions.append(wake);
-    if (persistedManagedPi(a)) {
-      const repair = button('Fix output limit…', 'small repair-tool-outputs-card', () => repairToolOutputs(a.id));
-      const repairReason = outputRepairUnavailableReason(a); repair.disabled = !!repairReason; repair.title = repairReason || 'Repair oversized tool outputs in this stopped session';
-      actions.append(repair);
-    }
     if (a.alive || a.auto_resume || provisioningAgent(a)) actions.append(button('Stop', 'small danger', () => stopAgent(a.id)));
   }
   foot.append(runtime, actions); inside.append(summary, details); card.append(inside, foot);

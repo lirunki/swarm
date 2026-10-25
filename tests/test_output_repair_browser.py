@@ -12,7 +12,7 @@ playwright = pytest.importorskip("playwright.sync_api")
 
 
 @pytest.mark.parametrize("width", [390, 1280])
-def test_card_output_limit_fix_requires_stop_archives_and_does_not_wake(
+def test_edit_output_limit_fix_requires_stop_archives_and_does_not_wake(
     tmp_path, monkeypatch, width
 ):
     app = create_app(tmp_path / "home", recover=False)
@@ -38,7 +38,9 @@ def test_card_output_limit_fix_requires_stop_archives_and_does_not_wake(
                 page.goto(f"http://127.0.0.1:{port}")
                 card = page.locator(f'[data-agent-id="{target.id}"]')
                 card.locator(".card-toggle").click()
-                fix = card.get_by_role("button", name="Fix output limit…", exact=True)
+                assert not card.get_by_role("button", name="Fix output limit…", exact=True).count()
+                card.get_by_role("button", name="Edit", exact=True).click()
+                fix = page.locator("#repair-tool-outputs")
                 playwright.expect(fix).to_be_disabled()
                 ctl.processes.running.clear()
                 playwright.expect(fix).to_be_enabled(timeout=10000)
@@ -61,7 +63,6 @@ def test_card_output_limit_fix_requires_stop_archives_and_does_not_wake(
                 assert "10,485,760" in confirmations[0] and "No model calls" in confirmations[0]
                 assert path.read_bytes().startswith(original)
                 assert not ctl.processes.launches and not ctl.processes.alive(target)
-                card.get_by_role("button", name="Edit", exact=True).click()
                 section = page.locator(".tool-output-repair-section")
                 playwright.expect(page.locator("#tool-output-repair-state")).to_have_text(
                     "completed"

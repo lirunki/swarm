@@ -110,6 +110,9 @@ function getConfig(env) {
 }
 
 function mailboxExtension(pi) {
+  // Share the trusted Swarm entry point so /reload also enables protection on
+  // existing mailbox-capable sessions, without editing the user's global Pi config.
+  require('./output-spill.js').default(pi);
   let runtime = null;
 
   function receiptPath(state, id) {
