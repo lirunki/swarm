@@ -25,6 +25,113 @@ pip install -e .
 swarm serve --open
 ```
 
+### Interactive setup: no activation needed
+
+```bash
+# Run from any working directory; keep the script with its source checkout.
+bash /absolute/path/to/swarm/setup_swarm.sh
+
+# Answer configuration questions and write files, but do not start services:
+bash /absolute/path/to/swarm/setup_swarm.sh --no-launch
+
+# Explicit installation/config locations (still asks before installing):
+bash /path/to/swarm/setup_swarm.sh --runtime-dir /path/to/runtime --config /path/to/setup.json
+
+# Dependencies only, without the configuration wizard or service launch:
+bash /path/to/swarm/setup_swarm.sh --runtime-dir /path/to/runtime --install-only
+```
+
+`setup_swarm.sh` replaces the earlier noenv wrapper. It **does not invoke the
+personal `launch_swarm.sh`**, source `.env`/shell startup files, or assume a relay
+hostname, existing certificate/key, checkout virtualenv, or registry folder.
+It suggests paths, but asks the user to select/approve them:
+
+1. **Runtime installation directory** and permission to install dependencies.
+   Missing Python 3.11+ with venv/pip, tmux 3.2+, Git, OpenSSL and CA packages are
+   installed using apt/dnf/pacman or an existing Homebrew installation. The prompt
+   explicitly identifies system-wide changes and possible `sudo` use.
+2. **Configuration JSON path** and **Swarm registry/data directory**.
+3. Whether to configure a local **repeater** (`swarm relay serve`), a Swarm
+   **dashboard/server**, both, or neither. Bind addresses/ports are prompted;
+   loopback is the safe suggested bind. A relay-only installation does not require
+   configuring or starting a dashboard.
+4. For TLS, whether to **generate self-signed certificates if absent** or reuse
+   selected certificate/key files, their paths, client-visible DNS/IP SANs and
+   validity. Existing identities are never silently replaced; a half-existing pair
+   is rejected. Dashboard HTTPS is optional on loopback and required for LAN binds.
+5. For a local repeater, generate a private random API key or choose an existing
+   key. For an **existing external repeater**, enter its explicit `wss://` endpoint,
+   provide the operator's existing key through a private file or hidden terminal
+   prompt, and choose system CA trust or a supplied CA/public certificate. Setup
+   does not generate a random key and pretend the external repeater accepts it.
+6. Choose a browser password (required for network/relayed access), Pi node name/ID,
+   and explicit opt-ins for saved-agent recovery and remote restarts. Credentials
+   are entered without echo, not as command arguments. Existing dashboard relay
+   Settings can override CLI connections, so using such a registry requires an
+   explicit acknowledgement; setup never silently overwrites those settings.
+7. **Ask separately whether to start the repeater and the server now.** Defaults
+   are no. The chosen launch roles are saved, not inferred from all configured
+   services. `--no-launch` never starts anything and preserves an existing saved
+   launch selection.
+
+The selected runtime contains `venv/`, optional `node/`, and optional `pi/`; it need
+not be inside the checkout. Swarm Python packages stay in this venv. A working Pi
+already on PATH is reused; otherwise a private pinned
+`@earendil-works/pi-coding-agent@1.2.0` is installed with npm integrity checks and
+`--ignore-scripts` (`SWARM_PI_VERSION` accepts an explicit numeric override).
+If suitable Node 22.19+ and npm are unavailable, official Node 24 LTS is downloaded
+over HTTPS and verified against nodejs.org's SHA256 manifest **before** bounded,
+safe extraction. No global Node/Pi or Pi settings are replaced. Normal Pi provider
+login is still required; setup makes no model requests. Internet access/package
+caches and supported OS repositories are required; no extra repositories or remote
+shell installers are added. `SWARM_BOOTSTRAP_PYTHON` selects an existing interpreter.
+Native Windows continues to use `swarm-windows.sh` and its private Cygwin setup.
+
+The JSON config is written atomically with **0600** permissions and stores absolute
+paths, roles and policies—not secret values. API keys/passwords/private keys live
+in separate owner-only files. It also writes `<config-name>.run.sh` beside the
+configuration, containing only safely quoted paths:
+
+```bash
+# Launch exactly the roles saved during setup:
+bash /path/to/setup.run.sh
+
+# Explicitly choose a later launch role, even if setup saved "none":
+bash /path/to/setup.run.sh --roles server
+bash /path/to/setup.run.sh --roles relay server
+
+# Validate saved JSON without launching:
+bash /path/to/setup.run.sh --no-launch
+```
+
+Reusing a config with a different newly selected runtime/source/Pi asks for an
+explicit update rather than silently launching stale code. Keep the source checkout
+and runtime available; the reusable launcher verifies its runtime/source association.
+Rerun setup with `--config` to reuse or intentionally reconfigure an installation.
+`--yes-install` skips **only** installation consent; it does not skip configuration
+or authorize a server/repeater launch. Runtime setup uses `setup.lock`; inspect a
+stale lock after a hard crash before removing it. Invalid environments are not
+silently deleted/recreated, and symlink runtime roots are rejected.
+
+Requested services remain foreground-supervised. Occupied ports are rejected;
+existing listeners are never killed or blindly reused. Ctrl+C/TERM/HUP/QUIT shuts
+down only children started by that launcher; after a graceful timeout, only those
+owned service processes are forcibly stopped. It does not stop unrelated services
+or tmux-owned agents. Stop an existing controller before installing into its active
+runtime or launching a second controller for the same registry.
+
+**TLS is not authentication.** Self-signed public certificates must be explicitly
+trusted by browsers/remote controllers; setup never disables TLS verification,
+installs machine-wide trust, changes firewalls, or exposes a public bind silently.
+Never copy the TLS private key to clients or publish credential files. JSON and
+launch-script paths are rejected if they collide with credential/TLS paths.
+
+The older personal launcher still supports an environment override independently:
+`SWARM_RELAY_HOST=relay.example.com bash /path/to/swarm/launch_swarm.sh`.
+It is not used by the interactive setup and its personal defaults are not imported.
+
+### Manual launch
+
 Open **http://127.0.0.1:8787**. `swarm` with no subcommand also starts the server.
 The frontend and terminal libraries are served locally; no CDN is needed.
 Pi's model calls naturally still require your configured provider.
