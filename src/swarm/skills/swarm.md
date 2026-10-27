@@ -89,14 +89,20 @@ clarification, a choice, confirmation, or approval:
    before the tool suspends the agent.
 3. Keep the status `waiting` while the answer is outstanding, including when
    ending a turn with a question. Do not overwrite it with `idle` or `done`.
-4. When the user supplies the needed answer and you resume work, report
+4. After the waiting report succeeds, post **one** concise notification containing
+   the question or the exact decision/input needed. Then ask the user. Do not post
+   reminder notifications while the same answer remains outstanding.
+5. When the user supplies the needed answer and you resume work, report
    `running` and clear the old `--wait-reason` before continuing. If the answer
-   is still insufficient, report the remaining question before asking again.
+   is still insufficient, report the remaining question, post a notification only
+   when it is a materially new human decision, and then ask again.
 
 ```bash
 # BEFORE presenting the question or invoking a question tool:
 "$SWARM_PYTHON" -m swarm report --status waiting --wake-at none \
   --wait-reason 'Should I preserve the existing API or introduce a breaking change?'
+"$SWARM_PYTHON" -m swarm notify \
+  'Decision needed: preserve the existing API or introduce a breaking change?'
 
 # Ask the user now, then wait for their answer.
 
@@ -107,7 +113,46 @@ clarification, a choice, confirmation, or approval:
 
 If reporting fails, retry or repair the report before invoking a blocking question
 tool. If you cannot report, explicitly tell the user that Swarm could not be
-updated; do not claim that the dashboard shows `waiting`.
+updated; do not claim that the dashboard shows `waiting`. If the notification
+command fails after the waiting report succeeded, do not change to another status;
+tell the user the inbox notification failed and still present the question directly.
+
+## Notify the user only for waiting or completed goals
+
+The global Notifications inbox is an interruption channel, not an activity feed.
+Post there only in these two cases:
+
+- your persisted status is `waiting` because progress requires a human answer,
+  choice, approval, credential, or other input; or
+- your own overall human-assigned goal is genuinely complete and you have first
+  reported `done`.
+
+Never notify for `running`, `idle`, or `dormant`; routine progress, checkpoints,
+errors you can handle yourself, timers/external waits, child-agent updates, or
+internal subtasks; and never notify merely because a turn ended. The command
+enforces the persisted state: `waiting` also requires a nonblank `wait_reason`,
+and completion requires `done`.
+
+For goal completion, make the durable final report first, then send one concise
+notification that says what finished and where the result can be found. Do not
+send another completion notification for the same goal unless the human assigned
+a genuinely new goal.
+
+```bash
+"$SWARM_PYTHON" -m swarm report --status done --wake-at none \
+  --activity 'Goal complete' \
+  --notes 'Implemented, tested, and documented. PR 42 merged.'
+"$SWARM_PYTHON" -m swarm notify \
+  'Completed: implementation and validation are finished; PR 42 is merged.'
+```
+
+`swarm notify` defaults to `SWARM_AGENT_ID`, snapshots the current agent name and
+state, and writes directly to the source Swarm's durable inbox even if its web
+controller is restarting. Text is limited to 32 KiB. Use `--request-id UUID` only
+when deliberately retrying the exact same notification; a new logical notification
+needs a new UUID. The dashboard aggregates unread notifications from the local and
+relay-connected Swarms. Opening an agent removes that notification from its source
+inbox.
 
 ## Other reporting examples
 
@@ -122,6 +167,7 @@ updated; do not claim that the dashboard shows `waiting`.
 
 "$SWARM_PYTHON" -m swarm report --status done --wake-at none \
   --activity 'Goal complete' --notes 'Implemented, tested, and documented. PR 42 merged.'
+"$SWARM_PYTHON" -m swarm notify 'Completed: implementation, tests, and documentation are finished; PR 42 is merged.'
 ```
 
 ## Advertise the latest product you produced

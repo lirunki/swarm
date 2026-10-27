@@ -14,6 +14,7 @@ from .files import AgentFiles
 from .messaging import Messages
 from .meta_compact import busy, require_not_busy
 from .models import Agent, CreateAgent, Status
+from .notifications import Notifications
 from .paths import agent_path, local_path
 from .processes import Processes
 from .restarts import Restarts, require_not_restarting
@@ -50,6 +51,7 @@ class Controller:
         self.processes = processes
         self.lock = threading.RLock()
         self.files = AgentFiles(store)
+        self.notifications = Notifications(store)
         self.wakes = ScheduledWakes(self)
         self.messages = Messages(self)
         self.restarts = Restarts(self)
@@ -113,6 +115,7 @@ class Controller:
             "home": str(self.store.home),
             "errors": self.state.get("errors", {}),
             "health": self.state.get("health", {}),
+            "notifications": self.state.get("notifications", {"count": 0, "revision": 0}),
         }
 
     def start_setup(self, agent: Agent) -> None:
@@ -440,8 +443,14 @@ class Controller:
             except (OSError, ValueError):
                 restart_jobs = []
                 errors["restarts"] = "Restart jobs could not be read"
+            try:
+                notifications = self.notifications.summary()
+            except (OSError, ValueError):
+                notifications = {"count": 0, "revision": None}
+                errors["notifications.json"] = "Notifications could not be read"
             self.state = {
                 "restart_jobs": restart_jobs,
+                "notifications": notifications,
                 "agents": entries,
                 "errors": errors,
                 "home": str(self.store.home),

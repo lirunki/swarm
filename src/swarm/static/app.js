@@ -8,6 +8,7 @@ let state = {agents: [], errors: {}, health: {}, home: ''};
 let activeTab = 'dashboard', restored = false, stateSocket, stateSocketPending = null, reconnectDelay = 1000;
 let restartingController = false, restartTimer, activeSwarm = 'local', stateGeneration = 0, presenceSocket, presenceSocketPending = false;
 let federationNodes = new Map(), federationRestored = false;
+let notificationsInbox = null, pendingNotificationReveal = null, notificationHighlightTimer = null;
 let selectedSession = null, sessionData = [], wakeId = null, editId = null;
 let selectedGrokSession = null, grokSessionData = [], grokLoadSequence = 0;
 let folderBrowserPath = null, folderLoadSequence = 0;
@@ -74,6 +75,8 @@ function applyState(data) {
       activate(saved.active === 'dashboard' || terminals.has(saved.active) ? saved.active : 'dashboard');
     } catch { /* invalid persisted tabs are ignored */ }
   }
+  consumeNotificationReveal();
+  notificationsInbox?.refresh();
 }
 async function refresh() {
   const generation = stateGeneration;
@@ -125,6 +128,16 @@ function updateRestartCapability() {
   button.setAttribute('aria-busy', String(restartingController));
   button.title = restartingController ? 'Restarting backend; waiting to reconnect' : allowed ? 'Restart the active Swarm backend controller' : 'This remote Swarm was not launched with --allow-remote-restart';
 }
+function notificationSources() {
+  return [{id: 'local', name: 'Local Swarm'}, ...[...federationNodes.values()]
+    .filter(remote => remote.online !== false)
+    .map(remote => ({id: remote.id, name: remote.name || remote.id}))];
+}
+function updateNotificationSources(refreshInbox = true) {
+  if (!notificationsInbox) return;
+  notificationsInbox.setSources(notificationSources());
+  if (refreshInbox) notificationsInbox.refresh();
+}
 function renderSwarmSelector(data) {
   const incoming = new Map((data.nodes || []).map(item => [item.id, item]));
   if (activeSwarm !== 'local' && !incoming.has(activeSwarm) && federationNodes.has(activeSwarm)) {
@@ -149,6 +162,7 @@ function renderSwarmSelector(data) {
     toast('Remote Swarm backend controller restarted. Agents kept running.');
   }
   updateRestartCapability();
+  updateNotificationSources();
   if (!federationRestored) {
     let saved = 'local'; try { saved = localStorage.getItem('swarm.active') || 'local'; } catch { /* storage may be disabled */ }
     if (saved === 'local') federationRestored = true;
@@ -172,6 +186,7 @@ async function loadFederation() {
 }
 function switchSwarm(nodeId) {
   if (nodeId === activeSwarm) return;
+  notificationsInbox?.clear();
   for (const id of [...terminals.keys()]) closeTerminal(id);
   for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
   if (stateSocket) { stateSocket.onclose = null; stateSocket.close(); stateSocket = null; }
@@ -181,6 +196,28 @@ function switchSwarm(nodeId) {
   $('#swarm-selector').value = activeSwarm;
   $('#swarm-selector').title = $('#swarm-selector').selectedOptions?.[0]?.textContent || 'Active Swarm';
   activate('dashboard'); render(); updateRestartCapability(); connectState();
+  updateNotificationSources();
+}
+function revealNotificationAgent({swarmId, agentId}) {
+  pendingNotificationReveal = {swarmId, agentId};
+  if (swarmId !== activeSwarm) switchSwarm(swarmId);
+  else consumeNotificationReveal();
+}
+function consumeNotificationReveal() {
+  const target = pendingNotificationReveal;
+  if (!target || target.swarmId !== activeSwarm || !restored) return;
+  const agent = agentById(target.agentId);
+  pendingNotificationReveal = null;
+  if (!agent) { toast('The notification was removed, but its agent is no longer available.', true); return; }
+  if (agent.alive && terminals.has(agent.id)) { activate(agent.id); return; }
+  dashboardControls.status.reset(); $('#search').value = '';
+  cardViews.setCompact(state.home, agent.id, false);
+  activate('dashboard'); render();
+  const card = [...$('#agents').querySelectorAll('.agent-card')].find(value => value.dataset.agentId === agent.id);
+  if (!card) { toast('The agent is hidden by unavailable hierarchy data.', true); return; }
+  card.scrollIntoView({behavior: 'smooth', block: 'center', inline: 'center'});
+  clearTimeout(notificationHighlightTimer); card.classList.add('notification-reveal');
+  notificationHighlightTimer = setTimeout(() => card.classList.remove('notification-reveal'), 5000);
 }
 $('#swarm-selector').addEventListener('change', event => switchSwarm(event.currentTarget.value));
 async function restartController() {
@@ -1149,6 +1186,8 @@ $('#refresh-sessions').addEventListener('click', loadSessions); $('#session-sear
 $('#dashboard-tab').addEventListener('click', () => activate('dashboard')); $('#search').addEventListener('input', render);
 document.addEventListener('keydown', event => { if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && activeTab === 'dashboard' && !document.querySelector('dialog[open]')) { event.preventDefault(); $('#search').focus(); } });
 function clearUnauthorizedWorkspace(nodeId) {
+  notificationsInbox?.clear();
+  pendingNotificationReveal = null;
   if (nodeId !== 'local' && nodeId !== activeSwarm) return;
   for (const id of [...terminals.keys()]) closeTerminal(id);
   for (const dialog of document.querySelectorAll('dialog[open]')) if (dialog.id !== 'auth-dialog') dialog.close();
@@ -1158,6 +1197,12 @@ function clearUnauthorizedWorkspace(nodeId) {
   dashboardControls.status.reset(); $('#search').value = ''; activate('dashboard'); render();
   $('#connection').textContent = 'Sign in required'; $('#connection').className = 'connection offline';
 }
+notificationsInbox = new SwarmNotifications.NotificationsInbox({
+  fetch: authenticatedFetch,
+  onOpenAgent: revealNotificationAgent,
+});
+updateNotificationSources(false);
+notificationsInbox.start();
 globalThis.addEventListener?.('swarm-auth-unauthorized', event => clearUnauthorizedWorkspace(event.detail?.node || 'local'));
-globalThis.addEventListener?.('swarm-auth-retry', () => { loadFederation(); refresh(); connectState(); });
+globalThis.addEventListener?.('swarm-auth-retry', () => { notificationsInbox.clear(); updateNotificationSources(); loadFederation(); refresh(); connectState(); });
 loadFederation(); refresh(); connectState();

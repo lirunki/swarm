@@ -983,6 +983,49 @@ state and child-status responses. This shares Swarm's trusted local-user boundar
 product publication is not a remote upload service or a separate authorization
 system. The Swarm skill includes these instructions for agents.
 
+## Global user notifications
+
+The illuminated bell beside the top-left **swarm** brand is a durable global inbox.
+It aggregates unread notifications from the local Swarm and every online Swarm
+connected through the relay. Each row shows its source Swarm, agent, recorded state,
+time and notification text. A partial-source warning is shown if an offline or
+protected source cannot be read; one unavailable Swarm does not hide results from
+others.
+
+Agents may post only after their persisted record is in one of two states:
+
+- `waiting`, with a nonblank `wait_reason`, when work requires a human answer,
+  decision, approval or other input; or
+- `done`, when that agent's overall human-assigned goal is genuinely complete.
+
+```bash
+# Ask for human input: report first, then notify once.
+swarm report --status waiting --wake-at none \
+  --wait-reason 'Choose the migration strategy.'
+swarm notify 'Decision needed: choose the migration strategy.'
+
+# Announce completion: final report first, then notify once.
+swarm report --status done --wake-at none --activity 'Goal complete'
+swarm notify 'Completed: migration implemented and validation passed.'
+```
+
+The inbox is intentionally not a progress feed. Agents must not notify for routine
+checkpoints, recoverable errors, `running`, `idle` or `dormant` states, automated
+waits, child updates, or completed subtasks. Notification text is limited to 32 KiB.
+`swarm notify` defaults to `SWARM_AGENT_ID`, captures the source agent name/state,
+and writes directly to `$SWARM_HOME/notifications.json`, so posting remains durable
+while the web controller is down. `--request-id UUID` makes an exact retry
+idempotent; reusing it with different agent/text content is rejected.
+
+The source Swarm remains authoritative. `GET /api/notifications` lists unread items
+and `DELETE /api/notifications/{notification_id}` removes one. Both routes work
+through the existing authenticated federation proxy. Opening **Open agent** first
+removes the source notification, then selects the correct Swarm. If that live agent
+already has a terminal tab, the tab is activated; otherwise Swarm opens its
+Dashboard, clears filters that could hide it, expands and scrolls to its card, and
+highlights the card. Deleted notification receipts are retained in a bounded window
+for request-ID safety; unread records survive controller and relay restarts.
+
 ## Durable agent messages and Pi self-commands
 
 Use the mailbox API instead of typing into an agent's tmux pane. It is durable across

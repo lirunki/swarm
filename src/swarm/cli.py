@@ -206,6 +206,10 @@ def parser() -> argparse.ArgumentParser:
     report.add_argument(
         "--json", action="store_true", help="print the complete updated record as JSON"
     )
+    notify = commands.add_parser("notify", help="post to the durable user notification inbox")
+    notify.add_argument("text", help="notification text (32 KiB maximum)")
+    notify.add_argument("--id", default=os.environ.get("SWARM_AGENT_ID"))
+    notify.add_argument("--request-id", help="UUID; generated locally when omitted")
 
     product = commands.add_parser(
         "product", help="advertise the latest result on this agent's card"
@@ -336,6 +340,23 @@ def run_report(store: Store, args: argparse.Namespace) -> dict:
             )
         fields["session_file"] = str(local_path(session_file))
     return store.update(args.id, fields).model_dump(mode="json")
+
+
+def run_notify(store: Store, args: argparse.Namespace) -> dict:
+    from .notifications import Notifications
+
+    if not args.id:
+        raise ValueError("--id or SWARM_AGENT_ID is required")
+    managed_id = os.environ.get("SWARM_AGENT_ID")
+    if managed_id and args.id != managed_id:
+        raise ValueError("a managed agent may post notifications only for itself")
+    return Notifications(store).post(
+        args.id,
+        args.text,
+        _request_id(args.request_id),
+        session_id=os.environ.get("PI_SESSION_ID"),
+        session_file=os.environ.get("PI_SESSION_FILE"),
+    )
 
 
 def _parent_id(args: argparse.Namespace) -> str:
@@ -699,6 +720,8 @@ def main(argv: list[str] | None = None) -> None:
             record = run_report(store, args)
             if args.json:
                 print(json.dumps(record, indent=2))
+        elif args.command == "notify":
+            print(json.dumps(run_notify(store, args), indent=2))
         elif args.command == "tool-output":
             print(
                 json.dumps(

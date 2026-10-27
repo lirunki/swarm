@@ -7,21 +7,22 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=output-repair-edit-1">
+  <link rel="stylesheet" href="/static/app.css?v=notifications-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=output-repair-edit-1"></script>
-  <script defer src="/static/org-chart.js?v=output-repair-edit-1"></script>
-  <script defer src="/static/relay-settings.js?v=output-repair-edit-1"></script>
-  <script defer src="/static/terminal-touch.js?v=output-repair-edit-1"></script>
-  <script defer src="/static/terminal-copy.js?v=output-repair-edit-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=output-repair-edit-1"></script>
-  <script defer src="/static/terminal-keys.js?v=output-repair-edit-1"></script>
-  <script defer src="/static/agent-files.js?v=output-repair-edit-1"></script>
-  <script defer src="/static/agent-messages.js?v=output-repair-edit-1"></script>
-  <script defer src="/static/auth.js?v=output-repair-edit-1"></script>
-  <script defer src="/static/fleet-control.js?v=output-repair-edit-1"></script>
-  <script defer src="/static/app.js?v=output-repair-edit-1"></script>
+  <script defer src="/static/card-views.js?v=notifications-1"></script>
+  <script defer src="/static/org-chart.js?v=notifications-1"></script>
+  <script defer src="/static/relay-settings.js?v=notifications-1"></script>
+  <script defer src="/static/terminal-touch.js?v=notifications-1"></script>
+  <script defer src="/static/terminal-copy.js?v=notifications-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=notifications-1"></script>
+  <script defer src="/static/terminal-keys.js?v=notifications-1"></script>
+  <script defer src="/static/agent-files.js?v=notifications-1"></script>
+  <script defer src="/static/agent-messages.js?v=notifications-1"></script>
+  <script defer src="/static/auth.js?v=notifications-1"></script>
+  <script defer src="/static/fleet-control.js?v=notifications-1"></script>
+  <script defer src="/static/notifications.js?v=notifications-1"></script>
+  <script defer src="/static/app.js?v=notifications-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -30,6 +31,7 @@
   <header class="topbar">
     <div class="brand-cluster">
       <a class="brand" href="/" aria-label="Swarm dashboard"><span class="brand-mark">⬡</span>swarm</a>
+      <button id="notifications-button" class="notifications-button" type="button" aria-label="Notifications: 0 unread" title="Notifications" aria-haspopup="dialog" aria-controls="notifications-dialog"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><span class="sr-only">Notifications</span><span id="notifications-count" class="notifications-count" hidden>0</span></button>
       <label id="swarm-switcher" class="swarm-switcher" hidden><select id="swarm-selector" aria-label="Active Swarm"><option value="local">Local</option></select></label>
       <span class="edition">FEDERATED WORKSPACE</span>
     </div>
@@ -63,6 +65,14 @@
     <footer class="page-footer"><span><i class="tiny-dot"></i> LOCAL-FIRST · FILE-BASED · ALWAYS YOURS</span><code id="home-path">~/.swarm/agents</code></footer>
   </main>
   <section id="terminals" aria-label="Agent terminal workspace" hidden></section>
+
+  <dialog id="notifications-dialog" class="wide-dialog notifications-dialog" aria-labelledby="notifications-title">
+    <header class="dialog-head"><div><div class="eyebrow">ALL CONNECTED SWARMS</div><h2 id="notifications-title">Notifications</h2></div><button type="button" class="icon-button" data-close aria-label="Close notifications">×</button></header>
+    <div class="notifications-toolbar"><p id="notifications-summary" class="hint" aria-live="polite">0 unread notifications.</p><button id="refresh-notifications" class="small" type="button">↻ Refresh</button></div>
+    <p id="notifications-error" class="form-error" role="status"></p>
+    <div id="notification-list" class="notification-list" role="list" aria-label="Unread agent notifications"></div>
+    <footer class="dialog-footer"><button type="button" data-close>Close</button></footer>
+  </dialog>
 
   <dialog id="fleet-restart-dialog" class="wide-dialog fleet-restart-dialog" aria-labelledby="fleet-restart-title">
     <header class="dialog-head"><div><div class="eyebrow" id="fleet-restart-workspace">Local Swarm</div><h2 id="fleet-restart-title">Master control</h2></div><button id="fleet-restart-close" type="button" class="icon-button" data-close aria-label="Close fleet restart control">×</button></header>
@@ -113,6 +123,7 @@
     <div class="help-content">
       <section><h3>Dashboard</h3><p>Each tile is an independent agent. Expand it for goal, activities, checkpoint and controls. Use the state dropdown to show several states together; All checks or clears every state. Counts update live. Search filters names, goals, activities and folders. Dimmed ancestors remain to explain parent → child relationships.</p></section>
       <section><h3>Agent states</h3><dl><dt class="running">Running</dt><dd>Working toward its goal.</dd><dt class="waiting">Waiting</dt><dd>Needs human input.</dd><dt class="dormant">Dormant</dt><dd>Waiting for an event or timer.</dd><dt class="idle">Idle</dt><dd>Turn complete, goal not yet complete.</dd><dt class="done">Done</dt><dd>Goal accomplished. Process liveness is shown separately.</dd></dl></section>
+      <section><h3>Notifications</h3><p>The bell beside the Swarm logo combines unread notifications from every connected Swarm. Agents use it only when they need a human answer or finish their overall goal. Open agent removes that notification, selects its source Swarm, and opens an existing live terminal tab or reveals and highlights the agent card.</p></section>
       <section><h3>Sessions and controls</h3><p>New agent starts pi. Adopt session offers saved pi conversations or Grok history converted into pi; adopted/imported sessions stay offline until you Wake them. Closing a terminal tab does not stop its agent. Wake resumes; Stop terminates and disables automatic restore. Edit → Forget removes an inactive agent while keeping its saved session history.</p></section>
       <section><h3>Terminal scrolling and copying</h3><p>On mobile, swipe down for older output and up for newer output. At the bottom, tap to type. Copy text puts the visible screen in a read-only layer directly over the terminal: use native selection handles and Copy. It closes after copying, or tap Done copying. Only the visible screen is captured—scroll first for other text.</p><p>While the mobile software keyboard is open, the terminal key bar adds Esc, Tab, Ctrl, Alt, arrows, Home, End and Sup (forward Delete). Ctrl and Alt apply to the next typed key or accessory key, then reset; tap both for a combined shortcut. The bar keeps the keyboard focused and hides when it closes, when you leave the terminal, or while copying.</p><p>On desktop, hold Shift while dragging to select past tmux mouse handling, then use your browser or system Copy command. Desktop terminals have no extra copy layer. The tmux button beside Files can split the current window, close a selected split pane, open/switch windows, move focus and zoom panes. The main agent pane cannot be closed from this menu.</p></section>
       <section><h3>Files</h3><p>Files on a card or beside Reconnect opens its library. Upload picks a file on your browser's computer and saves a copy in the selected agent machine's temporary folder. Paste or Ctrl+V / ⌘V inside Files can also upload a copied image/file. The Paste button may require HTTPS/localhost and clipboard permission; plain text/URLs are not uploaded. Upload does not send a prompt. Download retrieves it; Insert pastes its quoted local path into a live agent's input without pressing Enter. Continue typing and submit when ready.</p><p>Agents can also register existing server files with swarm file add. Only metadata loads first; Open/Download reads bytes on demand. Remove reference keeps existing originals. Remove upload deletes only the uploaded temporary copy, never your browser-side original. Keep important inputs in durable storage: OS temp cleanup can make references unavailable.</p></section>

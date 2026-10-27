@@ -357,6 +357,17 @@ def create_app(
         controller.refresh()
         return controller.state
 
+    @app.get("/api/notifications")
+    async def list_notifications():
+        return await asyncio.to_thread(controller.notifications.list)
+
+    @app.delete("/api/notifications/{notification_id}")
+    async def delete_notification(notification_id: UUID):
+        result = await asyncio.to_thread(controller.notifications.delete, notification_id)
+        await asyncio.to_thread(controller.refresh)
+        await broadcast()
+        return result
+
     @app.get("/api/fleet/restarts/preview")
     async def fleet_restart_preview():
         return await asyncio.to_thread(controller.restarts.preview)
