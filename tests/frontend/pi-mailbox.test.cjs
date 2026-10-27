@@ -173,6 +173,28 @@ test('message uses native custom delivery and is acknowledged only after durable
   assert.equal(h.calls.filter(call => call[0] === 'sendMessage').length, 1, 'durable IDs are deduplicated');
 });
 
+test('a queued custom message missing after Pi settles is retried instead of abandoned', async t => {
+  let now = Date.now();
+  class FakeDate extends Date { static now() { return now; } }
+  const h = createHarness({ clock: { Date: FakeDate } });
+  t.after(() => fs.rmSync(h.directory, { recursive: true, force: true }));
+  const item = message();
+  h.writeInbox([item]);
+  await h.handlers.get('session_start')({ type: 'session_start', reason: 'startup' }, h.ctx);
+  await h.flush();
+  assert.equal(h.calls.filter(call => call[0] === 'sendMessage').length, 1);
+
+  now += 10001;
+  h.timers[0].callback(); await h.flush();
+  assert.equal(h.receipt(item.id), null, 'absence is not proof that delivery permanently failed');
+  assert.equal(h.calls.filter(call => call[0] === 'sendMessage').length, 2, 'stable message is retried after Pi is idle');
+
+  h.entries.push({ type: 'custom_message', customType: 'swarm.message', details: { message_id: item.id }, content: 'saved', display: true });
+  h.timers[0].callback(); await h.flush();
+  assert.equal(h.receipt(item.id).status, 'delivered');
+  assert.equal(h.calls.filter(call => call[0] === 'sendMessage').length, 2);
+});
+
 test('foreign, sleeping, and oversized inbox files are ignored', async t => {
   const h = createHarness();
   t.after(() => fs.rmSync(h.directory, { recursive: true, force: true }));

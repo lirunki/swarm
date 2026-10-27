@@ -328,13 +328,12 @@ function mailboxExtension(pi) {
     }
     const queuedAt = state.queuedMessages.get(item.id);
     if (queuedAt !== undefined) {
-      if (now - queuedAt >= LOST_MESSAGE_MS && ctx.isIdle() && !ctx.hasPendingMessages()) {
-        state.queuedMessages.delete(item.id);
-        writeReceipt(state, item.id, "failed", {
-          error: "queued message was not found in durable session storage after 10 seconds",
-        });
-      }
-      return;
+      if (now - queuedAt < LOST_MESSAGE_MS || !ctx.isIdle() || ctx.hasPendingMessages()) return;
+      // Pi's hasPendingMessages() tracks user steering/follow-ups, not custom messages
+      // queued by sendMessage().  An interrupted run can therefore settle without ever
+      // persisting this item.  Once Pi is genuinely idle it is safe to retry the stable
+      // delivery ID; durableIds prevents replay after the session entry appears.
+      state.queuedMessages.delete(item.id);
     }
     pi.sendMessage({
       customType: "swarm.message",
