@@ -48,7 +48,11 @@
       this.renderJob();
     }
     async open() {
+      this.query('#notifications-dialog')?.close();
       this.operation += 1; this.stopPolling(); this.preview = null; this.job = null; this.context = this.capture();
+      for (const id of ['#fleet-skipped-section', '#fleet-job-section']) {
+        const details = this.query(id); details.open = false; details.hidden = true;
+      }
       this.query('#fleet-restart-workspace').textContent = this.currentSwarm() === 'local' ? 'Local Swarm' : this.currentSwarm();
       this.query('#fleet-preview-targets').replaceChildren(this.create('p', 'fleet-empty', 'Loading restart preview…'));
       this.query('#fleet-preview-skipped').replaceChildren(); this.setError(''); this.dialog.showModal();
@@ -93,6 +97,7 @@
         const row = this.create('li'); row.append(this.create('strong', '', item.name || item.id), document.createTextNode(` — ${item.reason || 'not eligible'}`)); skipped.append(row);
       }
       this.query('#fleet-skipped-section').hidden = !this.preview?.skipped?.length;
+      this.query('#fleet-skipped-count').textContent = String(this.preview?.skipped?.length || 0);
       this.query('#fleet-preview-home').textContent = this.preview?.home || '';
       this.query('#fleet-restart-start').disabled = this.busy || !this.canMutate() || !this.preview?.targets?.length;
     }

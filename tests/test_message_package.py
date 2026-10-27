@@ -38,5 +38,6 @@ def test_wheel_includes_mailbox_extension_and_messages_ui(tmp_path):
             "swarm/extensions/mailbox.js",
             "swarm/extensions/output-spill.js",
             "swarm/static/agent-messages.js",
+            "swarm/static/agent-broadcast.js",
             "swarm/messaging.py",
         }.issubset(archive.namelist())

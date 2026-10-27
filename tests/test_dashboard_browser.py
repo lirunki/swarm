@@ -294,6 +294,7 @@ def test_local_relay_settings_dialog_connect_disconnect_and_errors(static_url, w
 
             page.route("**/api/**", no_auth_mock(route_api))
             page.goto(static_url)
+            page.locator("#notifications-button").click()
             page.locator("#settings-button").click()
             assert not errors, f"Settings click raised a browser error: {errors}"
             playwright.expect(page.locator("#settings-dialog")).to_be_visible()
@@ -310,11 +311,13 @@ def test_local_relay_settings_dialog_connect_disconnect_and_errors(static_url, w
             assert key not in page.evaluate("JSON.stringify(localStorage)")
             page.locator("#settings-dialog [data-close]").last.click()
             page.locator("#swarm-selector").select_option("peer-b")
+            page.locator("#notifications-button").click()
             page.locator("#settings-button").click()
             playwright.expect(page.locator("#relay-connect")).to_have_text("Disconnect")
             page.locator("#relay-connect").click()
             playwright.expect(page.locator("#swarm-selector")).to_have_value("local")
             playwright.expect(page.locator("#settings-dialog")).to_be_hidden()
+            page.locator("#notifications-button").click()
             page.locator("#settings-button").click()
             playwright.expect(page.locator("#relay-connect")).to_have_text("Connect")
             form.locator('[name="relay_url"]').fill("https://relay.example/v1/connect")
@@ -435,7 +438,7 @@ def test_compact_status_adoption_and_help_controls(static_url, width):
                 playwright.expect(page.locator(dialog)).to_be_visible()
                 playwright.expect(page.locator("#adoption-options")).to_be_hidden()
                 page.locator(dialog + " [data-close]").first.click()
-            assert page.locator("#settings-button").inner_text() == "⚙"
+            assert page.locator("#settings-button").inner_text() == "⚙ Settings"
             assert page.locator("#settings-button").get_attribute("aria-label") == "Settings"
             page.locator("#help-button").click()
             playwright.expect(page.get_by_role("heading", name="Swarm help")).to_be_visible()
@@ -443,6 +446,7 @@ def test_compact_status_adoption_and_help_controls(static_url, width):
             assert "Done copying" in page.locator("#help-dialog").inner_text()
             page.keyboard.press("Escape")
             playwright.expect(page.locator("#help-dialog")).to_be_hidden()
+            page.locator("#notifications-button").click()
             page.get_by_role("button", name="Settings", exact=True).click()
             playwright.expect(page.locator("#settings-dialog")).to_be_visible()
             page.keyboard.press("Escape")
@@ -722,7 +726,7 @@ def test_compact_global_and_terminal_headers(static_url, width):
             page.goto(static_url)
             playwright.expect(page.locator(".agent-card")).to_have_count(18)
             playwright.expect(page.locator("#swarm-selector")).to_be_visible()
-            assert page.locator("#restart-controller").inner_text() == "↻"
+            assert page.locator("#restart-controller").inner_text() == "↻ Restart active Swarm"
             assert (
                 page.locator("#restart-controller").get_attribute("aria-label") == "Restart backend"
             )
@@ -731,7 +735,12 @@ def test_compact_global_and_terminal_headers(static_url, width):
             assert picker["width"] == 136.5
             assert page.locator("#swarm-switcher").bounding_box()["width"] == 136.5
             assert not page.locator("#swarm-switcher > span").count()
-            assert abs(picker["x"] - logo["x"] - logo["width"] - 12) < 1
+            bell = page.locator("#notifications-button").bounding_box()
+            gap = page.locator(".brand-cluster").evaluate(
+                "node => parseFloat(getComputedStyle(node).columnGap)"
+            )
+            assert abs(bell["x"] - logo["x"] - logo["width"] - gap) < 1
+            assert abs(picker["x"] - bell["x"] - bell["width"] - gap) < 1
             assert abs((picker["y"] + picker["height"] / 2) - (logo["y"] + logo["height"] / 2)) < 1
             assert page.locator("#swarm-selector").get_attribute("aria-label") == "Active Swarm"
             if width >= 900:

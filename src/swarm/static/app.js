@@ -123,10 +123,12 @@ function updateRestartCapability() {
   button.disabled = !allowed || restartingController;
   const fleet = $('#fleet-control-button');
   if (fleet) { fleet.disabled = !allowed || restartingController; fleet.title = allowed ? 'Master control' : 'Remote fleet restarts require --allow-remote-restart'; }
-  button.textContent = '↻';
+  button.textContent = restartingController ? '↻ Restarting…' : '↻ Restart active Swarm';
   button.setAttribute('aria-label', restartingController ? 'Restarting backend' : 'Restart backend');
   button.setAttribute('aria-busy', String(restartingController));
   button.title = restartingController ? 'Restarting backend; waiting to reconnect' : allowed ? 'Restart the active Swarm backend controller' : 'This remote Swarm was not launched with --allow-remote-restart';
+  const scope = $('#notifications-active-swarm');
+  if (scope) scope.textContent = `Active Swarm: ${activeSwarm === 'local' ? 'Local Swarm' : federationNodes.get(activeSwarm)?.name || activeSwarm}`;
 }
 function notificationSources() {
   return [{id: 'local', name: 'Local Swarm'}, ...[...federationNodes.values()]
@@ -224,6 +226,7 @@ async function restartController() {
   const allowed = activeSwarm === 'local' || federationNodes.get(activeSwarm)?.capabilities?.remote_restart;
   if (!allowed) { toast('Remote restart is disabled on this Swarm.', true); return; }
   if (restartingController || !confirm('Restart the active Swarm backend controller?\n\nAgent processes are owned by tmux and will keep running. The dashboard will reconnect automatically.')) return;
+  $('#notifications-dialog')?.close();
   restartingController = true; updateRestartCapability();
   try {
     await api('/api/controller/restart', 'POST');
@@ -1203,6 +1206,13 @@ notificationsInbox = new SwarmNotifications.NotificationsInbox({
 });
 updateNotificationSources(false);
 notificationsInbox.start();
+const agentBroadcast = new SwarmAgentBroadcast.BroadcastController({
+  api: localApi,
+  currentSwarm: () => activeSwarm,
+  currentGeneration: () => stateGeneration,
+  sources: notificationSources,
+  onChange: () => { void refresh(); },
+});
 globalThis.addEventListener?.('swarm-auth-unauthorized', event => clearUnauthorizedWorkspace(event.detail?.node || 'local'));
 globalThis.addEventListener?.('swarm-auth-retry', () => { notificationsInbox.clear(); updateNotificationSources(); loadFederation(); refresh(); connectState(); });
 loadFederation(); refresh(); connectState();

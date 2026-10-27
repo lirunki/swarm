@@ -32,7 +32,7 @@ const runningJob = {id: 'job-1', status: 'running', counts: {waiting: 1}, create
 ]};
 function fixture(handler, confirm = () => true) {
   const ids = ['fleet-restart-dialog', 'fleet-control-button', 'fleet-preview-refresh', 'fleet-restart-start', 'fleet-job-cancel', 'fleet-restart-close',
-    'fleet-restart-cancel', 'fleet-restart-workspace', 'fleet-preview-targets', 'fleet-preview-skipped', 'fleet-skipped-section', 'fleet-preview-home', 'fleet-restart-error',
+    'fleet-restart-cancel', 'fleet-restart-workspace', 'fleet-preview-targets', 'fleet-preview-skipped', 'fleet-skipped-section', 'fleet-skipped-count', 'fleet-preview-home', 'fleet-restart-error',
     'fleet-job-section', 'fleet-job-targets', 'fleet-job-status', 'fleet-job-counts'];
   const elements = Object.fromEntries(ids.map(id => [`#${id}`, new Element(id.includes('button') || ['fleet-preview-refresh', 'fleet-restart-start', 'fleet-job-cancel', 'fleet-restart-close'].includes(id) ? 'button' : 'div')]));
   const calls = [], confirmations = [], changes = [], timers = [];
@@ -54,9 +54,11 @@ function standardApi(pathname, method) {
   return {jobs: []};
 }
 
-test('versioned topbar menu opens a safe custom preview for only the selected Swarm', async () => {
+test('versioned Notifications control opens a safe custom preview for only the selected Swarm', async () => {
   const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
-  assert.match(html, /id="fleet-control-button"[^>]*>⋯<\/button>/);
+  assert.match(html, /id="fleet-control-button"[^>]*>⋯ Master control<\/button>/);
+  const inbox=html.split('id="notifications-dialog"')[1].split('</dialog>')[0];
+  assert.ok(inbox.includes('id="fleet-control-button"'));
   assert.ok(html.indexOf('fleet-control-button') < html.indexOf('restart-controller'));
   for (const asset of ['app.css', 'fleet-control.js', 'app.js']) assert.ok(html.includes(`/static/${asset}?v=`));
   const t = fixture(standardApi); t.elements['#fleet-control-button'].click(); await tick(); await tick();
@@ -138,4 +140,42 @@ test('remote mutation policy disables starting and actions without hiding read-o
   await t.control.agentAction('force',runningJob.targets[0]);
   assert.equal(t.calls.filter(call=>call[1]==='POST').length,0);
   assert.equal(t.confirmations.length,0);
+});
+
+
+test('Skipped and Restart job use native collapsed details with visible summaries', () => {
+  const html=fs.readFileSync(path.join(__dirname,'../../src/swarm/static/index.html'),'utf8');
+  for(const id of ['fleet-skipped-section','fleet-job-section']) {
+    const opening=html.match(new RegExp(`<details id="${id}"[^>]*>`));
+    assert.ok(opening,`${id} should be a native accessible disclosure`);
+    assert.doesNotMatch(opening[0],/\sopen(?:[\s=>]|$)/,'no expanded default');
+  }
+  assert.match(html,/<summary><span>Skipped<\/span><span id="fleet-skipped-count"/);
+  assert.match(html,/<summary><span id="fleet-job-title">Restart job<\/span>.*id="fleet-job-status".*id="fleet-job-counts".*<\/summary>/);
+});
+
+test('details default closed on open but retain operator expansion through live renders', async () => {
+  const t=fixture(standardApi);await t.control.open();
+  const skipped=t.elements['#fleet-skipped-section'],job=t.elements['#fleet-job-section'];
+  assert.equal(skipped.open,false);assert.equal(job.open,false);
+  assert.equal(skipped.hidden,false);assert.equal(t.elements['#fleet-skipped-count'].textContent,'1');
+  skipped.open=true;t.control.renderPreview();assert.equal(skipped.open,true);
+  t.control.job=runningJob;t.control.renderJob();assert.equal(job.hidden,false);assert.equal(job.open,false);
+  assert.equal(t.elements['#fleet-job-status'].textContent,'running');
+  job.open=true;
+  t.control.applyState({restart_jobs:[{...runningJob,counts:{blocked:1}}]});
+  assert.equal(job.open,true);assert.match(t.elements['#fleet-job-counts'].textContent,/blocked 1/);
+  t.control.setBusy(true);assert.equal(job.open,true);t.control.setBusy(false);
+  t.elements['#fleet-restart-dialog'].close();await t.control.open();
+  assert.equal(skipped.open,false);assert.equal(job.open,false);
+  assert.equal(job.hidden,true,'old job details must not remain visible across dialog sessions');
+});
+
+test('empty skipped details remain hidden without discarding live job contents', async () => {
+  const t=fixture(async pathname=>pathname.endsWith('/preview')?{targets:[target],skipped:[]}:{jobs:[runningJob]});
+  await t.control.open();
+  assert.equal(t.elements['#fleet-skipped-section'].hidden,true);
+  assert.equal(t.elements['#fleet-skipped-count'].textContent,'0');
+  assert.equal(t.elements['#fleet-job-section'].open,false);
+  assert.match(t.elements['#fleet-job-targets'].textContent,/<waiting for idle>/);
 });

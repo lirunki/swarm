@@ -167,10 +167,12 @@ test('busy guard prevents duplicate submissions and close never disconnects', as
   assert.equal(t.changes.length, 1); assert.equal(t.calls.some(call => call.url.endsWith('/disconnect')), false);
 });
 
-test('dialog is top-right, password masked, example visible and app binds localApi', () => {
+test('settings opens from Notifications, password masked, and app binds localApi', () => {
   const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
   const app = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
-  assert.match(html, /class="top-meta"[^]*id="settings-button"[^]*<\/header>/);
+  const inbox=html.split('id="notifications-dialog"')[1].split('</dialog>')[0];
+  assert.ok(inbox.includes('id="settings-button"'));
+  assert.ok(!html.split('<header class="topbar">')[1].split('</header>')[0].includes('settings-button'));
   assert.match(html, /name="relay_api_key" type="password"/);
   assert.match(html, /Example: <code>wss:\/\/swarm-relay\.example\.com:9443\/v1\/connect<\/code>/);
   assert.match(app, /new SwarmRelaySettings\.RelaySettingsDialog\(\{\s*api: localApi/);

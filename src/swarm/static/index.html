@@ -7,22 +7,23 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=notifications-1">
+  <link rel="stylesheet" href="/static/app.css?v=notifications-broadcast-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=notifications-1"></script>
-  <script defer src="/static/org-chart.js?v=notifications-1"></script>
-  <script defer src="/static/relay-settings.js?v=notifications-1"></script>
-  <script defer src="/static/terminal-touch.js?v=notifications-1"></script>
-  <script defer src="/static/terminal-copy.js?v=notifications-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=notifications-1"></script>
-  <script defer src="/static/terminal-keys.js?v=notifications-1"></script>
-  <script defer src="/static/agent-files.js?v=notifications-1"></script>
-  <script defer src="/static/agent-messages.js?v=notifications-1"></script>
-  <script defer src="/static/auth.js?v=notifications-1"></script>
-  <script defer src="/static/fleet-control.js?v=notifications-1"></script>
-  <script defer src="/static/notifications.js?v=notifications-1"></script>
-  <script defer src="/static/app.js?v=notifications-1"></script>
+  <script defer src="/static/card-views.js?v=notifications-broadcast-1"></script>
+  <script defer src="/static/org-chart.js?v=notifications-broadcast-1"></script>
+  <script defer src="/static/relay-settings.js?v=notifications-broadcast-1"></script>
+  <script defer src="/static/terminal-touch.js?v=notifications-broadcast-1"></script>
+  <script defer src="/static/terminal-copy.js?v=notifications-broadcast-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=notifications-broadcast-1"></script>
+  <script defer src="/static/terminal-keys.js?v=notifications-broadcast-1"></script>
+  <script defer src="/static/agent-files.js?v=notifications-broadcast-1"></script>
+  <script defer src="/static/agent-messages.js?v=notifications-broadcast-1"></script>
+  <script defer src="/static/agent-broadcast.js?v=notifications-broadcast-1"></script>
+  <script defer src="/static/auth.js?v=notifications-broadcast-1"></script>
+  <script defer src="/static/fleet-control.js?v=notifications-broadcast-1"></script>
+  <script defer src="/static/notifications.js?v=notifications-broadcast-1"></script>
+  <script defer src="/static/app.js?v=notifications-broadcast-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -35,7 +36,7 @@
       <label id="swarm-switcher" class="swarm-switcher" hidden><select id="swarm-selector" aria-label="Active Swarm"><option value="local">Local</option></select></label>
       <span class="edition">FEDERATED WORKSPACE</span>
     </div>
-    <div class="top-meta"><span id="health"></span><button id="help-button" class="header-icon" type="button" aria-label="Help" title="Swarm help" aria-haspopup="dialog" aria-controls="help-dialog">?</button><button id="settings-button" class="settings-button header-icon" type="button" aria-label="Settings" title="Settings" aria-haspopup="dialog" aria-controls="settings-dialog">⚙</button><button id="fleet-control-button" class="fleet-control-button header-icon" type="button" aria-label="Master control" title="Master control: restart live agent processes" aria-haspopup="dialog" aria-controls="fleet-restart-dialog">⋯</button><span id="connection" class="connection">Connecting…</span><button id="restart-controller" class="restart-controller header-icon" type="button" aria-label="Restart backend" aria-busy="false" title="Restart the active Swarm backend controller">↻</button></div>
+    <div class="top-meta"><span id="health"></span><button id="help-button" class="header-icon" type="button" aria-label="Help" title="Swarm help" aria-haspopup="dialog" aria-controls="help-dialog">?</button><span id="connection" class="connection">Connecting…</span></div>
   </header>
   <nav id="tabs" class="tabs" aria-label="Workspace tabs"><button id="dashboard-tab" class="tab active" type="button" aria-current="page">◫ &nbsp;Dashboard</button></nav>
   <main id="dashboard">
@@ -68,10 +69,42 @@
 
   <dialog id="notifications-dialog" class="wide-dialog notifications-dialog" aria-labelledby="notifications-title">
     <header class="dialog-head"><div><div class="eyebrow">ALL CONNECTED SWARMS</div><h2 id="notifications-title">Notifications</h2></div><button type="button" class="icon-button" data-close aria-label="Close notifications">×</button></header>
+    <section class="notifications-controls" aria-label="Swarm controls">
+      <p id="notifications-active-swarm" class="hint">Active Swarm: Local Swarm</p>
+      <div class="notifications-actions">
+        <button id="fleet-control-button" class="fleet-control-button small" type="button" aria-label="Master control" title="Master control for the active Swarm" aria-haspopup="dialog" aria-controls="fleet-restart-dialog">⋯ Master control</button>
+        <button id="settings-button" class="settings-button small" type="button" aria-label="Settings" title="Local relay settings" aria-haspopup="dialog" aria-controls="settings-dialog">⚙ Settings</button>
+        <button id="restart-controller" class="restart-controller small" type="button" aria-label="Restart backend" aria-busy="false" title="Restart the active Swarm backend controller">↻ Restart active Swarm</button>
+      </div>
+      <p class="hint">Master control and restart apply to the active Swarm. Settings configures this browser's local relay connection.</p>
+    </section>
+    <section class="notification-broadcast" aria-labelledby="notification-broadcast-title">
+      <h3 id="notification-broadcast-title">Broadcast to agents</h3>
+      <label for="notification-broadcast-text">Message</label>
+      <textarea id="notification-broadcast-text" rows="3" maxlength="32000" placeholder="Type a message, then choose the agents and Swarms to receive it."></textarea>
+      <div class="notification-broadcast-actions"><p class="hint">Durable inbox messages only. This never wakes agents.</p><button id="notification-broadcast-open" type="button" class="small primary">Select &amp; broadcast</button></div>
+      <p id="notification-broadcast-status" class="hint" role="status" aria-live="polite"></p>
+    </section>
     <div class="notifications-toolbar"><p id="notifications-summary" class="hint" aria-live="polite">0 unread notifications.</p><button id="refresh-notifications" class="small" type="button">↻ Refresh</button></div>
     <p id="notifications-error" class="form-error" role="status"></p>
     <div id="notification-list" class="notification-list" role="list" aria-label="Unread agent notifications"></div>
     <footer class="dialog-footer"><button type="button" data-close>Close</button></footer>
+  </dialog>
+
+  <dialog id="broadcast-agents-dialog" class="wide-dialog broadcast-agents-dialog" aria-labelledby="broadcast-title">
+    <header class="dialog-head"><div><div class="eyebrow">DURABLE AGENT INBOXES</div><h2 id="broadcast-title">Select &amp; broadcast</h2></div><button id="broadcast-close" type="button" class="icon-button" aria-label="Close broadcast selection">×</button></header>
+    <p class="hint">Only visible, checked managed agents receive the message. Observed agents cannot receive managed inbox messages. Offline Swarms are excluded.</p>
+    <div class="broadcast-filters">
+      <label>Swarm scope<select id="broadcast-scope"><option value="current">Only this Swarm</option><option value="all">All connected Swarms</option></select></label>
+      <label>Agent process state<select id="broadcast-awake"><option value="all">All agents</option><option value="awake">Only awaken (live process)</option><option value="asleep">Only non-awaken (no live process)</option></select></label>
+      <label class="broadcast-search-label">Filter agents<input id="broadcast-search" type="search" placeholder="Name, goal, ID or Swarm"></label>
+    </div>
+    <div class="broadcast-selection-tools"><button id="broadcast-select-all" type="button" class="small">Select all shown</button><button id="broadcast-select-none" type="button" class="small">Select none shown</button><button id="broadcast-refresh" type="button" class="small">↻ Refresh agents</button></div>
+    <p id="broadcast-summary" class="hint" role="status" aria-live="polite"></p>
+    <p id="broadcast-errors" class="form-error" role="alert"></p>
+    <div id="broadcast-targets" class="broadcast-targets" role="group" aria-label="Broadcast recipients"></div>
+    <div id="broadcast-results" class="broadcast-results" role="status" aria-live="polite"></div>
+    <footer class="dialog-footer"><button id="broadcast-cancel" type="button">Close</button><button id="broadcast-send" type="button" class="primary" disabled>Broadcast selected</button></footer>
   </dialog>
 
   <dialog id="fleet-restart-dialog" class="wide-dialog fleet-restart-dialog" aria-labelledby="fleet-restart-title">
@@ -80,14 +113,20 @@
     <section class="fleet-preview-section" aria-labelledby="fleet-preview-title">
       <div class="fleet-section-head"><div><h3 id="fleet-preview-title">Current process snapshot</h3><code id="fleet-preview-home"></code></div><button id="fleet-preview-refresh" class="small" type="button">↻ Refresh preview</button></div>
       <div id="fleet-preview-targets" class="fleet-preview-targets"></div>
-      <div id="fleet-skipped-section" hidden><h4>Skipped</h4><ul id="fleet-preview-skipped" class="fleet-preview-skipped"></ul></div>
+      <details id="fleet-skipped-section" class="fleet-detail-card fleet-skipped-card" hidden>
+        <summary><span>Skipped</span><span id="fleet-skipped-count" class="fleet-detail-count">0</span></summary>
+        <ul id="fleet-preview-skipped" class="fleet-preview-skipped"></ul>
+      </details>
       <p class="hint">Names and process-bound tokens are captured by this preview. If a process changes—even if the same agent later returns—the backend rejects the old snapshot; refresh and confirm again.</p>
     </section>
-    <section id="fleet-job-section" class="fleet-job-section" aria-labelledby="fleet-job-title" hidden>
-      <div class="fleet-section-head"><div><h3 id="fleet-job-title">Restart job</h3><p><strong id="fleet-job-status"></strong><span id="fleet-job-counts"></span></p></div><button id="fleet-job-cancel" class="small" type="button">Cancel pre-commit</button></div>
-      <ul id="fleet-job-targets" class="fleet-job-targets"></ul>
-      <p class="hint">Closing this panel does not cancel a submitted job. Cancel pre-commit stops only targets whose exit was not committed. Blocked agents may finish later when they become idle and exit. Force and Legacy /quit are always separate explicit choices. Existing timers or queued mail can resume previously authorized work after restart.</p>
-    </section>
+    <details id="fleet-job-section" class="fleet-job-section fleet-detail-card" aria-labelledby="fleet-job-title" hidden>
+      <summary><span id="fleet-job-title">Restart job</span><span class="fleet-job-summary"><strong id="fleet-job-status"></strong><span id="fleet-job-counts"></span></span></summary>
+      <div class="fleet-job-body">
+        <div class="fleet-section-head"><button id="fleet-job-cancel" class="small" type="button">Cancel pre-commit</button></div>
+        <ul id="fleet-job-targets" class="fleet-job-targets"></ul>
+        <p class="hint">Closing this panel does not cancel a submitted job. Cancel pre-commit stops only targets whose exit was not committed. Blocked agents may finish later when they become idle and exit. Force and Legacy /quit are always separate explicit choices. Existing timers or queued mail can resume previously authorized work after restart.</p>
+      </div>
+    </details>
     <p id="fleet-restart-error" class="form-error" role="alert"></p>
     <footer class="dialog-footer"><button id="fleet-restart-cancel" type="button" data-close autofocus>Cancel</button><button id="fleet-restart-start" class="primary" type="button" disabled>Restart selected</button></footer>
   </dialog>
@@ -123,11 +162,11 @@
     <div class="help-content">
       <section><h3>Dashboard</h3><p>Each tile is an independent agent. Expand it for goal, activities, checkpoint and controls. Use the state dropdown to show several states together; All checks or clears every state. Counts update live. Search filters names, goals, activities and folders. Dimmed ancestors remain to explain parent → child relationships.</p></section>
       <section><h3>Agent states</h3><dl><dt class="running">Running</dt><dd>Working toward its goal.</dd><dt class="waiting">Waiting</dt><dd>Needs human input.</dd><dt class="dormant">Dormant</dt><dd>Waiting for an event or timer.</dd><dt class="idle">Idle</dt><dd>Turn complete, goal not yet complete.</dd><dt class="done">Done</dt><dd>Goal accomplished. Process liveness is shown separately.</dd></dl></section>
-      <section><h3>Notifications</h3><p>The bell beside the Swarm logo combines unread notifications from every connected Swarm. Agents use it only when they need a human answer or finish their overall goal. Open agent removes that notification, selects its source Swarm, and opens an existing live terminal tab or reveals and highlights the agent card.</p></section>
+      <section><h3>Notifications and broadcast</h3><p>The bell beside the Swarm logo combines unread notifications from every connected Swarm. Agents must notify you whenever they need your action or complete your request. Open agent removes that notification, selects its source Swarm, and opens an existing live terminal tab or reveals and highlights its card.</p><p>The dialog also contains Master control, Settings and Restart active Swarm. Type a message and use Select &amp; broadcast to choose managed agents by checkbox, Swarm, process state or search. Only shown checked agents receive it. Broadcast queues durable messages without waking agents; inspect request IDs for uncertain results instead of retrying blindly.</p></section>
       <section><h3>Sessions and controls</h3><p>New agent starts pi. Adopt session offers saved pi conversations or Grok history converted into pi; adopted/imported sessions stay offline until you Wake them. Closing a terminal tab does not stop its agent. Wake resumes; Stop terminates and disables automatic restore. Edit → Forget removes an inactive agent while keeping its saved session history.</p></section>
       <section><h3>Terminal scrolling and copying</h3><p>On mobile, swipe down for older output and up for newer output. At the bottom, tap to type. Copy text puts the visible screen in a read-only layer directly over the terminal: use native selection handles and Copy. It closes after copying, or tap Done copying. Only the visible screen is captured—scroll first for other text.</p><p>While the mobile software keyboard is open, the terminal key bar adds Esc, Tab, Ctrl, Alt, arrows, Home, End and Sup (forward Delete). Ctrl and Alt apply to the next typed key or accessory key, then reset; tap both for a combined shortcut. The bar keeps the keyboard focused and hides when it closes, when you leave the terminal, or while copying.</p><p>On desktop, hold Shift while dragging to select past tmux mouse handling, then use your browser or system Copy command. Desktop terminals have no extra copy layer. The tmux button beside Files can split the current window, close a selected split pane, open/switch windows, move focus and zoom panes. The main agent pane cannot be closed from this menu.</p></section>
       <section><h3>Files</h3><p>Files on a card or beside Reconnect opens its library. Upload picks a file on your browser's computer and saves a copy in the selected agent machine's temporary folder. Paste or Ctrl+V / ⌘V inside Files can also upload a copied image/file. The Paste button may require HTTPS/localhost and clipboard permission; plain text/URLs are not uploaded. Upload does not send a prompt. Download retrieves it; Insert pastes its quoted local path into a live agent's input without pressing Enter. Continue typing and submit when ready.</p><p>Agents can also register existing server files with swarm file add. Only metadata loads first; Open/Download reads bytes on demand. Remove reference keeps existing originals. Remove upload deletes only the uploaded temporary copy, never your browser-side original. Keep important inputs in durable storage: OS temp cleanup can make references unavailable.</p></section>
-      <section><h3>Relay and safety</h3><p>The Swarm selector changes workspace. The gear always configures the local relay connection. A relay joins fully trusted controllers: peers can control agents and read data. Keep the dashboard on localhost, HTTPS, or a trusted network. Restart backend reloads the controller, not its tmux-backed agents.</p></section>
+      <section><h3>Relay and safety</h3><p>The Swarm selector changes workspace. Settings in Notifications always configures the local relay connection. A relay joins fully trusted controllers: peers can control agents and read data. Keep the dashboard on localhost, HTTPS, or a trusted network. Restart backend reloads the controller, not its tmux-backed agents.</p></section>
     </div>
     <footer class="dialog-footer"><button type="button" data-close>Close</button></footer>
   </dialog>

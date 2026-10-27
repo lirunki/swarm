@@ -1,6 +1,6 @@
 ---
 name: swarm
-description: Report goals, activities, checkpoints, session metadata and status to the Swarm dashboard. Use on real status transitions and material checkpoints without narrating routine work.
+description: Report Swarm status and checkpoints. You MUST notify the user through the Swarm inbox whenever user action is required or the user's request is complete; status updates and chat replies are not substitutes.
 ---
 
 # Swarm agent coordination
@@ -8,6 +8,27 @@ description: Report goals, activities, checkpoints, session metadata and status 
 You are one worker in a swarm. Read your existing record at `$SWARM_AGENT_FILE`
 (or `$SWARM_HOME/agents/$SWARM_AGENT_ID.md`; home defaults to `~/.swarm`).
 Do not create a new identity or overwrite another agent's record.
+
+## Mandatory user notifications
+
+**You MUST tell the user through Swarm notifications whenever either applies:**
+
+- **User action is required:** ask for a decision, clarification, approval, login,
+  credential, permission, manual command, restart/reload, review, or any other action
+  needed from the user. Report `waiting`, then run `swarm notify` with the exact
+  action needed, **before** asking in chat, invoking an ask/confirmation tool, or
+  ending the turn awaiting that action.
+- **The user's requested work is complete:** report `done`, then run `swarm notify`
+  with what finished, where the result is, and any handoff/follow-up instructions.
+  Do this even when you also provide a final chat response.
+
+These are requirements, not optional suggestions. A `swarm report` status change,
+chat message, ask-tool dialog, terminal output/bell, OS desktop notification, or
+agent-to-agent message **does not replace a Swarm inbox notification**. Use
+`"$SWARM_PYTHON" -m swarm notify '...'`. Never include secret values in a notification.
+Keep notifications concise: one per distinct required user action and one per
+completed user request. Do not send routine progress or duplicate reminders.
+The state and ordering rules below apply to every notification.
 
 ## Companion workflows
 
@@ -75,27 +96,28 @@ Status values (use these exact spellings):
 - `idle`: this turn ended, but the overall goal is not accomplished.
 - `done`: the overall goal is genuinely accomplished, not merely this turn.
 
-## Before asking the user a question
+## Before requesting any user action
 
-**Notify Swarm before asking, not after.** Whenever you need user input, a
-clarification, a choice, confirmation, or approval:
+**The required order is: report `waiting` → send a Swarm notification → ask or
+hand off to the user.** This applies to every required user action, not just
+questions or ask-tool dialogs. Do not bury a required manual step in a final chat
+reply without also notifying the user through Swarm.
 
-1. First report `waiting` with `--wait-reason` containing the question or a
-   concise description of the input needed. Clear any scheduled wake timer with
-   `--wake-at none` so a timer cannot resume work while you await the answer.
-2. Only after that report succeeds, ask the question. This applies both to
-   plain-language questions and to question/confirmation tools (such as `ask`).
-   Do not call a blocking question tool first: Swarm must have the waiting state
-   before the tool suspends the agent.
-3. Keep the status `waiting` while the answer is outstanding, including when
-   ending a turn with a question. Do not overwrite it with `idle` or `done`.
-4. After the waiting report succeeds, post **one** concise notification containing
-   the question or the exact decision/input needed. Then ask the user. Do not post
-   reminder notifications while the same answer remains outstanding.
-5. When the user supplies the needed answer and you resume work, report
-   `running` and clear the old `--wait-reason` before continuing. If the answer
-   is still insufficient, report the remaining question, post a notification only
-   when it is a materially new human decision, and then ask again.
+1. First report `waiting` with `--wait-reason` containing the exact question,
+   decision, or action needed. Clear any scheduled wake timer with `--wake-at none`
+   so a timer cannot resume work while you await the user.
+2. After that report succeeds, **you MUST post one Swarm notification** with the
+   exact action needed and enough context to act. Include a safe command or link
+   when useful, but never a password, token, private key, or other secret value.
+3. Only after sending the notification, ask in chat, invoke the ask/confirmation
+   tool, or explain the manual step. Swarm must show `waiting` and the inbox must
+   be notified before a blocking tool suspends you or you end the turn.
+4. Keep `waiting` while the answer/action is outstanding. Do not replace it with
+   `idle` or `done` if the user's requested work is still blocked. Do not send
+   reminder notifications while the same action remains outstanding.
+5. When the user supplies the answer or completes the action and work can resume,
+   report `running` and clear `--wait-reason`. If a materially different human
+   action is needed, report that new wait reason, notify once, then ask again.
 
 ```bash
 # BEFORE presenting the question or invoking a question tool:
@@ -117,15 +139,15 @@ updated; do not claim that the dashboard shows `waiting`. If the notification
 command fails after the waiting report succeeded, do not change to another status;
 tell the user the inbox notification failed and still present the question directly.
 
-## Notify the user only for waiting or completed goals
+## Required notifications for user action and completed requests
 
 The global Notifications inbox is an interruption channel, not an activity feed.
-Post there only in these two cases:
+**You MUST post there in both of these cases**, using the persisted state first:
 
-- your persisted status is `waiting` because progress requires a human answer,
-  choice, approval, credential, or other input; or
-- your own overall human-assigned goal is genuinely complete and you have first
-  reported `done`.
+- `waiting`: progress requires any human answer, decision, approval, credential,
+  permission, manual operation, or other user action; or
+- `done`: the user's requested work is genuinely complete, including a coding,
+  investigation, documentation, or other user-assigned task.
 
 Never notify for `running`, `idle`, or `dormant`; routine progress, checkpoints,
 errors you can handle yourself, timers/external waits, child-agent updates, or
@@ -133,10 +155,15 @@ internal subtasks; and never notify merely because a turn ended. The command
 enforces the persisted state: `waiting` also requires a nonblank `wait_reason`,
 and completion requires `done`.
 
-For goal completion, make the durable final report first, then send one concise
-notification that says what finished and where the result can be found. Do not
-send another completion notification for the same goal unless the human assigned
-a genuinely new goal.
+For completion, **you MUST make the durable `done` report first, then send one
+Swarm notification before your final response**. Say what finished, where the result
+can be found (file, commit, PR, URL, or clear summary), and any follow-up the user
+needs to know about. A final response alone is not sufficient. If the requested
+work still needs user action to finish, use the `waiting` flow instead of declaring
+it complete. Internal subtasks or the end of a turn are not completed user requests.
+Do not send another completion notification for the same request unless the human
+assigned genuinely new work. If notification delivery fails, tell the user in chat;
+do not claim it was sent or silently replace it with an OS desktop notification.
 
 ```bash
 "$SWARM_PYTHON" -m swarm report --status done --wake-at none \
@@ -160,6 +187,7 @@ inbox.
 "$SWARM_PYTHON" -m swarm report --status waiting \
   --wait-reason 'Which migration strategy should I use?' \
   --notes 'Parser implemented. Tests pass. Need a decision before changing database schema.'
+"$SWARM_PYTHON" -m swarm notify 'Decision needed: choose the database migration strategy.'
 
 "$SWARM_PYTHON" -m swarm report --status dormant \
   --wait-reason 'Check PR 42 after CI' --wake-at '2030-01-02T15:00:00Z' \

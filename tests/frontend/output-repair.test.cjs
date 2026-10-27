@@ -44,7 +44,7 @@ test('repair is available only in Edit, with styling and versioned assets withou
   assert.match(source, /\$\('#repair-tool-outputs'\)\.addEventListener\('click', \(\) => repairToolOutputs\(editId\)\)/);
   assert.match(css, /\.tool-output-repair-section/);
   assert.match(css, /\.agent-card\.is-compact\{width:128px;height:128px/);
-  for (const asset of ['app.css', 'app.js']) assert.ok(html.includes(`/static/${asset}?v=notifications-1`));
+  for (const asset of ['app.css', 'app.js']) assert.ok(html.includes(`/static/${asset}?v=`));
 });
 
 test('repair availability requires a stopped persisted managed Pi session and guards setup, awake, stopping, restart, and server jobs', () => {

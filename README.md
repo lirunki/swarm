@@ -364,7 +364,7 @@ sudo systemctl status swarm-relay
 
 ### 2. Connect each Swarm backend
 
-Use the **Settings gear icon** at the dashboard's top-right to configure the **local controller**.
+Open the **bell → Notifications → Settings** to configure the **local controller**.
 The dialog remains local even while the Swarm selector displays a remote workspace.
 Enter:
 
@@ -538,14 +538,14 @@ conservatively blocks while any native Pi has an unknown working folder.
   terminal overlay, rather than as a redundant toolbar button.
 - **Closing a terminal tab, the browser, or Swarm does not stop agents.**
   No hidden agent launch happens when a tab opens.
-- The Swarm picker sits directly beside the main logo, without a redundant small
+- The Swarm picker sits beside the logo/bell cluster, without a redundant small
   label. Its dropdown is 136.5px wide (1.3× the previous 105px); long workspace names
   remain available in the option list and selected-value tooltip, with an accessible
   “Active Swarm” label. Header controls stay on one line when space permits.
-- **⋯ Master control** opens a preview/confirmation panel for restarting live agent
+- **Bell → Notifications → ⋯ Master control** opens a preview/confirmation panel for restarting live agent
   processes on the selected Swarm. It is separate from backend restart; see the
   [graceful fleet lifecycle](#master-control-restart-awake-agent-processes) below.
-- **↻ Restart backend** is icon-only in the top-right header, with an accessible
+- **Bell → Notifications → ↻ Restart active Swarm** has an accessible backend-restart
   label and tooltip (including while restarting). It confirms, then replaces only the Swarm
   controller process and reconnects the dashboard automatically. Agent processes remain
   owned by tmux and continue running throughout the restart.
@@ -702,10 +702,14 @@ worker; only the requested Pi launch starts the agent.
 
 ## Master control: restart awake agent processes
 
-The discreet **⋯ Master control** icon beside the top-right controls opens the fleet
+Open the **bell → Notifications → ⋯ Master control** button to view the fleet
 restart panel. It never restarts anything by opening the panel. Review the process
 snapshot, select targets, then confirm **Restart selected**. Cancel is initially
 focused; once a job exists the footer says Close, which only closes the panel.
+**Skipped** and **Restart job** are collapsed-by-default cards: their headers keep
+skip counts and job status/counts visible. Expand either header (mouse or keyboard)
+to see the same full reasons, target stages/errors and explicit actions. Live
+refresh/polling preserves your expansion; reopening Master control starts compact.
 
 “Awake” here means a **live, managed Pi process** on the currently selected Swarm.
 This includes live terminals whose goal status is idle, waiting, done or dormant.
@@ -992,7 +996,42 @@ time and notification text. A partial-source warning is shown if an offline or
 protected source cannot be read; one unavailable Swarm does not hide results from
 others.
 
-Agents may post only after their persisted record is in one of two states:
+The inbox also contains **Master control**, **Settings**, and **Restart active
+Swarm**. Master control/restart keep their active-Swarm scope and existing remote
+permission checks; Settings always configures the browser's local relay connection.
+These controls are no longer duplicated in the top-right header.
+
+### Broadcast messages to agents
+
+Type a message (up to 32,000 characters) in **Broadcast to agents**, then click
+**Select & broadcast**. The checkbox picker offers:
+
+- **Only this Swarm** or **All connected Swarms** (online sources only).
+- **All agents**, **Only awaken**, or **Only non-awaken**, plus text search.
+  Awaken means a live managed process, matching Master control—not goal status.
+  Dormant/done processes may be live but still hold their messages until resumed.
+- **Select all shown**, **Select none shown**, individual checkboxes and refresh.
+  Only visible, checked managed agents are sent to; hidden selections never leak
+  into a filtered broadcast. Observed agents cannot receive managed inbox messages.
+
+The confirmation shows the exact target and Swarm counts. Sending queues durable
+messages using the existing authenticated per-agent API; it **never wakes an agent**
+or types into tmux. A captured draft/target/source snapshot prevents in-flight UI
+changes from retargeting a message. Per-target results retain request UUIDs and
+accepted/error/uncertain outcomes. Offline/invalid sources are excluded visibly;
+partial failures do not erase the draft or blindly retry other targets. The session
+remembers accepted/uncertain sends for the same draft across picker close/reopen;
+inspect their request IDs rather than assuming a lost response means no delivery.
+An API timeout is uncertain, not proof the backend rejected the message. Requests
+still completing after a workspace change cannot schedule more recipients there.
+
+### Required agent-to-user notifications
+
+Agents **must** post a Swarm inbox notification whenever they need any action from
+the user (including decisions, login, credentials, permissions, manual commands,
+reviews or reloads), and whenever the user's requested work is genuinely complete.
+Status changes, chat replies, ask-tool dialogs and OS desktop notifications are not
+substitutes. Post only after the persisted record is in the appropriate state:
 
 - `waiting`, with a nonblank `wait_reason`, when work requires a human answer,
   decision, approval or other input; or

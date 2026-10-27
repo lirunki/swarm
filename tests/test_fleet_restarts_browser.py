@@ -51,6 +51,7 @@ def test_master_control_preview_confirmation_and_scoped_restart(tmp_path, width,
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(f"http://127.0.0.1:{port}")
                 playwright.expect(page.locator(".agent-card")).to_have_count(3)
+                page.locator("#notifications-button").click()
                 page.get_by_role("button", name="Master control", exact=True).click()
                 dialog = page.locator("#fleet-restart-dialog")
                 playwright.expect(dialog).to_be_visible()
@@ -58,6 +59,23 @@ def test_master_control_preview_confirmation_and_scoped_restart(tmp_path, width,
                 playwright.expect(page.locator(".fleet-preview-row")).to_have_count(2)
                 assert "<Alpha & Co>" in page.locator("#fleet-preview-targets").inner_text()
                 assert not page.locator("#fleet-preview-targets script").count()
+                skipped = page.locator("#fleet-skipped-section")
+                assert not skipped.evaluate("(node) => node.open")
+                playwright.expect(page.locator("#fleet-skipped-count")).to_have_text("1")
+                playwright.expect(page.locator("#fleet-preview-skipped")).to_be_hidden()
+                skipped.locator("summary").focus()
+                skipped.locator("summary").press("Enter")
+                assert skipped.evaluate("(node) => node.open")
+                playwright.expect(page.locator("#fleet-preview-skipped")).to_be_visible()
+                assert (
+                    "Stopped stays stopped" in page.locator("#fleet-preview-skipped").inner_text()
+                )
+                page.locator("#fleet-preview-refresh").click()
+                playwright.expect(page.locator("#fleet-preview-refresh")).to_be_enabled()
+                playwright.expect(page.locator(".fleet-preview-row")).to_have_count(2)
+                assert skipped.evaluate("(node) => node.open"), "refresh must preserve expansion"
+                skipped.locator("summary").click()
+                playwright.expect(page.locator("#fleet-preview-skipped")).to_be_hidden()
                 page.locator(f'input[data-agent-id="{other.id}"]').uncheck()
                 page.once("dialog", lambda value: value.dismiss())
                 page.locator("#fleet-restart-start").click()
@@ -65,6 +83,13 @@ def test_master_control_preview_confirmation_and_scoped_restart(tmp_path, width,
                 page.once("dialog", lambda value: value.accept())
                 page.locator("#fleet-restart-start").click()
                 playwright.expect(page.locator(".fleet-job-row")).to_have_count(1)
+                job_details = page.locator("#fleet-job-section")
+                assert not job_details.evaluate("(node) => node.open")
+                playwright.expect(page.locator("#fleet-job-status")).to_be_visible()
+                playwright.expect(page.locator("#fleet-job-targets")).to_be_hidden()
+                dialog.screenshot(
+                    path=str(tmp_path / f"fleet-control-compact-{width}-{native}.png")
+                )
                 assert (
                     not ctl.processes.launches
                     and not ctl.processes.kills
@@ -78,8 +103,16 @@ def test_master_control_preview_confirmation_and_scoped_restart(tmp_path, width,
                 ).click()  # Now labelled Close: does not cancel the job.
                 playwright.expect(dialog).to_be_hidden()
                 assert ctl.store.get(target.id).restart_job_id == job_id
+                page.locator("#notifications-button").click()
                 page.get_by_role("button", name="Master control", exact=True).click()
                 playwright.expect(page.locator(".fleet-job-row")).to_have_count(1)
+                assert not job_details.evaluate("(node) => node.open"), (
+                    "reopening must default compact"
+                )
+                job_details.locator("summary").focus()
+                job_details.locator("summary").press("Enter")
+                assert job_details.evaluate("(node) => node.open")
+                playwright.expect(page.locator("#fleet-job-targets")).to_be_visible()
                 if native:
                     native_ready(ctl, target, job_id)
                     playwright.expect(page.locator(".fleet-target-state")).to_have_text(
@@ -106,6 +139,9 @@ def test_master_control_preview_confirmation_and_scoped_restart(tmp_path, width,
                     and not current.auto_resume
                 )
                 assert current.restart_job_id is None
+                assert job_details.evaluate("(node) => node.open"), (
+                    "job polling must preserve expansion"
+                )
                 assert page.evaluate("document.body.scrollWidth<=innerWidth")
                 assert not errors
                 dialog.screenshot(path=str(tmp_path / f"fleet-control-{width}-{native}.png"))

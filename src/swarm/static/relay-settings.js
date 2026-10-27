@@ -49,6 +49,7 @@
     }
 
     async open() {
+      this.query('#notifications-dialog')?.close();
       const generation = ++this.generation;
       this.cancel(this.timer); this.key.value = ''; this.current = null; this.error(''); this.loading = true;
       this.dialog.showModal(); this.render();

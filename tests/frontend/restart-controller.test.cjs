@@ -16,7 +16,7 @@ function restartHarness(confirmResult = true, reject = false) {
     activeSwarm: 'local',
     federationNodes: new Map(),
     confirm: message => { calls.push(['confirm', message]); return confirmResult; },
-    $: selector => { if (selector === '#fleet-control-button') return null; assert.equal(selector, '#restart-controller'); return restart; },
+    $: selector => { if (['#fleet-control-button','#notifications-active-swarm','#notifications-dialog'].includes(selector)) return null; assert.equal(selector, '#restart-controller'); return restart; },
     api: async (url, method) => { calls.push(['api', url, method]); if (reject) throw Error('restart failed'); return {restarting: true}; },
     toast: (message, error) => calls.push(['toast', message, error]),
     setTimeout: (callback, delay) => { calls.push(['timeout', delay]); return {callback}; },
@@ -30,11 +30,12 @@ function restartHarness(confirmResult = true, reject = false) {
   return {context, calls, restart};
 }
 
-test('restart control remains in the topbar beside live status', () => {
-  const topMeta = html.slice(html.indexOf('<div class="top-meta">'), html.indexOf('</div>', html.indexOf('<div class="top-meta">')));
-  assert.match(topMeta, /id="connection"[^>]*>Connecting…<\/span><button id="restart-controller"/);
-  assert.ok(topMeta.indexOf('restart-controller') > topMeta.indexOf('connection'));
-  assert.match(topMeta, /id="restart-controller"[^>]*aria-label="Restart backend"[^>]*>↻<\/button>/);
+test('restart control lives in Notifications rather than the topbar', () => {
+  const topMeta=html.slice(html.indexOf('<div class="top-meta">'),html.indexOf('</div>',html.indexOf('<div class="top-meta">')));
+  assert.ok(topMeta.includes('id="connection"'));
+  assert.ok(!topMeta.includes('restart-controller'));
+  const inbox=html.split('id="notifications-dialog"')[1].split('</dialog>')[0];
+  assert.match(inbox,/id="restart-controller"[^>]*aria-label="Restart backend"[^>]*>↻ Restart active Swarm<\/button>/);
 });
 
 test('confirmed restart posts once, disables itself, and explains agent preservation', async () => {
@@ -44,7 +45,7 @@ test('confirmed restart posts once, disables itself, and explains agent preserva
   assert.match(harness.calls[0][1], /Agent processes are owned by tmux and will keep running/);
   assert.deepEqual(harness.calls.find(call => call[0] === 'api'), ['api', '/api/controller/restart', 'POST']);
   assert.equal(harness.restart.disabled, true);
-  assert.equal(harness.restart.textContent, '↻');
+  assert.equal(harness.restart.textContent, '↻ Restarting…');
   assert.equal(harness.restart.attributes['aria-busy'], 'true');
   assert.equal(harness.restart.attributes['aria-label'], 'Restarting backend');
   assert.ok(harness.calls.some(call => call[0] === 'timeout' && call[1] === 20000));
@@ -55,7 +56,7 @@ test('cancel and request failure do not leave the restart button disabled', asyn
   assert.equal(cancelled.calls.some(call => call[0] === 'api'), false);
   const failed = restartHarness(true, true); await failed.context.restartController();
   assert.equal(failed.restart.disabled, false);
-  assert.equal(failed.restart.textContent, '↻');
+  assert.equal(failed.restart.textContent, '↻ Restart active Swarm');
   assert.equal(failed.restart.attributes['aria-busy'], 'false');
   assert.ok(failed.calls.some(call => call[0] === 'toast' && call[1] === 'restart failed' && call[2] === true));
 });
@@ -67,19 +68,19 @@ test('state websocket reconnection clears restart state and reports success', ()
 });
 
 
-test('restart stays icon-only after timeout and remote capability changes', async () => {
+test('restart keeps its dialog label after timeout and remote capability changes', async () => {
   const harness = restartHarness();
   await harness.context.restartController();
   await harness.context.restartController();
   assert.equal(harness.calls.filter(c => c[0] === 'api').length, 1);
   harness.context.restartTimer.callback();
-  assert.equal(harness.restart.textContent, '↻');
+  assert.equal(harness.restart.textContent, '↻ Restart active Swarm');
   assert.equal(harness.restart.disabled, false);
   assert.equal(harness.restart.attributes['aria-busy'], 'false');
   harness.context.activeSwarm = 'peer';
   harness.context.updateRestartCapability();
   assert.equal(harness.restart.disabled, true);
-  assert.equal(harness.restart.textContent, '↻');
+  assert.equal(harness.restart.textContent, '↻ Restart active Swarm');
   harness.context.federationNodes.set('peer', {capabilities: {remote_restart: true}});
   harness.context.updateRestartCapability();
   assert.equal(harness.restart.disabled, false);
