@@ -56,6 +56,7 @@ def snapshot(*, checks: tuple[dict, ...], threads: tuple[dict, ...] = (), **over
         "review_decision": "APPROVED",
         "head_oid": "abc123",
         "checks": checks,
+        "latest_reviews": (),
         "threads": threads,
     }
     values.update(overrides)
@@ -101,10 +102,27 @@ def test_status_rollup_normalizes_checks_without_newer_gh_pr_checks_json() -> No
                 "state": "SUCCESS",
                 "targetUrl": "https://ci/policy",
             },
+            {
+                "__typename": "CheckRun",
+                "name": "missing-conclusion",
+                "status": "COMPLETED",
+                "conclusion": "",
+            },
+            {
+                "__typename": "StatusContext",
+                "context": "expected-policy",
+                "state": "EXPECTED",
+            },
         ]
     )
 
-    assert [item["bucket"] for item in checks] == ["fail", "pending", "pass"]
+    assert [item["bucket"] for item in checks] == [
+        "fail",
+        "pending",
+        "pass",
+        "pending",
+        "pending",
+    ]
     assert checks[0]["workflow"] == "CI"
 
 
@@ -177,6 +195,31 @@ def test_monitor_returns_immediately_for_blocking_feedback(tmp_path) -> None:
     assert code == EXIT_BLOCKING_FEEDBACK
     assert "CI pending" in cfg.ci_output.read_text()
     assert "CHANGES_REQUESTED" in cfg.feedback_output.read_text()
+
+
+def test_latest_changes_requested_review_survives_aggregate_reset_after_push(tmp_path) -> None:
+    cfg = config(tmp_path)
+    current = snapshot(
+        checks=(check("pending"),),
+        review_decision="REVIEW_REQUIRED",
+        latest_reviews=(
+            {
+                "author": {"login": "review-bot"},
+                "state": "CHANGES_REQUESTED",
+                "body": "Please register the generated profile.",
+                "submittedAt": "2026-10-27T18:53:03Z",
+                "commit": {"oid": "old-head"},
+            },
+        ),
+    )
+
+    code = monitor(cfg, fetch=lambda *_: current)
+
+    assert code == EXIT_BLOCKING_FEEDBACK
+    feedback = cfg.feedback_output.read_text()
+    assert "Changes requested by @review-bot" in feedback
+    assert "Please register the generated profile" in feedback
+    assert "old-head" in feedback
 
 
 def test_monitor_timeout_reports_last_pending_snapshot(tmp_path, capsys) -> None:

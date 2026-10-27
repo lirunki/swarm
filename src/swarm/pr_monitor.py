@@ -28,6 +28,9 @@ EXIT_QUERY_ERROR = 21
 
 _FAILURE_BUCKETS = {"fail", "cancel"}
 _PENDING_BUCKETS = {"pending"}
+_CHECK_RUN_PASS_CONCLUSIONS = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+_CHECK_RUN_FAILURE_CONCLUSIONS = {"FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}
+_CHECK_RUN_CANCEL_CONCLUSIONS = {"CANCELLED", "STALE"}
 
 _THREAD_QUERY = """
 query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
@@ -80,6 +83,7 @@ class Snapshot:
     review_decision: str
     head_oid: str
     checks: tuple[dict, ...]
+    latest_reviews: tuple[dict, ...]
     threads: tuple[dict, ...]
 
 
@@ -161,7 +165,13 @@ def _normalize_checks(raw: object) -> tuple[dict, ...]:
         kind = item.get("__typename")
         if kind == "StatusContext" or "context" in item:
             state = str(item.get("state") or "").upper()
-            bucket = "pending" if state == "PENDING" else ("fail" if state in {"ERROR", "FAILURE"} else "pass")
+            if state == "SUCCESS":
+                bucket = "pass"
+            elif state in {"ERROR", "FAILURE"}:
+                bucket = "fail"
+            else:
+                # EXPECTED and unknown/empty states have not proved success.
+                bucket = "pending"
             checks.append(
                 {
                     "name": item.get("context") or "status",
@@ -177,12 +187,16 @@ def _normalize_checks(raw: object) -> tuple[dict, ...]:
         if status != "COMPLETED":
             bucket = "pending"
             state = status or "PENDING"
-        elif conclusion in {"FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}:
+        elif conclusion in _CHECK_RUN_FAILURE_CONCLUSIONS:
             bucket, state = "fail", conclusion
-        elif conclusion in {"CANCELLED", "STALE"}:
+        elif conclusion in _CHECK_RUN_CANCEL_CONCLUSIONS:
             bucket, state = "cancel", conclusion
+        elif conclusion in _CHECK_RUN_PASS_CONCLUSIONS:
+            bucket, state = "pass", conclusion
         else:
-            bucket, state = "pass", conclusion or "SUCCESS"
+            # A completed check with no recognized conclusion is not evidence
+            # of success. Keep polling instead of allowing a false clean exit.
+            bucket, state = "pending", conclusion or "UNKNOWN"
         checks.append(
             {
                 "name": item.get("name") or "check",
@@ -205,7 +219,7 @@ def _fetch_snapshot(config: Config, repo: str, number: int) -> Snapshot:
             "--repo",
             repo,
             "--json",
-            "number,url,state,isDraft,reviewDecision,headRefOid,statusCheckRollup",
+            "number,url,state,isDraft,reviewDecision,headRefOid,statusCheckRollup,latestReviews",
         ]
     )
     parts = repo.split("/")
@@ -229,6 +243,13 @@ def _fetch_snapshot(config: Config, repo: str, number: int) -> Snapshot:
     if not isinstance(metadata, dict):
         raise RuntimeError("gh returned an unexpected PR response")
     checks = _normalize_checks(metadata.get("statusCheckRollup"))
+    raw_reviews = metadata.get("latestReviews")
+    if raw_reviews is None:
+        latest_reviews: tuple[dict, ...] = ()
+    elif isinstance(raw_reviews, list):
+        latest_reviews = tuple(review for review in raw_reviews if isinstance(review, dict))
+    else:
+        raise RuntimeError("gh returned an unexpected latestReviews response")
     # Paginate explicitly instead of relying on newer `gh api --slurp`; the
     # enterprise workstation currently ships a gh build without that flag.
     threads: list[dict] = []
@@ -260,6 +281,7 @@ def _fetch_snapshot(config: Config, repo: str, number: int) -> Snapshot:
         review_decision=str(metadata.get("reviewDecision") or "").upper(),
         head_oid=str(metadata.get("headRefOid") or ""),
         checks=checks,
+        latest_reviews=latest_reviews,
         threads=tuple(threads),
     )
 
@@ -276,7 +298,25 @@ def assess(snapshot: Snapshot) -> Assessment:
             passing.append(check)
 
     feedback: list[dict] = []
-    if snapshot.review_decision == "CHANGES_REQUESTED":
+    changes_requested_reviews = [
+        review
+        for review in snapshot.latest_reviews
+        if str(review.get("state") or "").upper() == "CHANGES_REQUESTED"
+    ]
+    for review in changes_requested_reviews:
+        author = review.get("author") or {}
+        commit = review.get("commit") or {}
+        feedback.append(
+            {
+                "kind": "changes-requested-review",
+                "author": author.get("login") if isinstance(author, dict) else None,
+                "body": review.get("body"),
+                "submitted_at": review.get("submittedAt"),
+                "commit": commit.get("oid") if isinstance(commit, dict) else None,
+                "url": snapshot.url,
+            }
+        )
+    if snapshot.review_decision == "CHANGES_REQUESTED" and not changes_requested_reviews:
         feedback.append(
             {
                 "kind": "review-decision",
@@ -353,7 +393,7 @@ def render_ci(snapshot: Snapshot, result: Assessment, *, timed_out: bool = False
 def render_feedback(snapshot: Snapshot, result: Assessment, *, timed_out: bool = False) -> str:
     lines = ["# Pull request blocking feedback", "", f"PR: {snapshot.url or f'{snapshot.repo}#{snapshot.number}'}", ""]
     if not result.blocking_feedback:
-        lines += ["## Nothing blocking", "", "No changes-requested decision or unresolved review thread was found."]
+        lines += ["## Nothing blocking", "", "No latest changes-requested review or unresolved review thread was found."]
         if timed_out:
             lines += ["", "The monitor timed out while waiting for CI; feedback was clear at the final poll."]
     else:
@@ -369,6 +409,22 @@ def render_feedback(snapshot: Snapshot, result: Assessment, *, timed_out: bool =
                 suffix = " (outdated diff)" if item.get("outdated") else ""
                 lines.append(f"- **Unresolved thread at {location}{suffix}** — @{author}")
                 if body:
+                    lines.append(f"  - {body}")
+                if item.get("url"):
+                    lines.append(f"  - {item['url']}")
+            elif kind == "changes-requested-review":
+                author = item.get("author") or "unknown reviewer"
+                detail = []
+                if item.get("submitted_at"):
+                    detail.append(str(item["submitted_at"]))
+                if item.get("commit"):
+                    detail.append(f"commit {item['commit']}")
+                suffix = f" ({', '.join(detail)})" if detail else ""
+                lines.append(f"- **Changes requested by @{author}**{suffix}")
+                body = re.sub(r"\s+", " ", str(item.get("body") or "")).strip()
+                if body:
+                    if len(body) > 1000:
+                        body = body[:997].rstrip() + "..."
                     lines.append(f"  - {body}")
                 if item.get("url"):
                     lines.append(f"  - {item['url']}")

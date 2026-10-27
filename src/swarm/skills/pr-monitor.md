@@ -81,7 +81,7 @@ without independent validation.
 |---:|---|---|
 | `0` | Observed checks remained green for `--settle`, or the PR merged without detected blockers | Read both reports; verify the reported head is still the intended head before merge/deploy actions |
 | `10` | One or more CI checks failed or were cancelled | Read `ci.md`, then `feedback.md`; diagnose the listed checks |
-| `11` | Review decision is changes-requested, an unresolved review thread exists, or the PR closed unmerged | Read `feedback.md`, then `ci.md`; triage each item |
+| `11` | A reviewer's latest review requests changes, an unresolved review thread exists, or the PR closed unmerged | Read `feedback.md`, then `ci.md`; triage each item |
 | `12` | CI failure and blocking feedback were both present | Read and process both reports |
 | `20` | Deadline expired | Read both reports; they contain the final pending/clear snapshot |
 | `21` | Repeated GitHub query errors | Diagnose authentication/network/`gh` compatibility; outputs may be absent if no poll succeeded |
@@ -97,8 +97,10 @@ them with `|| true` before capturing `$?`.
   non-failing. Skipped/neutral checks are non-failing.
 - Green CI must remain green for `--settle` seconds to reduce the chance of returning before late
   checks register. Draft PRs do not return clean until undrafted or merged.
-- On GHE, blocking feedback means `CHANGES_REQUESTED`, any unresolved review thread (including
-  an outdated diff thread), or a PR closed without merging. On One, it means a negative reviewer
+- On GHE, blocking feedback means any reviewer's latest non-comment review is
+  `CHANGES_REQUESTED`, even when a later push resets the aggregate decision to `REVIEW_REQUIRED`;
+  any unresolved review thread (including an outdated diff thread); or a PR closed without
+  merging. On One, it means a negative reviewer
   vote, active/pending text review thread, rejected blocking non-CI policy, or an abandoned PR.
   A lack of approval by itself is not blocking feedback.
 - GHE CI comes from `statusCheckRollup`; One CI comes from Build and Status PR policies. Both
