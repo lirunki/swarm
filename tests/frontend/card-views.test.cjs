@@ -484,10 +484,10 @@ test('org chart integration loads before app and keeps nested-toggle focus', () 
   const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
   assert.ok(html.indexOf('src="/static/org-chart.js?') < html.indexOf('src="/static/app.js?'));
   assert.match(html, /id="agents" class="agent-grid org-chart"/);
-  assert.match(html, /id="collapse-all"/);
+  assert.doesNotMatch(html, /id="collapse-all"/);
   assert.match(source, /SwarmOrgChart.buildForest\(state.agents, new Set\(visible.map/);
   assert.match(source, /chart.querySelectorAll\('.agent-card'\)/);
-  assert.match(source, /cardViews.setAllCompact\(state.home, state.agents, true\)/);
+  assert.doesNotMatch(source, /cardViews.setAllCompact\(state.home, state.agents, true\)/);
 });
 
 

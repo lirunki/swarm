@@ -478,11 +478,13 @@ conservatively blocks while any native Pi has an unknown working folder.
 
 - Five explicit goal states: **running**, **waiting for input**, **dormant**,
   **idle** (turn completed), **done** (goal accomplished).
-- The dashboard uses a slim, two-row **Mission Control** layout: the state
-  multiselect sits under the label on the left; **Adopt session / New agent** sit
-  above **Collapse all / Search** on the right. The large hero and redundant fleet
-  headings are omitted so tiles start immediately below the controls. Workspace,
-  relay/settings and terminal navigation remain available outside the dashboard.
+- The dashboard uses a slim **Mission Control** toolbar: the state multiselect
+  sits under the label on the left and **+ New agent** on the right. Text search
+  lives inside the state dropdown; `/` opens it and focuses search. A small search
+  marker indicates a text filter remains active after the menu closes. There is
+  no global Collapse all button; cards keep their independent expand controls.
+  The large hero and redundant fleet headings are omitted so tiles start below
+  the controls. Workspace, relay/settings and terminal navigation stay available.
 - Choose several states together; each entry shows its live count and state color.
   **All** checks or clears every state. Search and filter matches retain ancestor
   context; a short explanation appears only when needed. Activity, checkpoints,
@@ -512,7 +514,7 @@ conservatively blocks while any native Pi has an unknown working folder.
   advertised. Hover over the tile/name to see current
   activity; a red name means a live process, independent of goal status. Cards
   default to compact even when status changes; saved manual expansion choices
-  still take precedence. **Collapse all** restores the dense view in one click.
+  still take precedence; use each card's expand control to change it independently.
   Expanding reveals the goal, activity, checkpoint, metadata and normal actions.
 - **Parent → child hierarchy:** connector lines show which agent created each
   child using `parent_id`. Independent agents form separate roots. Roots wrap to
@@ -634,8 +636,10 @@ The mobile copy control is hidden on mouse-first desktop browsers.
 
 Use the top-right **?** button for a quick guide to dashboard states, adoption,
 terminal scrolling/copying, process controls and relay safety. The adoption actions
-are grouped under **Adopt session → pi session / Grok session**; their original
-registration/import behavior is unchanged.
+are grouped under **+ New agent → Adopt session → pi session / Grok session**.
+The adoption menu sits at the bottom-left of the creation dialog, aligned with
+Cancel and Launch agent; it opens upward and switches to the selected adoption
+flow without submitting the create form. Registration/import behavior is unchanged.
 
 ### Mobile terminal gestures
 
@@ -1239,7 +1243,7 @@ the runtime; an incomplete workspace must be inspected and repaired separately.
 
 Quit the original pi process first (not just its terminal view). Then:
 
-1. Open **Adopt session → pi session**.
+1. Open **+ New agent → Adopt session → pi session**.
 2. Choose a saved inactive session; optionally edit its name and goal.
 3. Click **Adopt session**. It appears **idle/offline**, with auto-resume off.
 4. Click **Wake** when you want it to continue.
@@ -1663,7 +1667,7 @@ as `agent.meta_compaction` through the normal state API/WebSocket.
 
 ## Import a Grok Build session into pi
 
-Open **Adopt session → Grok session**, choose a saved conversation, check its working
+Open **+ New agent → Adopt session → Grok session**, choose a saved conversation, check its working
 folder, and click **Convert and adopt**. The new agent appears **idle/offline**
 with auto-resume disabled. It runs **pi**, not Grok, when you explicitly Wake it.
 Stop the original Grok worker before waking its imported counterpart.

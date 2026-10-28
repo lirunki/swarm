@@ -188,8 +188,10 @@ def test_dense_org_chart_layout_and_interactions(static_url, tmp_path, width):
             playwright.expect(page.locator('[data-agent-id="a0"] .card-terminal')).to_be_hidden()
             playwright.expect(page.locator('[data-agent-id="a0"] .goal')).to_be_visible()
             assert page.locator('[data-agent-id="a0"]').bounding_box()["width"] > 128
-            page.locator("#collapse-all").click()
+            assert not page.locator("#collapse-all").count()
+            page.locator('[data-agent-id="a0"] .card-toggle').click()
             playwright.expect(page.locator(".agent-card.is-compact")).to_have_count(18)
+            page.locator("#status-filter-button").click()
             page.locator("#search").fill("Needle")
             playwright.expect(page.locator(".agent-card")).to_have_count(3)
             playwright.expect(page.locator(".org-node.is-context")).to_have_count(2)
@@ -205,8 +207,11 @@ def test_dense_org_chart_layout_and_interactions(static_url, tmp_path, width):
             page.locator('[data-agent-id="a5"] .card-terminal').focus()
             page.evaluate("data => applyState(data)", state)
             playwright.expect(page.locator('[data-agent-id="a5"] .card-terminal')).to_be_focused()
+            page.locator("#status-filter-button").click()
             page.locator("#search").fill("")
+            page.locator("#status-filter-button").click()
             page.locator("#agents").screenshot(path=str(tmp_path / f"org-chart-{width}.png"))
+            page.locator("#status-filter-button").click()
             page.locator("#search").fill("No such agent")
             playwright.expect(page.locator("#agents")).to_be_hidden()
             playwright.expect(page.locator("#empty")).to_be_visible()
@@ -390,14 +395,14 @@ def test_compact_status_adoption_and_help_controls(static_url, width):
             if width >= 1000:
                 title = page.locator(".page-head-title .eyebrow").bounding_box()
                 control = page.locator("#status-filter").bounding_box()
-                adopt = page.locator("#adoption-menu-button").bounding_box()
-                search = page.locator("#search").bounding_box()
                 create = page.locator("#create-button").bounding_box()
                 assert title["x"] == control["x"]
                 assert control["y"] >= title["y"] + title["height"]
-                assert control["x"] + control["width"] <= adopt["x"]
-                assert search["y"] >= adopt["y"] + adopt["height"]
-                assert abs(create["x"] + create["width"] - search["x"] - search["width"]) < 1
+                assert control["x"] + control["width"] <= create["x"]
+                assert abs(create["y"] + create["height"] - control["y"] - control["height"]) < 1
+                playwright.expect(page.locator("#adoption-menu-button")).to_be_hidden()
+                playwright.expect(page.locator("#search")).to_be_hidden()
+            assert not page.locator("#collapse-all").count()
             page.locator("#status-filter-button").click()
             playwright.expect(page.locator('[data-status-count="idle"]')).to_have_text("3")
             playwright.expect(page.locator('[data-status-count="running"]')).to_have_text("2")
@@ -432,10 +437,13 @@ def test_compact_status_adoption_and_help_controls(static_url, width):
                 ("#adopt-button", "#adopt-dialog"),
                 ("#import-grok-button", "#import-grok-dialog"),
             ):
+                page.locator("#create-button").click()
+                playwright.expect(page.locator("#create-dialog")).to_be_visible()
                 page.locator("#adoption-menu-button").click()
                 playwright.expect(page.locator("#adoption-options")).to_be_visible()
                 page.locator(item).click()
                 playwright.expect(page.locator(dialog)).to_be_visible()
+                playwright.expect(page.locator("#create-dialog")).to_be_hidden()
                 playwright.expect(page.locator("#adoption-options")).to_be_hidden()
                 page.locator(dialog + " [data-close]").first.click()
             assert page.locator("#settings-button").inner_text() == "⚙ Settings"
@@ -661,7 +669,7 @@ def test_dashboard_reference_layout(static_url, tmp_path):
             dashboard = page.locator("#dashboard").bounding_box()
             boxes = [page.locator(f'[data-agent-id="a{i}"]').bounding_box() for i in range(13)]
             assert all(abs(box["y"] - boxes[0]["y"]) < 1 for box in boxes[:10])
-            assert 140 <= boxes[0]["y"] - dashboard["y"] <= 150
+            assert 110 <= boxes[0]["y"] - dashboard["y"] <= 125
             assert all(box["width"] == 128 and box["height"] == 128 for box in boxes)
             assert boxes[10]["y"] > boxes[0]["y"] + 128
             assert boxes[12]["y"] > boxes[10]["y"] + 128

@@ -28,7 +28,7 @@ dialog{width:min(520px,calc(100vw - 32px));max-height:90dvh;overflow:auto;backgr
 @media(max-width:650px){.picker-row{align-items:stretch;flex-direction:column}.folder-browser-list{grid-template-columns:1fr}}
 
 /* Dense, connected forest: roots wrap; sibling branches stay aligned and scroll. */
-.fleet-tools{display:flex;align-items:center;gap:10px}.fleet-tools .search-label{flex:1}#hierarchy-summary{font-size:10px;margin-top:3px}
+#hierarchy-summary{font-size:10px;margin-top:3px}
 .agent-grid.org-chart{display:block;overflow-x:auto;overscroll-behavior-x:contain;padding:5px 3px 14px;min-height:145px;border-radius:8px}
 .org-chart:focus-visible{outline:1px solid var(--accent);outline-offset:3px}
 .org-forest,.org-children{list-style:none;margin:0;display:flex;align-items:flex-start}
@@ -88,21 +88,18 @@ dialog{width:min(520px,calc(100vw - 32px));max-height:90dvh;overflow:auto;backgr
 @media(max-width:1000px){.page-head{gap:16px}#status-filter-button{min-width:145px}}@media(max-width:650px){.page-head{align-items:stretch}.status-filter{margin:0;align-self:flex-start}.page-head>.actions{flex-direction:row;justify-content:flex-start;align-items:center}.status-filter-menu,.adoption-options{right:auto;left:0}.header-icon{width:32px;height:32px;padding:0}.settings-button.header-icon{padding:0}.dropdown-panel{max-width:calc(100vw - 32px)}}
 
 
-/* Screenshot reference: two compact control rows above the full-width fleet. */
+/* Compact state dropdown and New agent action above the full-width fleet. */
 .sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
 #dashboard{display:flex;flex-direction:column;min-height:0;padding:15px 28px 8px}
 #dashboard>section,#dashboard>details,#dashboard>.hierarchy-note,#dashboard>.page-footer{flex-shrink:0}
-.mission-toolbar{display:grid;grid-template-columns:minmax(160px,1fr) auto;grid-template-rows:auto auto;gap:10px 25px;align-items:center;margin-bottom:35px}
-.mission-toolbar .page-head-title{grid-column:1;grid-row:1 / 3;align-self:stretch;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;min-width:0}
+.mission-toolbar{display:grid;grid-template-columns:minmax(160px,1fr) auto;grid-template-rows:auto;gap:10px 25px;align-items:center;margin-bottom:35px}
+.mission-toolbar .page-head-title{grid-column:1;grid-row:1;align-self:stretch;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;min-width:0}
 .mission-toolbar .eyebrow{margin:0 0 10px}
 .mission-toolbar .status-filter{margin:0;align-self:auto}
 .mission-toolbar #status-filter-button{min-width:160px;height:41px;font-size:13px}
-.mission-toolbar .status-filter-menu{left:0;right:auto}
-.mission-toolbar>.actions{grid-column:2;grid-row:1;flex-direction:row;justify-content:flex-end;align-items:center;flex-wrap:nowrap}
-.mission-toolbar>.fleet-tools{grid-column:2;grid-row:2;justify-content:flex-end;align-items:center;width:auto;flex-wrap:nowrap}
-.mission-toolbar>.actions>button,.mission-toolbar #adoption-menu-button{height:41px;font-size:13px}
-.mission-toolbar .search-label{flex:none;min-width:0}
-.mission-toolbar .search-label input{width:280px;margin:0;height:38px}
+.mission-toolbar .status-filter-menu{left:0;right:auto;width:min(315px,calc(100vw - 32px));max-height:70dvh;overflow:auto}
+.mission-toolbar>.actions{grid-column:2;grid-row:1;align-self:end;flex-direction:row;justify-content:flex-end;align-items:center;flex-wrap:nowrap}
+.mission-toolbar>.actions>button{height:41px;font-size:13px}
 .hierarchy-note:not(.sr-only){margin:0 0 12px;font-size:11px}
 #dashboard>.page-footer{margin-top:auto;padding-top:30px;align-items:center;min-width:0}
 .page-footer #home-path{max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -114,10 +111,6 @@ dialog{width:min(520px,calc(100vw - 32px));max-height:90dvh;overflow:auto;backgr
   .mission-toolbar #status-filter-button{min-width:145px}
   .mission-toolbar .status-filter-menu{left:auto;right:0}
   .mission-toolbar>.actions{grid-column:1;grid-row:2;justify-content:flex-end;gap:8px}
-  .mission-toolbar>.fleet-tools{grid-column:1;grid-row:3;width:100%;gap:8px}
-  .mission-toolbar .search-label{flex:1;min-width:0}
-  .mission-toolbar .search-label input{width:100%}
-  .mission-toolbar #collapse-all{flex-shrink:0}
   #dashboard>.page-footer{padding-top:24px;gap:8px}
   .page-footer #home-path{max-width:100%}
 }
@@ -180,3 +173,6 @@ dialog{width:min(520px,calc(100vw - 32px));max-height:90dvh;overflow:auto;backgr
 
 /* Notifications doubles as the user communication and scoped-control hub. */
 .notifications-controls,.notification-broadcast{padding:12px;border:1px solid var(--line);border-radius:8px;margin-bottom:14px;background:#11161d}.notifications-actions,.notification-broadcast-actions,.broadcast-selection-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.notifications-actions{margin:8px 0}.notifications-actions button{border-radius:6px;white-space:normal;min-height:32px}.notifications-controls>.hint{font-size:10px;overflow-wrap:anywhere}.notification-broadcast h3{font-size:13px}.notification-broadcast label{margin-top:8px}.notification-broadcast textarea{min-height:72px;max-height:210px}.notification-broadcast-actions{justify-content:space-between;margin-top:8px}.notification-broadcast-actions .hint{flex:1;min-width:140px}.notification-broadcast-actions button{flex-shrink:0}#notification-broadcast-status:empty{display:none}#notification-broadcast-status{margin-top:8px;overflow-wrap:anywhere}.broadcast-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}.broadcast-filters label{margin-top:0;min-width:0}.broadcast-search-label{grid-column:1/-1}.broadcast-selection-tools{margin:12px 0}.broadcast-targets{max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:10px}.broadcast-target{display:flex;align-items:flex-start;gap:9px;padding:10px;margin:0;border-bottom:1px solid var(--line);cursor:pointer}.broadcast-target:last-child{border-bottom:0}.broadcast-target:hover{background:#1d2630}.broadcast-target input{width:15px;height:15px;flex-shrink:0;margin:3px 0 0;accent-color:var(--accent)}.broadcast-target-label{display:flex;min-width:0;flex-direction:column;gap:3px;overflow-wrap:anywhere}.broadcast-target-label .hint{font-size:10px}.broadcast-targets>.hint{padding:10px}.broadcast-results{max-height:220px;overflow:auto;margin-top:12px;overflow-wrap:anywhere}.broadcast-result{display:flex;flex-direction:column;gap:3px;padding:9px 0;border-top:1px solid var(--line);font-size:11px}.broadcast-result.status-queued>strong{color:var(--running)}.broadcast-result.status-failed>strong,.broadcast-result.status-uncertain>strong{color:var(--waiting)}@media(max-width:650px){.broadcast-filters{grid-template-columns:1fr}.broadcast-search-label{grid-column:auto}.notifications-actions{align-items:stretch}.notifications-actions button{flex:1 1 125px}.notification-broadcast-actions{align-items:stretch}.broadcast-targets{max-height:240px}}
+
+/* Search lives with state choices; adoption is an alternative in the create footer. */
+.status-filter-menu .status-search{display:block;width:100%;min-width:0;padding:2px 1px 5px}.status-filter-menu .status-search input{width:100%;height:36px;margin:0}.status-search>span{top:0;pointer-events:none}#status-filter-search{color:var(--accent);font-size:15px}.create-dialog-footer{align-items:center}.create-dialog-footer>#adoption-menu{margin-right:auto;min-width:0;flex-shrink:1}.create-dialog-footer #adoption-menu-button{font-size:12px;padding:9px 10px;max-width:100%;white-space:nowrap}.create-dialog-footer .adoption-options{top:auto;bottom:calc(100% + 7px);left:0;right:auto}.create-dialog-footer>button{flex-shrink:0}@media(max-width:650px){.create-dialog-footer{gap:7px}.create-dialog-footer>button,.create-dialog-footer #adoption-menu-button{font-size:11px;padding:8px;min-height:34px}}@media(max-width:380px){.create-dialog-footer #adoption-menu-button{white-space:normal;line-height:1.2}.create-dialog-footer{gap:5px}.create-dialog-footer>button,.create-dialog-footer #adoption-menu-button{font-size:10px;padding:7px 5px}}

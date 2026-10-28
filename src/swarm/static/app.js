@@ -563,7 +563,6 @@ function render() {
     : `${forest.shownCount} agent${forest.shownCount === 1 ? '' : 's'} · ${forest.roots.length} root${forest.roots.length === 1 ? '' : 's'}`;
   if (forest.issuesCount) $('#hierarchy-summary').textContent += ` · ${forest.issuesCount} missing or invalid parent links`;
   $('#hierarchy-summary').classList.toggle('sr-only', !forest.ancestorCount && !forest.issuesCount);
-  $('#collapse-all').disabled = !state.agents.length;
   if (focusedControl) {
     const replacement = [...chart.querySelectorAll('.agent-card')].find(card => card.dataset.agentId === focusedControl.id);
     if (replacement) $(focusedControl.selector, replacement)?.focus({preventScroll: true});
@@ -579,10 +578,6 @@ function render() {
   agentFilesDialog.sync(agentById(agentFilesDialog.agentId));
   agentMessagesController.sync(agentById(agentMessagesController.agentId));
 }
-$('#collapse-all').addEventListener('click', () => {
-  cardViews.setAllCompact(state.home, state.agents, true);
-  render();
-});
 function activate(id) {
   activeTab = id && terminals.has(id) ? id : 'dashboard';
   $('#dashboard').hidden = activeTab !== 'dashboard'; $('#terminals').hidden = activeTab === 'dashboard';
@@ -1147,7 +1142,7 @@ $('#import-grok-form').addEventListener('submit', event => {
     toast('Grok history converted and adopted as pi. Wake it when you are ready.'); await refresh();
   });
 });
-$('#import-grok-button').addEventListener('click', () => { dashboardControls.adoption.close(true); $('#import-grok-form').reset(); $('#grok-session-search').value = ''; $('#grok-roots').textContent = ''; showDialog('#import-grok-dialog'); loadGrokSessions(); });
+$('#import-grok-button').addEventListener('click', () => { dashboardControls.adoption.close(); $('#create-dialog').close(); $('#import-grok-form').reset(); $('#grok-session-search').value = ''; $('#grok-roots').textContent = ''; showDialog('#import-grok-dialog'); loadGrokSessions(); });
 $('#refresh-grok-sessions').addEventListener('click', loadGrokSessions);
 $('#grok-session-search').addEventListener('input', renderGrokSessions);
 const fleetControl = new SwarmFleetControl.FleetControl({
@@ -1179,15 +1174,16 @@ const relaySettingsDialog = new SwarmRelaySettings.RelaySettingsDialog({
 });
 for (const el of document.querySelectorAll('[data-close]')) el.addEventListener('click', () => el.closest('dialog').close());
 const createDialog = () => {
+  dashboardControls.adoption.close();
   const form = $('#create-form'); form.reset(); loadAgentFolderOptions(); updateWorktreeCreateFields();
   $('#model-selection-hint').textContent = 'Reading models from the server Pi configuration…';
   showDialog('#create-dialog'); loadModelOptions();
 };
 $('#create-button').addEventListener('click', createDialog); $('#empty-create').addEventListener('click', createDialog);
-$('#adopt-button').addEventListener('click', () => { dashboardControls.adoption.close(true); $('#adopt-form').reset(); $('#session-search').value = ''; showDialog('#adopt-dialog'); loadSessions(); });
+$('#adopt-button').addEventListener('click', () => { dashboardControls.adoption.close(); $('#create-dialog').close(); $('#adopt-form').reset(); $('#session-search').value = ''; showDialog('#adopt-dialog'); loadSessions(); });
 $('#refresh-sessions').addEventListener('click', loadSessions); $('#session-search').addEventListener('input', renderSessions);
 $('#dashboard-tab').addEventListener('click', () => activate('dashboard')); $('#search').addEventListener('input', render);
-document.addEventListener('keydown', event => { if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && activeTab === 'dashboard' && !document.querySelector('dialog[open]')) { event.preventDefault(); $('#search').focus(); } });
+document.addEventListener('keydown', event => { if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && activeTab === 'dashboard' && !document.querySelector('dialog[open]')) { event.preventDefault(); dashboardControls.status.dropdown.open(); $('#search').focus(); } });
 function clearUnauthorizedWorkspace(nodeId) {
   notificationsInbox?.clear();
   pendingNotificationReveal = null;

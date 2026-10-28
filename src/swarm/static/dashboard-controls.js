@@ -12,6 +12,8 @@
       this.keys = event => {
         if (event.key === 'Escape' && this.active) { event.preventDefault(); event.stopPropagation(); this.close(true); }
         else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+          const editingText = ['INPUT', 'TEXTAREA'].includes(event.target?.tagName) && !['checkbox', 'radio', 'button', 'submit'].includes(event.target?.type);
+          if (editingText) return;
           if (!this.active && event.target !== button) return;
           event.preventDefault(); this.open();
           const items = [...panel.querySelectorAll('button:not([disabled]),input:not([disabled])')];
@@ -70,7 +72,9 @@
       this.query('#status-filter-label').textContent = this.all ? 'All states' : !selected.length ? 'No states' : single ? LABELS[single] : `${selected.length} states`;
       this.query('#status-filter-count').textContent = String(this.all ? agents.length : selected.reduce((total, status) => total + counts[status], 0));
       this.query('#status-filter-dot').className = `status-dot ${single || 'all'}`;
-      this.query('#status-filter-button').title = this.all ? 'Show all agent states' : selected.length ? selected.map(status => LABELS[status]).join(', ') : 'Choose one or more states';
+      const search = this.query('#search')?.value?.trim() || '';
+      const marker = this.query('#status-filter-search'); if (marker) marker.hidden = !search;
+      this.query('#status-filter-button').title = (this.all ? 'Show all agent states' : selected.length ? selected.map(status => LABELS[status]).join(', ') : 'Choose one or more states') + (search ? `; Text filter: ${search}` : '');
     }
   }
 
