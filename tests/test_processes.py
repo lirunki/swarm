@@ -100,7 +100,12 @@ def test_tmux_menu_dispatches_only_mapped_layout_commands(tmp_path, action, expe
     proc.alive = lambda _: True
     proc.tmux_action(agent, action)
 
-    assert commands == [(*expected, "-t", proc.target(agent))]
+    if action in {"split-horizontal", "split-vertical", "new-window"}:
+        assert commands == [
+            (*expected, "-c", str(Path(agent.folder)), "-t", proc.target(agent), "bash")
+        ]
+    else:
+        assert commands == [(*expected, "-t", proc.target(agent))]
 
 
 def test_tmux_close_split_preserves_primary_agent_pane(tmp_path):

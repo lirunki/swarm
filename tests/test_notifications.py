@@ -64,6 +64,22 @@ def test_notification_post_requires_persisted_terminal_status(
             Notifications(store).post(agent.id, "Status update")
 
 
+def test_delete_all_marks_every_unread_notification_and_is_idempotent(tmp_path):
+    store = Store(tmp_path / "home")
+    agent = make_agent(store, tmp_path, status="done")
+    notifications = Notifications(store)
+    for text in ("First", "Second", "Third"):
+        notifications.post(agent.id, text)
+
+    cleared = notifications.delete_all()
+    repeated = notifications.delete_all()
+
+    assert cleared == {"deleted": 3, "revision": 4, "reused": False}
+    assert repeated == {"deleted": 0, "revision": 4, "reused": True}
+    assert notifications.list() == {"notifications": [], "count": 0, "revision": 4}
+    assert all(item.state == "deleted" and item.text == "" for item in notifications.read().notifications)
+
+
 def test_notification_text_validation_and_concurrent_atomic_posts(tmp_path):
     store = Store(tmp_path / "home")
     agent = make_agent(store, tmp_path, status="done")
@@ -134,4 +150,13 @@ def test_notifications_api_state_delete_and_websocket_broadcast(tmp_path):
         assert changed["notifications"] == {"count": 0, "revision": 2}
         repeated = client.delete(f"/api/notifications/{notification_id}")
         assert repeated.status_code == 200 and repeated.json()["reused"]
+        assert client.get("/api/notifications").json()["notifications"] == []
+
+        Notifications(store).post(agent.id, "Another update")
+        Notifications(store).post(agent.id, "One more update")
+        cleared = client.delete("/api/notifications")
+        assert cleared.status_code == 200
+        assert cleared.json()["deleted"] == 2
+        changed = websocket.receive_json()
+        assert changed["notifications"]["count"] == 0
         assert client.get("/api/notifications").json()["notifications"] == []

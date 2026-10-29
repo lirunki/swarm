@@ -513,6 +513,12 @@ class Processes:
         command = commands.get(action)
         if command is None:
             raise ValueError("Unsupported tmux action")
+        if action in {"split-horizontal", "split-vertical", "new-window"}:
+            folder = local_path(agent.folder)
+            if not folder.is_dir():
+                raise ValueError(f"working folder is missing: {agent.folder}")
+            self.run(*command, "-c", str(folder), "-t", target, "bash")
+            return
         self.run(*command, "-t", target)
 
     def attach_argv(self, agent: Agent) -> list[str]:

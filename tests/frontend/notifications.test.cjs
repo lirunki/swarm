@@ -20,7 +20,7 @@ class Element {
   close() { this.open = false; }
 }
 function fixture(fetch, onOpenAgent = () => {}) {
-  const ids = ['notifications-button', 'notifications-count', 'notifications-dialog', 'notification-list', 'notifications-summary', 'notifications-error', 'refresh-notifications'];
+  const ids = ['notifications-button', 'notifications-count', 'notifications-dialog', 'notification-list', 'notifications-summary', 'notifications-error', 'refresh-notifications', 'clear-notifications'];
   const elements = Object.fromEntries(ids.map(id => [`#${id}`, new Element()]));
   const document = {createElement: tag => new Element(tag), querySelector: selector => elements[selector]};
   const inbox = new NotificationsInbox({document, fetch, onOpenAgent, setInterval: null});
@@ -50,8 +50,9 @@ test('aggregates connected sources, tolerates partial failures, and renders lite
   assert.match(elements['#notifications-error'].textContent, /Remote <unsafe>/);
   const row = elements['#notification-list'].children[0];
   assert.equal(row.children[0].children[0].children[1].textContent, unsafe);
-  assert.equal(row.children[1].textContent, unsafe);
-  assert.equal(row.children[1].children.length, 0, 'notification text is assigned as text, not parsed markup');
+  const text = row.children[1].children[0].children[1];
+  assert.equal(text.textContent, unsafe);
+  assert.equal(text.children.length, 0, 'notification text is assigned as text, not parsed markup');
 });
 
 test('refresh requests never overlap and coalesce a refresh requested in flight', async () => {
@@ -79,11 +80,52 @@ test('Open agent deletes at the originating source before invoking app callback'
   }, value => { events.push('callback'); assert.equal(value.swarmId, 'relay/a'); assert.equal(value.agentId, 'agent-remote'); });
   await inbox.refresh();
   const open = elements['#notification-list'].children[0].children[2].children[1];
-  await inbox.removeAndOpen(inbox.items()[0], open);
+  await inbox.removeAndOpen(inbox.groups()[0], open);
   assert.deepEqual(events, ['delete', 'callback']);
   assert.ok(requests.some(([url, method]) => url === '/api/federation/relay%2Fa/proxy/api/notifications/remote' && method === 'DELETE'));
   assert.equal(inbox.items().length, 0);
   assert.equal(elements['#notifications-dialog'].open, false);
+});
+
+test('notifications from one agent render in one group and Open agent deletes all before navigating', async () => {
+  const requests = [], opened = [];
+  const {inbox, elements} = fixture(async (url, options) => {
+    requests.push([url, options.method]);
+    if (options.method === 'DELETE') return {ok: true, status: 200};
+    if (url.includes('federation')) return response({revision: 1, notifications: []});
+    return response({revision: 2, notifications: [
+      payload('first').notifications[0],
+      payload('second', {agent_id: 'agent-first', agent_name: 'Agent first', created_at: '2025-01-02T00:00:00Z'}).notifications[0],
+    ]});
+  }, value => opened.push(value));
+  await inbox.refresh();
+  assert.equal(elements['#notification-list'].children.length, 1);
+  const group = inbox.groups()[0];
+  assert.equal(group.items.length, 2);
+  const row = elements['#notification-list'].children[0];
+  assert.equal(row.children[1].children.length, 2);
+  assert.equal(row.children[2].children.filter(child => child.tagName === 'BUTTON').length, 1);
+  await inbox.removeAndOpen(group, row.children[2].children[1]);
+  assert.equal(requests.filter(([, method]) => method === 'DELETE').length, 2);
+  assert.equal(opened.length, 1);
+  assert.equal(inbox.items().length, 0);
+});
+
+test('Clear all flushes each connected source with pending notifications', async () => {
+  const requests = [];
+  const {inbox, elements} = fixture(async (url, options) => {
+    requests.push([url, options.method]);
+    if (options.method === 'DELETE') return {ok: true, status: 200};
+    return response(url.includes('federation') ? payload('remote') : payload('local'));
+  });
+  await inbox.refresh();
+  assert.equal(inbox.items().length, 2);
+  await inbox.clearAll(elements['#clear-notifications']);
+  assert.deepEqual(requests.filter(([, method]) => method === 'DELETE').map(([url]) => url).sort(), [
+    '/api/federation/relay%2Fa/proxy/api/notifications', '/api/notifications',
+  ].sort());
+  assert.equal(inbox.items().length, 0);
+  assert.equal(elements['#clear-notifications'].disabled, true);
 });
 
 test('late Open agent completion cannot navigate after the inbox context is cleared', async () => {
@@ -94,9 +136,9 @@ test('late Open agent completion cannot navigate after the inbox context is clea
     return response(url.includes('federation') ? payload('remote') : {revision: 1, count: 0, notifications: []});
   }, value => opened.push(value));
   await inbox.refresh();
-  const item = inbox.items()[0];
+  const group = inbox.groups()[0];
   const open = elements['#notification-list'].children[0].children[2].children[1];
-  const operation = inbox.removeAndOpen(item, open);
+  const operation = inbox.removeAndOpen(group, open);
   inbox.clear();
   releaseDelete({ok: true, status: 200});
   await operation;
@@ -112,6 +154,9 @@ test('page loads notifications before app and app implements pending cross-Swarm
   assert.ok(html.includes(`/static/app.css?v=${version}`));
   const brand = html.slice(html.indexOf('class="brand"'), html.indexOf('id="swarm-switcher"'));
   assert.match(brand, /id="notifications-button"/);
+  assert.match(html, /id="clear-notifications"[^>]*>Clear all</);
+  const topMeta = html.slice(html.indexOf('class="top-meta"'), html.indexOf('</header>'));
+  assert.ok(topMeta.indexOf('id="connection"') < topMeta.indexOf('id="help-button"'), 'Help is rightmost, after Live');
   assert.match(app, /pendingNotificationReveal = \{swarmId, agentId\}/);
   assert.match(app, /consumeNotificationReveal\(\);[\s\S]*notificationsInbox\?\.refresh\(\)/);
   assert.match(app, /agent\.alive && terminals\.has\(agent\.id\)/);

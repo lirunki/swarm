@@ -54,8 +54,10 @@
       this.error = this.query?.('#notifications-error');
       this.boundOpen = () => this.open();
       this.boundRefresh = () => this.refresh();
+      this.boundClearAll = event => this.clearAll(event.currentTarget);
       this.button?.addEventListener('click', this.boundOpen);
       this.query?.('#refresh-notifications')?.addEventListener('click', this.boundRefresh);
+      this.query?.('#clear-notifications')?.addEventListener('click', this.boundClearAll);
       this.render();
     }
 
@@ -114,34 +116,69 @@
       });
     }
 
+    groups() {
+      const groups = new Map();
+      for (const item of this.items()) {
+        const key = `${item.source.id}\u0000${item.agent_id}`;
+        if (!groups.has(key)) groups.set(key, {source: item.source, agent_id: item.agent_id, agent_name: item.agent_name, items: []});
+        groups.get(key).items.push(item);
+      }
+      return [...groups.values()];
+    }
+
     open() {
       if (!this.dialog) return;
       this.dialog.showModal();
       this.refresh();
     }
 
-    async removeAndOpen(item, control) {
-      if (!item?.source || !item.id || !item.agent_id) return;
+    async removeAndOpen(group, control) {
+      if (!group?.source || !group.agent_id || !group.items?.length) return;
       const generation = this.generation;
       control.disabled = true;
       control.setAttribute('aria-busy', 'true');
       if (this.error) this.error.textContent = '';
-      const path = `${sourcePath(item.source)}/${encodeURIComponent(item.id)}`;
-      try {
+      const results = await Promise.allSettled(group.items.map(async item => {
+        const path = `${sourcePath(item.source)}/${encodeURIComponent(item.id)}`;
         const response = await this.fetch(path, {method: 'DELETE'});
         if (!response.ok) throw responseError(response);
-        if (generation !== this.generation) return;
-        const cached = this.cache.get(item.source.id);
-        if (cached) cached.notifications = cached.notifications.filter(value => value.id !== item.id);
-        this.render();
-        this.dialog?.close();
-        await this.onOpenAgent({swarmId: item.source.id, swarmName: item.source.name, agentId: item.agent_id});
-      } catch (error) {
-        if (generation !== this.generation) return;
-        if (this.error) this.error.textContent = error.message || 'Could not remove notification.';
-        control.disabled = false;
-        control.setAttribute('aria-busy', 'false');
+        return item.id;
+      }));
+      if (generation !== this.generation) return;
+      const removed = new Set(results.filter(result => result.status === 'fulfilled').map(result => result.value));
+      const cached = this.cache.get(group.source.id);
+      if (cached) cached.notifications = cached.notifications.filter(value => !removed.has(value.id));
+      this.render();
+      const failed = results.filter(result => result.status === 'rejected');
+      if (failed.length) {
+        if (this.error) this.error.textContent = `Could not remove ${failed.length} notification${failed.length === 1 ? '' : 's'}. Refresh and try again.`;
+        return;
       }
+      this.dialog?.close();
+      await this.onOpenAgent({swarmId: group.source.id, swarmName: group.source.name, agentId: group.agent_id});
+    }
+
+    async clearAll(control) {
+      const sources = this.sources.filter(source => (this.cache.get(source.id)?.notifications || []).length);
+      if (!sources.length || !control) return;
+      const generation = this.generation;
+      control.disabled = true;
+      control.setAttribute('aria-busy', 'true');
+      if (this.error) this.error.textContent = '';
+      const results = await Promise.allSettled(sources.map(async source => {
+        const response = await this.fetch(sourcePath(source), {method: 'DELETE'});
+        if (!response.ok) throw responseError(response);
+        return source.id;
+      }));
+      if (generation !== this.generation) return;
+      for (const result of results) if (result.status === 'fulfilled') {
+        const cached = this.cache.get(result.value);
+        if (cached) cached.notifications = [];
+      }
+      this.render();
+      control.setAttribute('aria-busy', 'false');
+      const failed = results.filter(result => result.status === 'rejected').length;
+      if (failed && this.error) this.error.textContent = `Could not clear notifications from ${failed} Swarm${failed === 1 ? '' : 's'}.`;
     }
 
     render() {
@@ -159,6 +196,8 @@
         const failedNames = this.sources.filter(source => this.failures.has(source.id)).map(source => source.name);
         this.error.textContent = failedNames.length ? `Could not refresh: ${failedNames.join(', ')}. Showing available results.` : '';
       }
+      const clearAll = this.query?.('#clear-notifications');
+      if (clearAll) clearAll.disabled = items.length === 0;
       if (!this.list || !this.document) return;
       this.list.replaceChildren();
       if (!items.length) {
@@ -166,22 +205,31 @@
         empty.textContent = this.failures.size ? 'No notifications are available from the Swarms that responded.' : 'No unread notifications.';
         this.list.append(empty); return;
       }
-      for (const item of items) {
-        const row = this.document.createElement('article'); row.className = 'notification-item'; row.setAttribute('role', 'listitem');
+      for (const group of this.groups()) {
+        const row = this.document.createElement('article'); row.className = 'notification-item notification-group'; row.setAttribute('role', 'listitem');
         const heading = this.document.createElement('div'); heading.className = 'notification-heading';
         const identity = this.document.createElement('div');
-        const swarm = this.document.createElement('span'); swarm.className = 'notification-swarm'; swarm.textContent = item.source.name;
-        const agent = this.document.createElement('h3'); agent.textContent = item.agent_name;
+        const swarm = this.document.createElement('span'); swarm.className = 'notification-swarm'; swarm.textContent = group.source.name;
+        const agent = this.document.createElement('h3'); agent.textContent = group.agent_name;
         identity.append(swarm, agent);
-        const status = this.document.createElement('span'); status.className = `badge notification-state ${notificationStates.has(item.status) ? item.status : ''}`.trim();
-        status.textContent = item.status || 'Unknown';
-        heading.append(identity, status);
-        const text = this.document.createElement('p'); text.className = 'notification-text'; text.textContent = item.text;
+        const total = this.document.createElement('span'); total.className = 'badge notification-total'; total.textContent = `${group.items.length} unread`;
+        heading.append(identity, total);
+        const stack = this.document.createElement('div'); stack.className = 'notification-stack';
+        for (const item of group.items) {
+          const notification = this.document.createElement('section'); notification.className = 'notification-entry';
+          const meta = this.document.createElement('div'); meta.className = 'notification-entry-meta';
+          const status = this.document.createElement('span'); status.className = `badge notification-state ${notificationStates.has(item.status) ? item.status : ''}`.trim();
+          status.textContent = item.status || 'Unknown';
+          const time = this.document.createElement('time'); time.dateTime = item.created_at; time.textContent = item.created_at ? new Date(item.created_at).toLocaleString() : 'Time unknown';
+          meta.append(status, time);
+          const text = this.document.createElement('p'); text.className = 'notification-text'; text.textContent = item.text;
+          notification.append(meta, text); stack.append(notification);
+        }
         const footer = this.document.createElement('footer');
-        const time = this.document.createElement('time'); time.dateTime = item.created_at; time.textContent = item.created_at ? new Date(item.created_at).toLocaleString() : 'Time unknown';
+        const summary = this.document.createElement('span'); summary.className = 'hint'; summary.textContent = `Clears all ${group.items.length} notification${group.items.length === 1 ? '' : 's'} from this agent.`;
         const open = this.document.createElement('button'); open.type = 'button'; open.className = 'small primary'; open.textContent = 'Open agent';
-        open.addEventListener('click', () => this.removeAndOpen(item, open));
-        footer.append(time, open); row.append(heading, text, footer); this.list.append(row);
+        open.addEventListener('click', () => this.removeAndOpen(group, open));
+        footer.append(summary, open); row.append(heading, stack, footer); this.list.append(row);
       }
     }
 
@@ -203,6 +251,7 @@
       this.timer = null;
       this.button?.removeEventListener('click', this.boundOpen);
       this.query?.('#refresh-notifications')?.removeEventListener('click', this.boundRefresh);
+      this.query?.('#clear-notifications')?.removeEventListener('click', this.boundClearAll);
       this.clear();
     }
   }

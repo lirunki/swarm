@@ -361,6 +361,13 @@ def create_app(
     async def list_notifications():
         return await asyncio.to_thread(controller.notifications.list)
 
+    @app.delete("/api/notifications")
+    async def delete_all_notifications():
+        result = await asyncio.to_thread(controller.notifications.delete_all)
+        await asyncio.to_thread(controller.refresh)
+        await broadcast()
+        return result
+
     @app.delete("/api/notifications/{notification_id}")
     async def delete_notification(notification_id: UUID):
         result = await asyncio.to_thread(controller.notifications.delete, notification_id)

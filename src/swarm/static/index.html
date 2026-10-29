@@ -7,23 +7,23 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=compact-create-filters-1">
+  <link rel="stylesheet" href="/static/app.css?v=notification-groups-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=compact-create-filters-1"></script>
-  <script defer src="/static/org-chart.js?v=compact-create-filters-1"></script>
-  <script defer src="/static/relay-settings.js?v=compact-create-filters-1"></script>
-  <script defer src="/static/terminal-touch.js?v=compact-create-filters-1"></script>
-  <script defer src="/static/terminal-copy.js?v=compact-create-filters-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=compact-create-filters-1"></script>
-  <script defer src="/static/terminal-keys.js?v=compact-create-filters-1"></script>
-  <script defer src="/static/agent-files.js?v=compact-create-filters-1"></script>
-  <script defer src="/static/agent-messages.js?v=compact-create-filters-1"></script>
-  <script defer src="/static/agent-broadcast.js?v=compact-create-filters-1"></script>
-  <script defer src="/static/auth.js?v=compact-create-filters-1"></script>
-  <script defer src="/static/fleet-control.js?v=compact-create-filters-1"></script>
-  <script defer src="/static/notifications.js?v=compact-create-filters-1"></script>
-  <script defer src="/static/app.js?v=compact-create-filters-1"></script>
+  <script defer src="/static/card-views.js?v=notification-groups-1"></script>
+  <script defer src="/static/org-chart.js?v=notification-groups-1"></script>
+  <script defer src="/static/relay-settings.js?v=notification-groups-1"></script>
+  <script defer src="/static/terminal-touch.js?v=notification-groups-1"></script>
+  <script defer src="/static/terminal-copy.js?v=notification-groups-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=notification-groups-1"></script>
+  <script defer src="/static/terminal-keys.js?v=notification-groups-1"></script>
+  <script defer src="/static/agent-files.js?v=notification-groups-1"></script>
+  <script defer src="/static/agent-messages.js?v=notification-groups-1"></script>
+  <script defer src="/static/agent-broadcast.js?v=notification-groups-1"></script>
+  <script defer src="/static/auth.js?v=notification-groups-1"></script>
+  <script defer src="/static/fleet-control.js?v=notification-groups-1"></script>
+  <script defer src="/static/notifications.js?v=notification-groups-1"></script>
+  <script defer src="/static/app.js?v=notification-groups-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -36,7 +36,7 @@
       <label id="swarm-switcher" class="swarm-switcher" hidden><select id="swarm-selector" aria-label="Active Swarm"><option value="local">Local</option></select></label>
       <span class="edition">FEDERATED WORKSPACE</span>
     </div>
-    <div class="top-meta"><span id="health"></span><button id="help-button" class="header-icon" type="button" aria-label="Help" title="Swarm help" aria-haspopup="dialog" aria-controls="help-dialog">?</button><span id="connection" class="connection">Connecting…</span></div>
+    <div class="top-meta"><span id="health"></span><span id="connection" class="connection">Connecting…</span><button id="help-button" class="header-icon" type="button" aria-label="Help" title="Swarm help" aria-haspopup="dialog" aria-controls="help-dialog">?</button></div>
   </header>
   <nav id="tabs" class="tabs" aria-label="Workspace tabs"><button id="dashboard-tab" class="tab active" type="button" aria-current="page">◫ &nbsp;Dashboard</button></nav>
   <main id="dashboard">
@@ -85,7 +85,7 @@
       <div class="notification-broadcast-actions"><p class="hint">Durable inbox messages only. This never wakes agents.</p><button id="notification-broadcast-open" type="button" class="small primary">Select &amp; broadcast</button></div>
       <p id="notification-broadcast-status" class="hint" role="status" aria-live="polite"></p>
     </section>
-    <div class="notifications-toolbar"><p id="notifications-summary" class="hint" aria-live="polite">0 unread notifications.</p><button id="refresh-notifications" class="small" type="button">↻ Refresh</button></div>
+    <div class="notifications-toolbar"><p id="notifications-summary" class="hint" aria-live="polite">0 unread notifications.</p><div class="notifications-toolbar-actions"><button id="clear-notifications" class="small danger" type="button" disabled>Clear all</button><button id="refresh-notifications" class="small" type="button">↻ Refresh</button></div></div>
     <p id="notifications-error" class="form-error" role="status"></p>
     <div id="notification-list" class="notification-list" role="list" aria-label="Unread agent notifications"></div>
     <footer class="dialog-footer"><button type="button" data-close>Close</button></footer>
@@ -162,9 +162,9 @@
     <div class="help-content">
       <section><h3>Dashboard</h3><p>Each tile is an independent agent. Expand it for goal, activities, checkpoint and controls. Open the state dropdown to search by text and show several states together; All checks or clears every state. Counts update live. Press / to open the menu and focus search. Search filters names, goals, activities and folders. Dimmed ancestors remain to explain parent → child relationships.</p></section>
       <section><h3>Agent states</h3><dl><dt class="running">Running</dt><dd>Working toward its goal.</dd><dt class="waiting">Waiting</dt><dd>Needs human input.</dd><dt class="dormant">Dormant</dt><dd>Waiting for an event or timer.</dd><dt class="idle">Idle</dt><dd>Turn complete, goal not yet complete.</dd><dt class="done">Done</dt><dd>Goal accomplished. Process liveness is shown separately.</dd></dl></section>
-      <section><h3>Notifications and broadcast</h3><p>The bell beside the Swarm logo combines unread notifications from every connected Swarm. Agents must notify you whenever they need your action or complete your request. Open agent removes that notification, selects its source Swarm, and opens an existing live terminal tab or reveals and highlights its card.</p><p>The dialog also contains Master control, Settings and Restart active Swarm. Type a message and use Select &amp; broadcast to choose managed agents by checkbox, Swarm, process state or search. Only shown checked agents receive it. Broadcast queues durable messages without waking agents; inspect request IDs for uncertain results instead of retrying blindly.</p></section>
+      <section><h3>Notifications and broadcast</h3><p>The bell beside the Swarm logo combines unread notifications from every connected Swarm and groups each agent's messages together. Agents must notify you whenever they need your action or complete your request. Open agent clears every notification in that agent's group, selects its source Swarm, and opens an existing live terminal tab or reveals and highlights its card. Clear all flushes every available notification across connected Swarms.</p><p>The dialog also contains Master control, Settings and Restart active Swarm. Type a message and use Select &amp; broadcast to choose managed agents by checkbox, Swarm, process state or search. Only shown checked agents receive it. Broadcast queues durable messages without waking agents; inspect request IDs for uncertain results instead of retrying blindly.</p></section>
       <section><h3>Sessions and controls</h3><p>New agent starts pi. Its bottom-left Adopt session menu offers saved pi conversations or Grok history converted into pi; adopted/imported sessions stay offline until you Wake them. Closing a terminal tab does not stop its agent. Wake resumes; Stop terminates and disables automatic restore. Edit → Forget removes an inactive agent while keeping its saved session history.</p></section>
-      <section><h3>Terminal scrolling and copying</h3><p>On mobile, swipe down for older output and up for newer output. At the bottom, tap to type. Copy text puts the visible screen in a read-only layer directly over the terminal: use native selection handles and Copy. It closes after copying, or tap Done copying. Only the visible screen is captured—scroll first for other text.</p><p>While the mobile software keyboard is open, the terminal key bar adds Esc, Tab, Ctrl, Alt, arrows, Home, End and Sup (forward Delete). Ctrl and Alt apply to the next typed key or accessory key, then reset; tap both for a combined shortcut. The bar keeps the keyboard focused and hides when it closes, when you leave the terminal, or while copying.</p><p>On desktop, hold Shift while dragging to select past tmux mouse handling, then use your browser or system Copy command. Desktop terminals have no extra copy layer. The tmux button beside Files can split the current window, close a selected split pane, open/switch windows, move focus and zoom panes. The main agent pane cannot be closed from this menu.</p></section>
+      <section><h3>Terminal scrolling and copying</h3><p>On mobile, swipe down for older output and up for newer output. At the bottom, tap to type. Copy text puts the visible screen in a read-only layer directly over the terminal: use native selection handles and Copy. It closes after copying, or tap Done copying. Only the visible screen is captured—scroll first for other text.</p><p>While the mobile software keyboard is open, the terminal key bar adds Esc, Tab, Ctrl, Alt, arrows, Home, End and Sup (forward Delete). Ctrl and Alt apply to the next typed key or accessory key, then reset; tap both for a combined shortcut. The bar keeps the keyboard focused and hides when it closes, when you leave the terminal, or while copying.</p><p>On desktop, hold Shift while dragging to select past tmux mouse handling, then use your browser or system Copy command. Desktop terminals have no extra copy layer. The tmux button beside Files can split the current window, close a selected split pane, open/switch windows, move focus and zoom panes. New splits and windows start Bash in the agent's working folder. The main agent pane cannot be closed from this menu.</p></section>
       <section><h3>Files</h3><p>Files on a card or beside Reconnect opens its library. Upload picks a file on your browser's computer and saves a copy in the selected agent machine's temporary folder. Paste or Ctrl+V / ⌘V inside Files can also upload a copied image/file. The Paste button may require HTTPS/localhost and clipboard permission; plain text/URLs are not uploaded. Upload does not send a prompt. Download retrieves it; Insert pastes its quoted local path into a live agent's input without pressing Enter. Continue typing and submit when ready.</p><p>Agents can also register existing server files with swarm file add. Only metadata loads first; Open/Download reads bytes on demand. Remove reference keeps existing originals. Remove upload deletes only the uploaded temporary copy, never your browser-side original. Keep important inputs in durable storage: OS temp cleanup can make references unavailable.</p></section>
       <section><h3>Relay and safety</h3><p>The Swarm selector changes workspace. Settings in Notifications always configures the local relay connection. A relay joins fully trusted controllers: peers can control agents and read data. Keep the dashboard on localhost, HTTPS, or a trusted network. Restart backend reloads the controller, not its tmux-backed agents.</p></section>
     </div>

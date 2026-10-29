@@ -228,6 +228,17 @@ class Notifications:
         result = self.list()
         return {"count": result["count"], "revision": result["revision"]}
 
+    def delete_all(self) -> dict:
+        with self.lock():
+            inbox = self.read()
+            unread = [item for item in inbox.notifications if item.state == "unread"]
+            if not unread:
+                return {"deleted": 0, "revision": inbox.revision, "reused": True}
+            for item in unread:
+                item.state = "deleted"
+            self._save(inbox)
+            return {"deleted": len(unread), "revision": inbox.revision, "reused": False}
+
     def delete(self, notification_id: str | UUID) -> dict:
         selected_id = UUID(str(notification_id))
         with self.lock():
