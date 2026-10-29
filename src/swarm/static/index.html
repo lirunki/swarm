@@ -7,23 +7,23 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=notification-groups-1">
+  <link rel="stylesheet" href="/static/app.css?v=grouped-branches-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=notification-groups-1"></script>
-  <script defer src="/static/org-chart.js?v=notification-groups-1"></script>
-  <script defer src="/static/relay-settings.js?v=notification-groups-1"></script>
-  <script defer src="/static/terminal-touch.js?v=notification-groups-1"></script>
-  <script defer src="/static/terminal-copy.js?v=notification-groups-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=notification-groups-1"></script>
-  <script defer src="/static/terminal-keys.js?v=notification-groups-1"></script>
-  <script defer src="/static/agent-files.js?v=notification-groups-1"></script>
-  <script defer src="/static/agent-messages.js?v=notification-groups-1"></script>
-  <script defer src="/static/agent-broadcast.js?v=notification-groups-1"></script>
-  <script defer src="/static/auth.js?v=notification-groups-1"></script>
-  <script defer src="/static/fleet-control.js?v=notification-groups-1"></script>
-  <script defer src="/static/notifications.js?v=notification-groups-1"></script>
-  <script defer src="/static/app.js?v=notification-groups-1"></script>
+  <script defer src="/static/card-views.js?v=grouped-branches-1"></script>
+  <script defer src="/static/org-chart.js?v=grouped-branches-1"></script>
+  <script defer src="/static/relay-settings.js?v=grouped-branches-1"></script>
+  <script defer src="/static/terminal-touch.js?v=grouped-branches-1"></script>
+  <script defer src="/static/terminal-copy.js?v=grouped-branches-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=grouped-branches-1"></script>
+  <script defer src="/static/terminal-keys.js?v=grouped-branches-1"></script>
+  <script defer src="/static/agent-files.js?v=grouped-branches-1"></script>
+  <script defer src="/static/agent-messages.js?v=grouped-branches-1"></script>
+  <script defer src="/static/agent-broadcast.js?v=grouped-branches-1"></script>
+  <script defer src="/static/auth.js?v=grouped-branches-1"></script>
+  <script defer src="/static/fleet-control.js?v=grouped-branches-1"></script>
+  <script defer src="/static/notifications.js?v=grouped-branches-1"></script>
+  <script defer src="/static/app.js?v=grouped-branches-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -160,7 +160,7 @@
   <dialog id="help-dialog" aria-labelledby="help-title">
     <header class="dialog-head"><div><div class="eyebrow">QUICK GUIDE</div><h2 id="help-title">Swarm help</h2></div><button type="button" class="icon-button" data-close aria-label="Close help">×</button></header>
     <div class="help-content">
-      <section><h3>Dashboard</h3><p>Each tile is an independent agent. Expand it for goal, activities, checkpoint and controls. Open the state dropdown to search by text and show several states together; All checks or clears every state. Counts update live. Press / to open the menu and focus search. Search filters names, goals, activities and folders. Dimmed ancestors remain to explain parent → child relationships.</p></section>
+      <section><h3>Dashboard</h3><p>Each tile is an independent agent. Expand it for goal, activities, checkpoint and controls. Open the state dropdown to search by text and show several states together; All checks or clears every state. Counts update live. Press / to open the menu and focus search. Search filters names, goals, activities and folders. Dimmed ancestors remain to explain parent → child relationships. When an agent has several visible sub-agents, use the small − / + control at their branch join to group or show the whole child branch.</p></section>
       <section><h3>Agent states</h3><dl><dt class="running">Running</dt><dd>Working toward its goal.</dd><dt class="waiting">Waiting</dt><dd>Needs human input.</dd><dt class="dormant">Dormant</dt><dd>Waiting for an event or timer.</dd><dt class="idle">Idle</dt><dd>Turn complete, goal not yet complete.</dd><dt class="done">Done</dt><dd>Goal accomplished. Process liveness is shown separately.</dd></dl></section>
       <section><h3>Notifications and broadcast</h3><p>The bell beside the Swarm logo combines unread notifications from every connected Swarm and groups each agent's messages together. Agents must notify you whenever they need your action or complete your request. Open agent clears every notification in that agent's group, selects its source Swarm, and opens an existing live terminal tab or reveals and highlights its card. Clear all flushes every available notification across connected Swarms.</p><p>The dialog also contains Master control, Settings and Restart active Swarm. Type a message and use Select &amp; broadcast to choose managed agents by checkbox, Swarm, process state or search. Only shown checked agents receive it. Broadcast queues durable messages without waking agents; inspect request IDs for uncertain results instead of retrying blindly.</p></section>
       <section><h3>Sessions and controls</h3><p>New agent starts pi. Its bottom-left Adopt session menu offers saved pi conversations or Grok history converted into pi; adopted/imported sessions stay offline until you Wake them. Closing a terminal tab does not stop its agent. Wake resumes; Stop terminates and disables automatic restore. Edit → Forget removes an inactive agent while keeping its saved session history.</p></section>

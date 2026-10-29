@@ -114,12 +114,14 @@
     };
   }
 
-  function renderForest(roots, renderCard, document = root.document) {
+  function renderForest(roots, renderCard, document = root.document, options = {}) {
     if (!Array.isArray(roots)) throw new TypeError('roots must be an array');
     if (typeof renderCard !== 'function') throw new TypeError('renderCard must be a function');
     if (!document || typeof document.createElement !== 'function') {
       throw new TypeError('document must provide createElement');
     }
+    const groupedIds = options.groupedIds instanceof Set ? options.groupedIds : new Set();
+    const onGroupChange = typeof options.onGroupChange === 'function' ? options.onGroupChange : () => {};
 
     const forest = document.createElement('ul');
     forest.className = 'org-forest';
@@ -156,6 +158,32 @@
         childList.className = 'org-children';
         childList.setAttribute('aria-label', `Created by ${name}`);
         li.append(childList);
+        if (children.length > 1) {
+          const control = document.createElement('li');
+          control.className = 'org-branch-control';
+          const toggle = document.createElement('button');
+          toggle.type = 'button';
+          toggle.className = 'org-branch-toggle';
+          toggle.setAttribute('data-agent-id', String(agent.id || ''));
+          let grouped = groupedIds.has(agent.id);
+          const syncToggle = () => {
+            childList.className = `org-children${grouped ? ' is-grouped' : ''}`;
+            toggle.textContent = grouped ? '+' : '−';
+            toggle.setAttribute('aria-expanded', String(!grouped));
+            const action = grouped ? 'Show' : 'Group';
+            const label = `${action} ${children.length} sub-agents created by ${name}`;
+            toggle.setAttribute('aria-label', label);
+            toggle.title = label;
+          };
+          toggle.addEventListener('click', () => {
+            grouped = !grouped;
+            syncToggle();
+            onGroupChange(agent.id, grouped);
+          });
+          syncToggle();
+          control.append(toggle);
+          childList.append(control);
+        }
         for (let i = children.length - 1; i >= 0; i -= 1) {
           stack.push({node: children[i], list: childList});
         }

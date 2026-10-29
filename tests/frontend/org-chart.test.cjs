@@ -136,8 +136,10 @@ class Element {
     this.className = '';
     this.title = '';
     this.textContent = '';
+    this.events = new Map();
   }
   append(...children) { this.childNodes.push(...children); }
+  addEventListener(name, callback) { this.events.set(name, callback); }
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
   getAttribute(name) { return this.attributes.get(name) ?? null; }
   get classList() { return {contains: name => this.className.split(/\s+/).includes(name)}; }
@@ -184,6 +186,49 @@ test('renderForest renders every node once with safe hierarchy metadata', () => 
   assert.match(cards[0].title, /hierarchy context/);
   assert.equal(elements.some(element => ['IMG', 'SCRIPT'].includes(element.tagName)), false);
   assert.equal(items.every(item => item.textContent === ''), true);
+});
+
+test('multi-child branch join groups and shows the whole branch accessibly', () => {
+  const forest = buildForest([agent('root'), agent('first', 'root'), agent('second', 'root'), agent('only', 'first')]);
+  const changes = [];
+  const rendered = renderForest(
+    forest.roots,
+    record => { const card = document.createElement('article'); card.textContent = record.name; return card; },
+    document,
+    {groupedIds: new Set(['root']), onGroupChange: (id, grouped) => changes.push([id, grouped])},
+  );
+  const elements = walk(rendered);
+  const toggles = elements.filter(element => element.className === 'org-branch-toggle');
+  assert.equal(toggles.length, 1, 'only a parent with multiple direct children has a join control');
+  const toggle = toggles[0];
+  const childList = elements.find(element => element.className === 'org-children is-grouped');
+  assert.equal(toggle.textContent, '+');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(toggle.getAttribute('data-agent-id'), 'root');
+  assert.equal(toggle.getAttribute('aria-label'), 'Show 2 sub-agents created by root');
+  assert.ok(childList);
+
+  toggle.events.get('click')();
+  assert.equal(childList.className, 'org-children');
+  assert.equal(toggle.textContent, '−');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(toggle.getAttribute('aria-label'), 'Group 2 sub-agents created by root');
+  assert.deepEqual(changes, [['root', false]]);
+
+  toggle.events.get('click')();
+  assert.equal(childList.className, 'org-children is-grouped');
+  assert.deepEqual(changes, [['root', false], ['root', true]]);
+});
+
+test('branch grouping has join styling and app state that survives live rerenders', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.css'), 'utf8');
+  const app = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
+  assert.match(css, /\.org-branch-control\{[^}]*position:absolute[^}]*top:18px/);
+  assert.match(css, /\.org-branch-toggle\{[^}]*border-radius:50%/);
+  assert.match(css, /\.org-children\.is-grouped>\.org-node\{display:none\}/);
+  assert.match(app, /const groupedBranches = new Set\(\)/);
+  assert.match(app, /groupedIds: groupedBranches/);
+  assert.match(app, /groupedBranches\.clear\(\)/);
 });
 
 test('renderForest handles deep trees iteratively and validates arguments', () => {

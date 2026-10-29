@@ -15,6 +15,7 @@ let folderBrowserPath = null, folderLoadSequence = 0;
 let forgettingAgent = false, metaCompactingId = null, toolInputCompactingId = null;
 const toolOutputRepairRequests = new Map();
 const terminals = new Map();
+const groupedBranches = new Set();
 const cardViews = new SwarmCardViews.CardViews();
 let toastTimer;
 function toast(message, error = false) {
@@ -192,7 +193,7 @@ function switchSwarm(nodeId) {
   for (const id of [...terminals.keys()]) closeTerminal(id);
   for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
   if (stateSocket) { stateSocket.onclose = null; stateSocket.close(); stateSocket = null; }
-  stateGeneration += 1; reconnectDelay = 1000; restored = false; activeSwarm = nodeId;
+  stateGeneration += 1; reconnectDelay = 1000; restored = false; activeSwarm = nodeId; groupedBranches.clear();
   try { localStorage.setItem('swarm.active', activeSwarm); } catch { /* storage may be disabled */ }
   state = {agents: [], errors: {}, health: {}, home: ''}; dashboardControls.status.reset(); $('#search').value = '';
   $('#swarm-selector').value = activeSwarm;
@@ -552,10 +553,18 @@ function render() {
   const visible = state.agents.filter(a => dashboardControls.status.matches(a.status) && [a.name, a.goal, a.activity, a.folder, a.branch].join(' ').toLowerCase().includes(query));
   const active = document.activeElement;
   const controlClass = active?.classList.contains('card-toggle') ? 'card-toggle' : active?.classList.contains('card-terminal') ? 'card-terminal' : null;
-  const focusedControl = controlClass ? {id: active.closest('.agent-card')?.dataset.agentId, selector: `.${controlClass}`} : null;
+  const focusedControl = active?.classList.contains('org-branch-toggle')
+    ? {id: active.getAttribute('data-agent-id'), selector: '.org-branch-toggle'}
+    : controlClass ? {id: active.closest('.agent-card')?.dataset.agentId, selector: `.${controlClass}`} : null;
   const forest = SwarmOrgChart.buildForest(state.agents, new Set(visible.map(a => a.id)));
   const chart = $('#agents'), scrollLeft = chart.scrollLeft;
-  chart.replaceChildren(SwarmOrgChart.renderForest(forest.roots, renderCard));
+  chart.replaceChildren(SwarmOrgChart.renderForest(forest.roots, renderCard, document, {
+    groupedIds: groupedBranches,
+    onGroupChange: (id, grouped) => {
+      if (grouped) groupedBranches.add(id);
+      else groupedBranches.delete(id);
+    },
+  }));
   chart.hidden = !forest.shownCount;
   chart.scrollLeft = scrollLeft;
   $('#hierarchy-summary').textContent = forest.ancestorCount
@@ -564,8 +573,10 @@ function render() {
   if (forest.issuesCount) $('#hierarchy-summary').textContent += ` · ${forest.issuesCount} missing or invalid parent links`;
   $('#hierarchy-summary').classList.toggle('sr-only', !forest.ancestorCount && !forest.issuesCount);
   if (focusedControl) {
-    const replacement = [...chart.querySelectorAll('.agent-card')].find(card => card.dataset.agentId === focusedControl.id);
-    if (replacement) $(focusedControl.selector, replacement)?.focus({preventScroll: true});
+    const replacement = focusedControl.selector === '.org-branch-toggle'
+      ? [...chart.querySelectorAll(focusedControl.selector)].find(control => control.getAttribute('data-agent-id') === focusedControl.id)
+      : [...chart.querySelectorAll('.agent-card')].find(card => card.dataset.agentId === focusedControl.id);
+    if (replacement) (focusedControl.selector === '.org-branch-toggle' ? replacement : $(focusedControl.selector, replacement))?.focus({preventScroll: true});
   }
   const empty = $('#empty'); empty.hidden = visible.length > 0;
   $('h2', empty).textContent = state.agents.length ? 'No agents match this view.' : 'A little quiet in the swarm.';
