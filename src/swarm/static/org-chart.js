@@ -163,15 +163,23 @@
           control.className = 'org-branch-control';
           const toggle = document.createElement('button');
           toggle.type = 'button';
-          toggle.className = 'org-branch-toggle';
           toggle.setAttribute('data-agent-id', String(agent.id || ''));
+          const descendants = [...children];
+          let hasAwakeChild = false;
+          while (descendants.length) {
+            const descendant = descendants.pop();
+            if (descendant?.agent?.alive === true) { hasAwakeChild = true; break; }
+            if (Array.isArray(descendant?.children)) descendants.push(...descendant.children);
+          }
           let grouped = groupedIds.has(agent.id);
           const syncToggle = () => {
             childList.className = `org-children${grouped ? ' is-grouped' : ''}`;
+            toggle.className = `org-branch-toggle${grouped && hasAwakeChild ? ' has-awake-children' : ''}`;
             toggle.textContent = grouped ? '+' : '−';
             toggle.setAttribute('aria-expanded', String(!grouped));
             const action = grouped ? 'Show' : 'Group';
-            const label = `${action} ${children.length} sub-agents created by ${name}`;
+            const alert = grouped && hasAwakeChild ? '; hidden branch contains an awake agent' : '';
+            const label = `${action} ${children.length} sub-agents created by ${name}${alert}`;
             toggle.setAttribute('aria-label', label);
             toggle.title = label;
           };

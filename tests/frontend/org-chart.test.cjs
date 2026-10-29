@@ -189,7 +189,7 @@ test('renderForest renders every node once with safe hierarchy metadata', () => 
 });
 
 test('multi-child branch join groups and shows the whole branch accessibly', () => {
-  const forest = buildForest([agent('root'), agent('first', 'root'), agent('second', 'root'), agent('only', 'first')]);
+  const forest = buildForest([agent('root'), agent('first', 'root'), agent('second', 'root'), {...agent('only', 'first'), alive: true}]);
   const changes = [];
   const rendered = renderForest(
     forest.roots,
@@ -198,25 +198,28 @@ test('multi-child branch join groups and shows the whole branch accessibly', () 
     {groupedIds: new Set(['root']), onGroupChange: (id, grouped) => changes.push([id, grouped])},
   );
   const elements = walk(rendered);
-  const toggles = elements.filter(element => element.className === 'org-branch-toggle');
+  const toggles = elements.filter(element => element.className.split(/\s+/).includes('org-branch-toggle'));
   assert.equal(toggles.length, 1, 'only a parent with multiple direct children has a join control');
   const toggle = toggles[0];
   const childList = elements.find(element => element.className === 'org-children is-grouped');
   assert.equal(toggle.textContent, '+');
+  assert.equal(toggle.className, 'org-branch-toggle has-awake-children');
   assert.equal(toggle.getAttribute('aria-expanded'), 'false');
   assert.equal(toggle.getAttribute('data-agent-id'), 'root');
-  assert.equal(toggle.getAttribute('aria-label'), 'Show 2 sub-agents created by root');
+  assert.equal(toggle.getAttribute('aria-label'), 'Show 2 sub-agents created by root; hidden branch contains an awake agent');
   assert.ok(childList);
 
   toggle.events.get('click')();
   assert.equal(childList.className, 'org-children');
   assert.equal(toggle.textContent, '−');
+  assert.equal(toggle.className, 'org-branch-toggle');
   assert.equal(toggle.getAttribute('aria-expanded'), 'true');
   assert.equal(toggle.getAttribute('aria-label'), 'Group 2 sub-agents created by root');
   assert.deepEqual(changes, [['root', false]]);
 
   toggle.events.get('click')();
   assert.equal(childList.className, 'org-children is-grouped');
+  assert.equal(toggle.className, 'org-branch-toggle has-awake-children');
   assert.deepEqual(changes, [['root', false], ['root', true]]);
 });
 
@@ -224,7 +227,8 @@ test('branch grouping has join styling and app state that survives live rerender
   const css = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.css'), 'utf8');
   const app = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
   assert.match(css, /\.org-branch-control\{[^}]*position:absolute[^}]*top:18px/);
-  assert.match(css, /\.org-branch-toggle\{[^}]*border-radius:50%/);
+  assert.match(css, /\.org-branch-toggle\{[^}]*border-radius:50%[^}]*color:var\(--accent\)/);
+  assert.match(css, /\.org-branch-toggle\.has-awake-children\{[^}]*border-color:#ff7b7b[^}]*color:#ff7b7b/);
   assert.match(css, /\.org-children\.is-grouped>\.org-node\{display:none\}/);
   assert.match(app, /const groupedBranches = new Set\(\)/);
   assert.match(app, /groupedIds: groupedBranches/);
