@@ -413,7 +413,9 @@ function productLink(a) {
 }
 function renderCard(a) {
   const card = node('article', 'agent-card'); card.dataset.agentId = a.id;
-  const activityHint = a.activity || 'No activity reported yet', setupStage = (a.creation || incompleteSetup(a)) ? creationStage(a) : '';
+  const setupStage = (a.creation || incompleteSetup(a)) ? creationStage(a) : '';
+  const setupComplete = a.creation?.state === 'completed' || a.spawn_state === 'ready';
+  const activityHint = a.activity || 'No activity reported yet';
   const restartStage = restartInProgress(a) ? (a.restart.stage || a.restart.state || 'Restart in progress') : '';
   const stage = restartStage || setupStage;
   const setupHint = setupStage ? `\nSetup: ${setupStage}` : '';
@@ -481,7 +483,7 @@ function renderCard(a) {
     if (a.restart.error) restart.append(node('p', 'fleet-target-error', a.restart.error));
     details.append(restart);
   }
-  if (a.creation || incompleteSetup(a)) {
+  if ((a.creation || incompleteSetup(a)) && !setupComplete) {
     const setup = node('section', `creation-status${['failed', 'cancelled'].includes(a.spawn_state) ? ' failed' : ''}`);
     setup.append(node('span', 'activity-label', 'SETUP'), node('strong', 'creation-status-stage', setupStage));
     if (a.creation?.error) setup.append(node('p', 'creation-error', a.creation.error));
@@ -500,7 +502,8 @@ function renderCard(a) {
       const row = node('li'); row.append(node('span', item.status === 'done' ? 'running' : '', item.status === 'done' ? '✓' : item.status === 'running' ? '›' : '○'), document.createTextNode(item.title)); list.append(row);
     } details.append(list);
   }
-  if (a.wait_reason) details.append(node('p', 'wait-reason', a.wait_reason));
+  const postSetupText = a.wait_reason || (setupComplete ? setupStage : '');
+  if (postSetupText) details.append(node('p', 'wait-reason', postSetupText));
   const meta = node('dl', 'metadata');
   metadata(meta, 'Folder', a.folder); metadata(meta, 'Repository', a.repository); metadata(meta, 'Worktree', a.worktree);
   metadata(meta, 'Branch', a.branch); metadata(meta, 'Session', a.session_id || 'Not persisted yet');
@@ -520,7 +523,9 @@ function renderCard(a) {
     metadata(meta, 'Imported', `${a.import_source.backend} · ${a.import_source.session_id}`);
     metadata(meta, 'Source', a.import_source.session_file);
   }
-  details.append(meta);
+  const metaDetails = node('details', 'agent-metadata');
+  metaDetails.append(node('summary', '', 'Details'), meta);
+  details.append(metaDetails);
   if (a.notes) { const notes = node('details', 'notes'); notes.append(node('summary', '', 'Checkpoint'), node('pre', '', a.notes)); details.append(notes); }
   if (a.last_error) details.append(node('div', 'card-error', a.last_error));
   const foot = node('div', 'card-foot'); foot.id = `card-actions-${a.id}`;

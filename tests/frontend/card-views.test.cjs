@@ -135,6 +135,11 @@ test('compact renderer exposes summary and terminal shortcut, expanded form rest
   assert.equal(terminal.hidden, true);
   assert.match(visibleText(card), /Checking CI/); assert.match(visibleText(card), /\/workspace/);
   assert.match(visibleText(card), /Track the PR/);
+  const agentMetadata = find(card, 'agent-metadata');
+  assert.equal(agentMetadata.tagName, 'DETAILS');
+  assert.equal(agentMetadata.childNodes[0].tagName, 'SUMMARY');
+  assert.equal(agentMetadata.childNodes[0].textContent, 'Details');
+  assert.equal(agentMetadata.childNodes[1].className, 'metadata');
   for (const text of ['Terminal ↗', 'Edit', 'Wake', 'Stop']) {
     const action = walk(card).find(el => el.tagName === 'BUTTON' && el.textContent === text);
     assert.ok(action, text); action.click();
@@ -182,12 +187,36 @@ test('background setup cards show stage details and enforce Wake/Stop controls',
   assert.equal(walk(failed).find(el => el.tagName === 'BUTTON' && el.textContent === 'Wake').disabled, true);
 });
 
+test('completed setup panel disappears and its stage moves to the overridable post-setup text', () => {
+  const {render} = renderer();
+  const a = fullAgent('idle', false);
+  a.activity = ''; a.wait_reason = ''; a.spawn_state = 'ready';
+  a.creation = {state: 'completed', stage: 'Setup complete', log: '/tmp/swarm/setup.log'};
+  const card = render(a); find(card, 'card-toggle').click();
+  assert.equal(find(card, 'creation-status'), undefined);
+  assert.match(find(card, 'wait-reason').textContent, /Setup complete/);
+  assert.doesNotMatch(visibleText(card), /Setup log/);
+
+  a.activity = 'Agent-owned activity'; a.wait_reason = 'Agent-owned follow-up';
+  const updated = render(a); find(updated, 'card-toggle').click();
+  assert.match(find(updated, 'activity').textContent, /Agent-owned activity/);
+  assert.match(find(updated, 'wait-reason').textContent, /Agent-owned follow-up/);
+  assert.doesNotMatch(find(updated, 'wait-reason').textContent, /Setup complete/);
+});
+
 test('ready setup state permits Wake even when Pi later failed to stay alive', () => {
   const {render, calls} = renderer();
   const a = fullAgent('idle', false); a.auto_resume = false; a.spawn_state = 'ready'; a.last_error = 'Pi exited';
   const card = render(a); find(card, 'card-toggle').click();
   const wake = walk(card).find(el => el.tagName === 'BUTTON' && el.textContent === 'Wake');
   assert.equal(wake.disabled, false); wake.click(); assert.deepEqual(calls, [['wake', a.id]]);
+});
+
+test('dashboard omits the Mission Control label and versions streamlined card assets', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
+  assert.doesNotMatch(html, /MISSION CONTROL/);
+  assert.match(html, /<h1 class="sr-only">Agent dashboard<\/h1>/);
+  assert.match(html, /app\.js\?v=streamlined-agent-cards-1/);
 });
 
 test('collapsed name highlight follows process liveness, not task status', () => {

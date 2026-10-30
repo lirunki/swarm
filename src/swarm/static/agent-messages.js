@@ -186,9 +186,13 @@
 
     renderExpandedBody(container, heading, messages, agent, base, token) {
       container.replaceChildren(heading);
-      const summary = this.create('p', 'hint', `${messages.length} outstanding`), list = this.create('div', 'expanded-message-list');
-      container.append(summary, list);
-      this.renderMessages(list, messages, base, {mount: container, token, agent, agentId: agent.id});
+      const summary = this.create('p', 'hint', `${messages.length} outstanding`);
+      container.append(summary);
+      if (messages.length) {
+        const list = this.create('div', 'expanded-message-list');
+        container.append(list);
+        this.renderMessages(list, messages, base, {mount: container, token, agent, agentId: agent.id});
+      }
     }
   }
   function optionsWorkspace(agent) { return agent.workspace || 'Agent workspace'; }

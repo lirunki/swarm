@@ -119,16 +119,21 @@ test('late list and send responses cannot mutate a newly opened workspace', asyn
   assert.equal(t.controller.agentId, 'agent-b'); assert.equal(t.controller.messages.length, 0); assert.equal(t.changes.length, 0);
 });
 
-test('expanded controller caches by base and revision and explains observed agents', async () => {
-  const t = fixture(async () => safeList());
+test('expanded controller caches by base and revision, omits redundant empty text, and explains observed agents', async () => {
+  const t = fixture(async path => path.endsWith('/empty') ? safeList([], 3) : safeList());
   const first = new Element('section'); await t.controller.mountExpanded(first, agent, '/api/agents/agent-a/messages');
   const second = new Element('section'); await t.controller.mountExpanded(second, agent, '/api/agents/agent-a/messages');
   assert.equal(t.calls.length, 1); assert.match(flatten(second).map(node => node.textContent).join(' '), /1 outstanding/);
   const revised = new Element('section'); await t.controller.mountExpanded(revised, {...agent, messages_revision: 2}, '/api/agents/agent-a/messages');
   assert.equal(t.calls.length, 2);
+  const empty = new Element('section'); await t.controller.mountExpanded(empty, {...agent, messages_revision: 3}, '/api/agents/agent-a/empty');
+  const emptyText = flatten(empty).map(node => node.textContent).join(' ');
+  assert.match(emptyText, /0 outstanding/);
+  assert.doesNotMatch(emptyText, /No outstanding messages/);
+  assert.equal(flatten(empty).some(node => node.className === 'expanded-message-list'), false);
   const observed = new Element('section'); await t.controller.mountExpanded(observed, {...agent, managed: false}, '/api/agents/observed/messages');
   assert.match(flatten(observed).map(node => node.textContent).join(' '), /unavailable for observed agents/);
-  assert.equal(t.calls.length, 2);
+  assert.equal(t.calls.length, 3);
 });
 
 test('request id fallback is UUID-shaped and messaging assets share the app version', () => {
