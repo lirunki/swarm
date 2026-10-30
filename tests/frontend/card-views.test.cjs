@@ -212,11 +212,12 @@ test('ready setup state permits Wake even when Pi later failed to stay alive', (
   assert.equal(wake.disabled, false); wake.click(); assert.deepEqual(calls, [['wake', a.id]]);
 });
 
-test('dashboard omits the Mission Control label and versions streamlined card assets', () => {
+test('dashboard omits the Mission Control label and keeps card assets versioned', () => {
   const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
   assert.doesNotMatch(html, /MISSION CONTROL/);
   assert.match(html, /<h1 class="sr-only">Agent dashboard<\/h1>/);
-  assert.match(html, /app\.js\?v=streamlined-agent-cards-1/);
+  const version = html.match(/app\.js\?v=([^"']+)/)[1];
+  assert.ok(html.includes(`/static/app.css?v=${version}`));
 });
 
 test('collapsed name highlight follows process liveness, not task status', () => {

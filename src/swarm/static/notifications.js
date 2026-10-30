@@ -132,8 +132,8 @@
       this.refresh();
     }
 
-    async removeAndOpen(group, control) {
-      if (!group?.source || !group.agent_id || !group.items?.length) return;
+    async removeGroup(group, control) {
+      if (!group?.source || !group.agent_id || !group.items?.length || !control) return false;
       const generation = this.generation;
       control.disabled = true;
       control.setAttribute('aria-busy', 'true');
@@ -144,7 +144,7 @@
         if (!response.ok) throw responseError(response);
         return item.id;
       }));
-      if (generation !== this.generation) return;
+      if (generation !== this.generation) return false;
       const removed = new Set(results.filter(result => result.status === 'fulfilled').map(result => result.value));
       const cached = this.cache.get(group.source.id);
       if (cached) cached.notifications = cached.notifications.filter(value => !removed.has(value.id));
@@ -152,8 +152,13 @@
       const failed = results.filter(result => result.status === 'rejected');
       if (failed.length) {
         if (this.error) this.error.textContent = `Could not remove ${failed.length} notification${failed.length === 1 ? '' : 's'}. Refresh and try again.`;
-        return;
+        return false;
       }
+      return true;
+    }
+
+    async removeAndOpen(group, control) {
+      if (!await this.removeGroup(group, control)) return;
       this.dialog?.close();
       await this.onOpenAgent({swarmId: group.source.id, swarmName: group.source.name, agentId: group.agent_id});
     }
@@ -227,9 +232,14 @@
         }
         const footer = this.document.createElement('footer');
         const summary = this.document.createElement('span'); summary.className = 'hint'; summary.textContent = `Clears all ${group.items.length} notification${group.items.length === 1 ? '' : 's'} from this agent.`;
+        const actions = this.document.createElement('div'); actions.className = 'notification-group-actions';
+        const discard = this.document.createElement('button'); discard.type = 'button'; discard.className = 'small danger'; discard.textContent = 'Discard';
+        discard.setAttribute('aria-label', `Discard ${group.items.length} notification${group.items.length === 1 ? '' : 's'} from ${group.agent_name}`);
+        discard.addEventListener('click', () => this.removeGroup(group, discard));
         const open = this.document.createElement('button'); open.type = 'button'; open.className = 'small primary'; open.textContent = 'Open agent';
         open.addEventListener('click', () => this.removeAndOpen(group, open));
-        footer.append(summary, open); row.append(heading, stack, footer); this.list.append(row);
+        actions.append(discard, open);
+        footer.append(summary, actions); row.append(heading, stack, footer); this.list.append(row);
       }
     }
 

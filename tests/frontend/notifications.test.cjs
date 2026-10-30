@@ -79,7 +79,7 @@ test('Open agent deletes at the originating source before invoking app callback'
     return response(url.includes('federation') ? payload('remote') : {revision: 1, count: 0, notifications: []});
   }, value => { events.push('callback'); assert.equal(value.swarmId, 'relay/a'); assert.equal(value.agentId, 'agent-remote'); });
   await inbox.refresh();
-  const open = elements['#notification-list'].children[0].children[2].children[1];
+  const open = elements['#notification-list'].children[0].children[2].children[1].children[1];
   await inbox.removeAndOpen(inbox.groups()[0], open);
   assert.deepEqual(events, ['delete', 'callback']);
   assert.ok(requests.some(([url, method]) => url === '/api/federation/relay%2Fa/proxy/api/notifications/remote' && method === 'DELETE'));
@@ -104,11 +104,33 @@ test('notifications from one agent render in one group and Open agent deletes al
   assert.equal(group.items.length, 2);
   const row = elements['#notification-list'].children[0];
   assert.equal(row.children[1].children.length, 2);
-  assert.equal(row.children[2].children.filter(child => child.tagName === 'BUTTON').length, 1);
-  await inbox.removeAndOpen(group, row.children[2].children[1]);
+  const actions = row.children[2].children[1];
+  assert.equal(actions.className, 'notification-group-actions');
+  assert.deepEqual(actions.children.map(child => child.textContent), ['Discard', 'Open agent']);
+  assert.equal(actions.children[0].attributes.get('aria-label'), 'Discard 2 notifications from Agent first');
+  await inbox.removeAndOpen(group, actions.children[1]);
   assert.equal(requests.filter(([, method]) => method === 'DELETE').length, 2);
   assert.equal(opened.length, 1);
   assert.equal(inbox.items().length, 0);
+});
+
+test('Discard clears the agent group without closing or navigating', async () => {
+  const requests = [], opened = [];
+  const {inbox, elements} = fixture(async (url, options) => {
+    requests.push([url, options.method]);
+    if (options.method === 'DELETE') return {ok: true, status: 200};
+    if (url.includes('federation')) return response({revision: 1, notifications: []});
+    return response(payload('local'));
+  }, value => opened.push(value));
+  await inbox.refresh();
+  elements['#notifications-dialog'].showModal();
+  const group = inbox.groups()[0];
+  const discard = elements['#notification-list'].children[0].children[2].children[1].children[0];
+  await inbox.removeGroup(group, discard);
+  assert.equal(requests.filter(([, method]) => method === 'DELETE').length, 1);
+  assert.equal(inbox.items().length, 0);
+  assert.deepEqual(opened, []);
+  assert.equal(elements['#notifications-dialog'].open, true);
 });
 
 test('Clear all flushes each connected source with pending notifications', async () => {
@@ -137,7 +159,7 @@ test('late Open agent completion cannot navigate after the inbox context is clea
   }, value => opened.push(value));
   await inbox.refresh();
   const group = inbox.groups()[0];
-  const open = elements['#notification-list'].children[0].children[2].children[1];
+  const open = elements['#notification-list'].children[0].children[2].children[1].children[1];
   const operation = inbox.removeAndOpen(group, open);
   inbox.clear();
   releaseDelete({ok: true, status: 200});
