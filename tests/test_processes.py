@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import subprocess
-
-import pytest
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from swarm.models import Agent
 from swarm.processes import Processes
