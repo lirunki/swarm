@@ -59,6 +59,16 @@ def test_launch_passes_ca_file_to_child_when_set(tmp_path, monkeypatch):
     assert env == [f"SWARM_API_CA_FILE={ca}"]
 
 
+def test_launch_sets_shared_thinking_config_path(tmp_path, monkeypatch):
+    monkeypatch.delenv("PI_THINKING_CONTEXT_CONFIG", raising=False)
+    store = Store(tmp_path / "registry")
+    agent = _make_agent(store, tmp_path / "work")
+    proc = Processes(store, api_url="http://127.0.0.1:8787")
+    commands = _launching(proc, agent)
+    new_session = next(cmd for cmd in commands if cmd[0] == "new-session")
+    assert f"PI_THINKING_CONTEXT_CONFIG={store.home / 'thinking-context-pruner.json'}" in new_session
+
+
 def test_launch_omits_ca_file_when_unset(tmp_path, monkeypatch):
     monkeypatch.delenv("SWARM_API_CA_FILE", raising=False)
 

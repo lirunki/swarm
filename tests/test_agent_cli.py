@@ -1,10 +1,13 @@
 import json
+from pathlib import Path
 from urllib.error import URLError
 
 import pytest
 
 from swarm.agent_client import DEFAULT_TIMEOUT, AgentClient, validate_api_url
+from swarm.adapters import PiAdapter, THINKING_PRUNER_EXTENSION
 from swarm.cli import main
+from swarm.models import Agent
 
 
 class Response:
@@ -50,7 +53,19 @@ def decoded_call(opener, index=0):
     return request.get_method(), request.full_url, body, timeout
 
 
+def test_pi_adapter_includes_packaged_thinking_pruner(tmp_path, monkeypatch):
+    session = tmp_path / "session.jsonl"
+    session.touch()
+    agent = Agent(name="Pi", goal="Test", folder=str(tmp_path), session_file=str(session))
+    monkeypatch.setattr(PiAdapter, "available", lambda self: True)
+    command = PiAdapter().command(agent, None)
+    extension_args = [command[index + 1] for index, value in enumerate(command[:-1]) if value == "--extension"]
+    assert extension_args[-1] == str(THINKING_PRUNER_EXTENSION)
+    assert Path(extension_args[-1]).is_file()
+
+
 def test_spawn_uses_managed_parent_and_complete_payload(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("SWARM_API_URL", raising=False)
     opener = install_opener(
         monkeypatch, [Response({"agent": {"id": "child"}, "reused": False}, status=201)]
     )
@@ -125,6 +140,7 @@ def test_spawn_uses_managed_parent_and_complete_payload(tmp_path, monkeypatch, c
     ],
 )
 def test_agent_commands_use_only_http(arguments, method, suffix, body, monkeypatch, capsys):
+    monkeypatch.delenv("SWARM_API_URL", raising=False)
     opener = install_opener(monkeypatch, [Response({"ok": True})])
     main(["--parent-id", "operator", *arguments])
     assert json.loads(capsys.readouterr().out) == {"ok": True}

@@ -1283,6 +1283,47 @@ all adoption; on macOS, `lsof` is used to resolve folders. Refresh after quittin
 the original pi. These are point-in-time local process checks, not locks shared
 with unmanaged pi: do not open the same saved session elsewhere after adoption.
 
+## Prune finalized Pi thinking blocks
+
+Managed Pi agents load the packaged `swarm/extensions/thinking-context-pruner.js`
+extension alongside Swarm's mailbox extension. It leaves Pi's selected `/thinking`
+level unchanged, but strips finalized thinking text before it is persisted and filters
+legacy thinking text from subsequent request context. Streaming UI and the current
+request are not affected.
+
+By default, provider thinking blocks (including opaque signatures) are removed.
+Use `/thinking-context signatures preserve` to retain empty signature-only blocks
+for providers that need them to maintain multi-turn continuity; the extension never
+retains the reasoning text in those blocks. A non-context custom entry keeps a
+separate copy of visible thinking text by default; entries are rendered separately and can be viewed with
+`/thinking-copy`. Control this with `/thinking-context copy off` or `copy on`.
+
+Commands:
+
+- `/thinking-context status` (also the default)
+- `/thinking-context on` or `off` for this session branch
+- `/thinking-context copy on` or `copy off`
+- `/thinking-context signatures preserve` or `signatures strip`
+- `/thinking-context reload` to reread configuration
+- `/thinking-context save` to write current settings to the shared file
+
+The shared optional JSON file is `$SWARM_HOME/thinking-context-pruner.json` for
+managed agents, or `${PI_CODING_AGENT_DIR:-~/.pi/agent}/thinking-context-pruner.json`
+for standalone use (override with the absolute path variable
+`PI_THINKING_CONTEXT_CONFIG`). Supported boolean fields are `enabled`, `keepCopy`,
+and `stripThinkingSignatures`. Session overrides are
+stored as non-context entries and restored from the active branch. Existing user or
+project Pi installations can load the packaged JS explicitly with
+`pi --extension /path/to/swarm/extensions/thinking-context-pruner.js`; managed Swarm
+agents load it automatically. A change to existing agents requires `/reload` or
+relaunch.
+
+**Privacy note:** retained reasoning copies are persisted in the session as custom
+entries and are excluded from model context; they are still readable in session files.
+Turn off `keepCopy` to avoid retaining the separate copy. This extension removes
+visible thinking blocks, not reasoning returned as ordinary text, and it cannot
+reduce tokens spent on the current request.
+
 ## Automatically spill large Pi tool output to files
 
 Swarm's trusted Pi mailbox entry point now loads `extensions/output-spill.js`.

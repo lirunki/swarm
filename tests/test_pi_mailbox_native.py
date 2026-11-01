@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import pytest
 
-from swarm.adapters import MAILBOX_EXTENSION
+from swarm.adapters import MAILBOX_EXTENSION, THINKING_PRUNER_EXTENSION
 from swarm.controller import Controller
 from swarm.importers.pi_history import PiHistory
 from swarm.messaging import MessageRequest, prepare_bridge
@@ -82,6 +82,8 @@ def test_native_pi_extension_loads_and_executes_self_name_and_reload_without_mod
         "--no-approve",
         "--extension",
         agent_path(MAILBOX_EXTENSION),
+        "--extension",
+        agent_path(THINKING_PRUNER_EXTENSION),
     ]
     process = subprocess.Popen(
         args,

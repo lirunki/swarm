@@ -360,6 +360,7 @@ class Processes:
             "SWARM_PARENT_ID": str(agent.parent_id) if agent.parent_id else "",
             "SWARM_CONTROL_DIR": agent_path(directory),
             "SWARM_CONTROL_EPOCH": epoch,
+            "PI_THINKING_CONTEXT_CONFIG": str(self.store.home / "thinking-context-pruner.json"),
             "TERM": "xterm-256color",
         }
         if self.api_token_file is not None:
@@ -380,6 +381,7 @@ class Processes:
                 "PYTHONPATH",
                 "PI_CODING_AGENT_DIR",
                 "PI_CODING_AGENT_SESSION_DIR",
+                "PI_THINKING_CONTEXT_CONFIG",
                 "USERPROFILE",
                 "SYSTEMROOT",
                 "SystemRoot",

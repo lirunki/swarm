@@ -12,6 +12,7 @@ from .paths import agent_path, local_path
 
 SKILL = Path(__file__).parent / "skills" / "swarm.md"
 MAILBOX_EXTENSION = Path(__file__).parent / "extensions" / "mailbox.js"
+THINKING_PRUNER_EXTENSION = Path(__file__).parent / "extensions" / "thinking-context-pruner.js"
 
 
 class Adapter(Protocol):
@@ -43,6 +44,8 @@ class PiAdapter:
             skill,
             "--extension",
             agent_path(MAILBOX_EXTENSION),
+            "--extension",
+            agent_path(THINKING_PRUNER_EXTENSION),
             "--append-system-prompt",
             f"You are a Swarm-managed agent. Read {skill} before working. "
             "Use its file-based reporting protocol for real status changes and concise "

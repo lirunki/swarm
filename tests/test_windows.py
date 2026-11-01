@@ -211,6 +211,11 @@ def test_pi_adapter_maps_only_paths_not_prompt(tmp_path, monkeypatch):
     argv = adapters.PiAdapter().command(agent, prompt)
     assert argv[argv.index("--session") + 1] == "native:" + str(session)
     assert argv[argv.index("--skill") + 1] == "native:" + str(adapters.SKILL)
+    extension_args = [argv[index + 1] for index, value in enumerate(argv[:-1]) if value == "--extension"]
+    assert extension_args == [
+        "native:" + str(adapters.MAILBOX_EXTENSION),
+        "native:" + str(adapters.THINKING_PRUNER_EXTENSION),
+    ]
     assert argv[-2:] == ["--", prompt]
     assert "native:" + str(adapters.SKILL) in argv[argv.index("--append-system-prompt") + 1]
 

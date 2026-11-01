@@ -37,6 +37,7 @@ def test_wheel_includes_mailbox_extension_and_messages_ui(tmp_path):
         assert {
             "swarm/extensions/mailbox.js",
             "swarm/extensions/output-spill.js",
+            "swarm/extensions/thinking-context-pruner.js",
             "swarm/static/agent-messages.js",
             "swarm/static/agent-broadcast.js",
             "swarm/messaging.py",
