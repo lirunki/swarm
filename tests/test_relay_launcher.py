@@ -12,8 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize("host", [None, "relay.example.com"])
-def test_relay_host_default_and_environment_override(tmp_path, host):
+def test_relay_host_uses_explicit_environment_value(tmp_path):
     bash = shutil.which("bash")
     if not bash:
         pytest.skip("Bash required")
@@ -36,8 +35,7 @@ def test_relay_host_default_and_environment_override(tmp_path, host):
     swarm.chmod(0o755)
     env = {k: v for k, v in os.environ.items() if k not in {"SWARM_RELAY_HOST", "BASH_ENV", "ENV"}}
     env.update(TEST_CAPTURE=str(capture), TMPDIR=str(runtime))
-    if host:
-        env["SWARM_RELAY_HOST"] = host
+    env["SWARM_RELAY_HOST"] = "relay.example.com"
     result = subprocess.run(
         [bash, str(launcher), "--no-recover"],
         cwd=repo,
@@ -48,8 +46,30 @@ def test_relay_host_default_and_environment_override(tmp_path, host):
     )
     assert result.returncode == 0, result.stderr
     args = json.loads(capture.read_text())
-    expected = host or "achilipuvm.lirunki.com"
-    assert args[args.index("--relay-url") + 1] == f"wss://{expected}:9443/v1/connect"
+    assert args[args.index("--relay-url") + 1] == "wss://relay.example.com:9443/v1/connect"
     assert args[-1] == "--no-recover"
     assert list(runtime.iterdir()) == [], "private temporary key copy must be cleaned"
     assert "non-secret-test-fixture" not in result.stdout + result.stderr
+
+
+def test_relay_host_is_required_instead_of_using_a_machine_specific_default(tmp_path):
+    bash = shutil.which("bash")
+    if not bash:
+        pytest.skip("Bash required")
+    repo = tmp_path / "checkout"
+    repo.mkdir()
+    launcher = repo / "launch_swarm.sh"
+    shutil.copyfile(ROOT / "launch_swarm.sh", launcher)
+    env = {k: v for k, v in os.environ.items() if k not in {"SWARM_RELAY_HOST", "BASH_ENV", "ENV"}}
+
+    result = subprocess.run(
+        [bash, str(launcher)],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert result.returncode != 0
+    assert result.stderr == "Set SWARM_RELAY_HOST to the relay DNS name or IP address.\n"

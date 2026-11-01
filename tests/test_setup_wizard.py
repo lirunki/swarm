@@ -1,7 +1,6 @@
 """Interactive configuration and process ownership; all paths/secrets are disposable."""
 
 import copy
-import json
 import os
 import shutil
 import socket
@@ -146,7 +145,7 @@ def test_local_repeater_generates_private_certs_key_and_explicit_server_connecti
     assert Path(relay["tls"]["keyfile"]).read_bytes() == before
 
 
-def test_existing_endpoint_is_asked_and_has_no_personal_domain_default(tmp_path):
+def test_existing_endpoint_is_asked_and_persists_the_explicit_url(tmp_path):
     answers = Answers(
         tmp_path,
         yes={"Connect this server to an existing": True},
@@ -155,7 +154,6 @@ def test_existing_endpoint_is_asked_and_has_no_personal_domain_default(tmp_path)
     value = collect(tmp_path, answers)
     assert value["server"]["connection"]["url"] == "wss://relay.example.test:9555/v1/connect"
     assert value["server"]["password_file"]
-    assert "achilipuvm" not in json.dumps(value)
 
 
 def test_invalid_endpoint_does_not_request_or_save_a_secret(tmp_path):

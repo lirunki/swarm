@@ -44,7 +44,7 @@ def _parse_ado_target(pr: str, repo: str | None, _az: str) -> tuple[str, int]:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc or not match:
         raise ValueError(
             "Azure DevOps PR must be a full URL like "
-            "https://ORG.visualstudio.com/PROJECT/_git/REPO/pullrequest/123"
+            "https://ado.example.com/PROJECT/_git/REPO/pullrequest/123"
         )
     project, repository, number = unquote(match.group(1)), unquote(match.group(2)), int(match.group(3))
     if repo and repo.lower() != repository.lower():

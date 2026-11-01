@@ -75,8 +75,8 @@ def check(bucket: str, name: str = "test") -> dict:
 
 def test_enterprise_url_preserves_host_for_gh_and_graphql() -> None:
     assert _parse_target(
-        "https://microsoft.ghe.com/bic/lobster/pull/42", None, "gh"
-    ) == ("microsoft.ghe.com/bic/lobster", 42)
+        "https://ghe.example.com/acme/widgets/pull/42", None, "gh"
+    ) == ("ghe.example.com/acme/widgets", 42)
 
 
 def test_status_rollup_normalizes_checks_without_newer_gh_pr_checks_json() -> None:

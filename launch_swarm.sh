@@ -2,18 +2,20 @@
 # Start the local dashboard and connect it to the remote relay.
 # For a self-signed relay certificate, run with:
 #   SSL_CERT_FILE=/absolute/path/to/relay-cert.pem ./launch_swarm.sh
-# Override SWARM_RELAY_HOST for another relay host.
+# Set SWARM_RELAY_HOST to the relay DNS name or IP address.
 # Override SWARM_RELAY_NODE_ID / SWARM_RELAY_NAME for multiple controllers.
 # Saved dashboard relay Settings take precedence over these CLI defaults.
 set -euo pipefail
 
-export SSL_CERT_FILE=/mnt/c/Users/luibriz/Documents/Git/swarm/cert.pem
-
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 swarm_bin="$script_dir/.venv/bin/swarm"
 api_key_file="$script_dir/apikey.txt"
-relay_host="${SWARM_RELAY_HOST:-achilipuvm.lirunki.com}"
+relay_host="${SWARM_RELAY_HOST:-}"
 
+if [[ -z "$relay_host" ]]; then
+  printf 'Set SWARM_RELAY_HOST to the relay DNS name or IP address.\n' >&2
+  exit 1
+fi
 if [[ ! -x "$swarm_bin" ]]; then
   printf 'Swarm is not installed at %s. Create .venv and install this project first.\n' "$swarm_bin" >&2
   exit 1

@@ -10,8 +10,8 @@ from swarm.pr_monitor import EXIT_CI_AND_FEEDBACK, Config, assess
 def config(tmp_path: Path) -> Config:
     return Config(
         pr=(
-            "https://msazure.visualstudio.com/One/_git/"
-            "AAD-FirstPartyApps/pullrequest/17640047"
+            "https://ado.example.com/Project/_git/"
+            "Repository/pullrequest/42"
         ),
         repo=None,
         timeout=60,
@@ -25,17 +25,17 @@ def config(tmp_path: Path) -> Config:
 
 def test_parse_one_url() -> None:
     target, number = ado._parse_ado_target(
-        "https://msazure.visualstudio.com/One/_git/AAD-FirstPartyApps/pullrequest/17640047",
+        "https://ado.example.com/Project/_git/Repository/pullrequest/42",
         None,
         "az",
     )
 
     assert json.loads(target) == [
-        "https://msazure.visualstudio.com",
-        "One",
-        "AAD-FirstPartyApps",
+        "https://ado.example.com",
+        "Project",
+        "Repository",
     ]
-    assert number == 17640047
+    assert number == 42
 
 
 def test_ado_snapshot_maps_policies_votes_and_threads(tmp_path, monkeypatch) -> None:
@@ -43,7 +43,7 @@ def test_ado_snapshot_maps_policies_votes_and_threads(tmp_path, monkeypatch) -> 
         "status": "active",
         "isDraft": False,
         "lastMergeSourceCommit": {"commitId": "abc123"},
-        "repository": {"id": "repo-id", "name": "AAD-FirstPartyApps"},
+        "repository": {"id": "repo-id", "name": "Repository"},
         "reviewers": [
             {
                 "displayName": "Reviewer",

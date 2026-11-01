@@ -2,19 +2,16 @@
 
 This is the recorded composition from 2026-10-21, not a universal default or an
 instruction to enable paging. The saved monitor was
-**Lobster — LLM provider failures**, ID
-`9e890478-2c69-4c9a-89c0-d9f4bd4e7a67`, in account `Lobster`.
-It was created in **Silent** state, then independently read back. Re-read it
-before reusing it; do not create another copy or modify it by default.
-
-[Open the recorded monitor](https://portal.microsoftgeneva.com/manage/monitors/monitor?activity=edit-monitor&version=1&action=3&account=Lobster&monitorId=9e890478-2c69-4c9a-89c0-d9f4bd4e7a67).
+**Lobster — LLM provider failures** in account `Lobster`. Its environment-specific
+monitor ID is intentionally not bundled. It was created in **Silent** state, then
+independently read back. Locate it by name in the authorized Geneva portal and
+re-read it before reuse; do not create another copy or modify it by default.
 
 ## Telemetry and scope
 
-The canonical instrumentation is
-[`record_llm_provider_request`](https://microsoft.ghe.com/bic/lobster/blob/main/src/lobster_metrics/src/lib.rs),
-with outcome classification in
-[`llm_usage.rs`](https://microsoft.ghe.com/bic/lobster/blob/main/src/lobster_container_proxy/src/llm_usage.rs).
+The canonical instrumentation is `record_llm_provider_request` in
+`src/lobster_metrics/src/lib.rs`, with outcome classification in
+`src/lobster_container_proxy/src/llm_usage.rs` in the intended checkout.
 
 | Setting | Recorded value |
 | --- | --- |
@@ -83,7 +80,7 @@ prove zero-traffic health, or implement the separately proposed recovery policy.
 - Severity: **3**; unhealthy when the four clauses hold; initial state **Silent**.
 - IcM route: `MDM://Project Lobster/Lobster Runtime`, independently checked against
   the existing active Runtime CXP monitor at creation time.
-- TSG link: [container proxy target configuration](https://microsoft.ghe.com/bic/lobster/blob/main/docs/reference/container-proxy-target-config.md).
+- TSG link: `docs/reference/container-proxy-target-config.md` in the intended checkout.
   The incident message also provides bounded triage steps; this reference is not
   evidence that a full provider-specific on-call runbook has been commissioned.
 - Title uses the scoped provider, island and category placeholders, not user or

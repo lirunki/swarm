@@ -42,7 +42,7 @@ bash /path/to/swarm/setup_swarm.sh --runtime-dir /path/to/runtime --install-only
 ```
 
 `setup_swarm.sh` replaces the earlier noenv wrapper. It **does not invoke the
-personal `launch_swarm.sh`**, source `.env`/shell startup files, or assume a relay
+checkout-local `launch_swarm.sh`**, source `.env`/shell startup files, or assume a relay
 hostname, existing certificate/key, checkout virtualenv, or registry folder.
 It suggests paths, but asks the user to select/approve them:
 
@@ -126,9 +126,9 @@ installs machine-wide trust, changes firewalls, or exposes a public bind silentl
 Never copy the TLS private key to clients or publish credential files. JSON and
 launch-script paths are rejected if they collide with credential/TLS paths.
 
-The older personal launcher still supports an environment override independently:
+The older checkout-local launcher requires an explicit relay host:
 `SWARM_RELAY_HOST=relay.example.com bash /path/to/swarm/launch_swarm.sh`.
-It is not used by the interactive setup and its personal defaults are not imported.
+It is not used by the interactive setup and has no machine-specific defaults.
 
 ### Manual launch
 
@@ -1902,14 +1902,14 @@ fails, blocking review feedback appears, observed CI settles green, the PR merge
 the local deadline expires. This avoids paying for repeated unchanged polling turns.
 
 ```bash
-swarm-pr-monitor-ghe https://microsoft.ghe.com/bic/lobster/pull/22065 \
+swarm-pr-monitor-ghe https://ghe.example.com/acme/widgets/pull/42 \
   --timeout 3600 --interval 30 --settle 30 \
-  --ci-output /tmp/pr22065-ci.md --feedback-output /tmp/pr22065-feedback.md
+  --ci-output /tmp/pr42-ci.md --feedback-output /tmp/pr42-feedback.md
 
 swarm-pr-monitor-one \
-  https://msazure.visualstudio.com/One/_git/AAD-FirstPartyApps/pullrequest/17640047 \
+  https://ado.example.com/Project/_git/Repository/pullrequest/42 \
   --timeout 3600 --interval 30 --settle 30 \
-  --ci-output /tmp/pr17640047-ci.md --feedback-output /tmp/pr17640047-feedback.md
+  --ci-output /tmp/pr42-ado-ci.md --feedback-output /tmp/pr42-ado-feedback.md
 ```
 
 The command atomically writes separate CI and review-feedback Markdown reports. Exit `0` means

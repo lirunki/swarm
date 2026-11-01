@@ -17,9 +17,9 @@ private MCP address, browser target ID or session ID in reusable automation.
 3. List tabs, select the exact target, then independently evaluate
    `({url: location.href, title: document.title})`. Check the Geneva URL before
    any modification. Do not keep running actions after selection fails.
-4. If an old tab cannot be selected, preserve its draft. With permission, create
-   a fresh tab at `https://portal.microsoftgeneva.com/manage/monitors?account=Lobster`.
-   Explicitly select and verify the new tab; new-tab success alone is insufficient.
+4. If an old tab cannot be selected, preserve its draft. With permission, open
+   a fresh tab at the authorized Geneva portal's **Manage Monitors** page for the
+   target account. Explicitly select and verify it; new-tab success alone is insufficient.
 5. If the user switches to PME, verify the Profile identity in the new session
    and list monitors again. Do not assume old target IDs or cookies still apply.
 
@@ -51,8 +51,8 @@ view speculatively.
 For the Runtime one-observation-per-request counter, **Count** is the verified
 sampling choice. **Average** is the portal default and is wrong for that count.
 Do not generalize this to all instruments; some metrics require Sum or other
-semantics. The owning [MDM authoring contract](https://microsoft.ghe.com/bic/lobster/blob/main/docs/operations/grafana-mdm-dashboard-authoring.md)
-remains authoritative.
+semantics. The owning `docs/operations/grafana-mdm-dashboard-authoring.md` in the
+intended checkout remains authoritative.
 
 ### Resources
 

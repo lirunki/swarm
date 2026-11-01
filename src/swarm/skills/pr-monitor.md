@@ -12,9 +12,9 @@ to model context.
 
 Choose by URL:
 
-- `https://microsoft.ghe.com/OWNER/REPO/pull/NUMBER` → `swarm-pr-monitor-ghe`
+- `https://ghe.example.com/OWNER/REPO/pull/NUMBER` → `swarm-pr-monitor-ghe`
   (`swarm-pr-monitor` is the same GHE/GitHub implementation).
-- `https://msazure.visualstudio.com/PROJECT/_git/REPO/pullrequest/NUMBER` →
+- `https://ado.example.com/PROJECT/_git/REPO/pullrequest/NUMBER` →
   `swarm-pr-monitor-one`.
 
 Do not pass an Azure DevOps URL to the GHE command or vice versa. Swarm's registry-local
@@ -24,7 +24,7 @@ is absent in another installation, use `"$SWARM_PYTHON" -m swarm.pr_monitor` for
 
 ## Before running
 
-1. For GHE, ensure `gh auth status --hostname microsoft.ghe.com` succeeds. For One, ensure
+1. For GHE, ensure `gh auth status --hostname ghe.example.com` succeeds. For One, ensure
    `az devops` is authenticated and the `azure-devops` CLI extension is installed.
 2. Choose a stable artifact directory outside the repository diff when possible.
 3. Prefer the full PR URL. Only the GHE command accepts a numeric PR; it requires
@@ -45,23 +45,23 @@ neither status nor checkpoint materially changed.
 GHE (preferred/frequent path):
 
 ```bash
-mkdir -p /tmp/pr-monitor-22065
-"$SWARM_HOME/scripts/swarm-pr-monitor-ghe" https://microsoft.ghe.com/bic/lobster/pull/22065 \
+mkdir -p /tmp/pr-monitor-42-ghe
+"$SWARM_HOME/scripts/swarm-pr-monitor-ghe" https://ghe.example.com/acme/widgets/pull/42 \
   --timeout 3600 --interval 30 --settle 30 \
-  --ci-output /tmp/pr-monitor-22065/ci.md \
-  --feedback-output /tmp/pr-monitor-22065/feedback.md
+  --ci-output /tmp/pr-monitor-42-ghe/ci.md \
+  --feedback-output /tmp/pr-monitor-42-ghe/feedback.md
 code=$?
 ```
 
 Azure DevOps One:
 
 ```bash
-mkdir -p /tmp/pr-monitor-17640047
+mkdir -p /tmp/pr-monitor-42-ado
 "$SWARM_HOME/scripts/swarm-pr-monitor-one" \
-  https://msazure.visualstudio.com/One/_git/AAD-FirstPartyApps/pullrequest/17640047 \
+  https://ado.example.com/Project/_git/Repository/pullrequest/42 \
   --timeout 3600 --interval 30 --settle 30 \
-  --ci-output /tmp/pr-monitor-17640047/ci.md \
-  --feedback-output /tmp/pr-monitor-17640047/feedback.md
+  --ci-output /tmp/pr-monitor-42-ado/ci.md \
+  --feedback-output /tmp/pr-monitor-42-ado/feedback.md
 code=$?
 ```
 

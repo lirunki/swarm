@@ -18,11 +18,10 @@ This is a **Swarm companion workflow** stored beside the canonical Swarm skill a
 read it; it is intentionally not copied into Pi's user skill-discovery directory.
 Do not create or switch sessions just to use this workflow.
 
-Bundled relative links resolve from this skill directory. Repository documentation/source
-citations are absolute GitHub URLs and are not bundled files. When source is
-needed, use the intended Lobster checkout if available, or read the linked
-repository content with the authorized GitHub/browser tools. Do not assume the
-current working directory is Lobster or clone a repository automatically.
+Bundled relative links resolve from this skill directory. Repository documentation and
+source are not bundled files. When source is needed, use the intended Lobster
+checkout if available or ask the operator for its authorized location. Do not
+assume the current working directory is Lobster or clone a repository automatically.
 
 Create a native Geneva metric monitor, not a polling service or an IcM incident.
 Reuse the proven procedure below; re-derive live permissions, metric coverage,
@@ -49,12 +48,12 @@ pods, change ECS, or deliberately break production to prove an alert.
 
 ## Known entry points
 
-- [Geneva Monitors](https://portal.microsoftgeneva.com/manage/monitors?account=Lobster)
-  — account `Lobster`; create **Monitor V2 (Metrics)**.
-- [Existing reliability monitor contract](https://microsoft.ghe.com/bic/lobster/blob/main/docs/operations/cxp-reliability-monitors.md)
-  — native configuration, routing and publication precedent.
-- [MDM authoring contract](https://microsoft.ghe.com/bic/lobster/blob/main/docs/operations/grafana-mdm-dashboard-authoring.md)
-  — metric semantics, preaggregates and admission; not a Grafana-alert workflow.
+- The authorized Geneva portal's **Manage Monitors** page for account `Lobster`;
+  create **Monitor V2 (Metrics)**.
+- `docs/operations/cxp-reliability-monitors.md` in the intended checkout — native
+  configuration, routing and publication precedent.
+- `docs/operations/grafana-mdm-dashboard-authoring.md` in the intended checkout —
+  metric semantics, preaggregates and admission; not a Grafana-alert workflow.
 - [Portal and native configuration recipe](references/portal.md)
   — exact sequence, MCP pitfalls, enum mappings and save/read-back protocol.
 - [LLM provider example](references/llm-provider.md)
