@@ -190,7 +190,8 @@ async function loadFederation() {
 function switchSwarm(nodeId) {
   if (nodeId === activeSwarm) return;
   notificationsInbox?.clear();
-  for (const id of [...terminals.keys()]) closeTerminal(id);
+  remember();
+  for (const id of [...terminals.keys()]) closeTerminal(id, false);
   for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
   if (stateSocket) { stateSocket.onclose = null; stateSocket.close(); stateSocket = null; }
   stateGeneration += 1; reconnectDelay = 1000; restored = false; activeSwarm = nodeId; groupedBranches.clear();
@@ -198,7 +199,7 @@ function switchSwarm(nodeId) {
   state = {agents: [], errors: {}, health: {}, home: ''}; dashboardControls.status.reset(); $('#search').value = '';
   $('#swarm-selector').value = activeSwarm;
   $('#swarm-selector').title = $('#swarm-selector').selectedOptions?.[0]?.textContent || 'Active Swarm';
-  activate('dashboard'); render(); updateRestartCapability(); connectState();
+  activate('dashboard', false); render(); updateRestartCapability(); connectState();
   updateNotificationSources();
 }
 function revealNotificationAgent({swarmId, agentId}) {
@@ -594,7 +595,7 @@ function render() {
   agentFilesDialog.sync(agentById(agentFilesDialog.agentId));
   agentMessagesController.sync(agentById(agentMessagesController.agentId));
 }
-function activate(id) {
+function activate(id, persist = true) {
   activeTab = id && terminals.has(id) ? id : 'dashboard';
   $('#dashboard').hidden = activeTab !== 'dashboard'; $('#terminals').hidden = activeTab === 'dashboard';
   $('#dashboard-tab').classList.toggle('active', activeTab === 'dashboard');
@@ -604,7 +605,8 @@ function activate(id) {
     t.tab.setAttribute('aria-current', key === activeTab ? 'page' : 'false');
     t.mobileKeys?.update();
     if (key === activeTab) { initTerminal(t); requestAnimationFrame(() => { t.fit?.fit(); if (!t.copyText?.active) t.term?.focus(); }); }
-  } remember();
+  }
+  if (persist) remember();
 }
 function openTerminal(id, focus = true) {
   if (!agentById(id)) return;
@@ -721,11 +723,12 @@ function disconnectTerminal(t) {
   if (t.ws) { const ws = t.ws; t.ws = null; ws.onclose = null; ws.close(); }
   t.mobileKeys?.update();
 }
-function closeTerminal(id) {
+function closeTerminal(id, persist = true) {
   const t = terminals.get(id); if (!t) return;
   t.closed = true; t.mobileKeys?.dispose(); t.copyText?.dispose(); t.touchScroll?.dispose(); disconnectTerminal(t); t.observer?.disconnect(); t.term?.dispose(); t.pane.remove(); t.group.remove(); terminals.delete(id);
   // Deliberately no stop API call: only the attachment is disposable.
-  if (activeTab === id) activate('dashboard'); remember();
+  if (activeTab === id) activate('dashboard', persist);
+  else if (persist) remember();
 }
 function showDialog(id) { const dlg = $(id); $('.form-error', dlg).textContent = ''; dlg.showModal(); }
 function editAgent(id) {
