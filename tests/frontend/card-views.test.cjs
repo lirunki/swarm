@@ -218,6 +218,12 @@ test('dashboard omits the Mission Control label and keeps card assets versioned'
   assert.match(html, /<h1 class="sr-only">Agent dashboard<\/h1>/);
   const version = html.match(/app\.js\?v=([^"']+)/)[1];
   assert.ok(html.includes(`/static/app.css?v=${version}`));
+  const css = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.css'), 'utf8');
+  assert.match(css, /\.mission-toolbar \.page-head-title\{[^}]*justify-self:stretch[^}]*width:100%/);
+  assert.match(css, /\.mission-toolbar \.status-filter\{margin:0 auto 0 0;align-self:flex-start;justify-self:start\}/);
+  assert.match(css, /\.mission-toolbar\{grid-template-columns:minmax\(0,1fr\) auto;column-gap:8px;row-gap:0/);
+  assert.match(css, /\.mission-toolbar>\.actions\{grid-column:2;grid-row:1/);
+  assert.doesNotMatch(css, /\.mission-toolbar>\.actions\{[^}]*grid-row:2/);
 });
 
 test('collapsed name highlight follows process liveness, not task status', () => {
@@ -577,12 +583,13 @@ test('terminal toolbar keeps reconnect and exposes a scoped tmux command menu', 
   const node = (tag, cls = '', text = '') => { const el = new Element(tag); el.className = cls; if (text) el.textContent = text; return el; };
   const context = vm.createContext({
     node, button: (text, cls, fn) => { const el = node('button', cls, text); el.addEventListener('click', fn); return el; },
-    document: {createElement: tag => new Element(tag)},
+    document: {createElement: tag => new Element(tag)}, URL, apiPath: value => `/remote${value}`,
     $: (selector, root) => root ? find(root, selector.slice(1)) : selector === '#terminals' ? panels : tabs,
     agentById: id => id === a.id ? a : null, terminals: new Map(), labels: {running: 'Running'},
     api: async (...args) => tmuxCalls.push(args), toast() {},
     compactionBlocked: () => false, restartInProgress: () => false, remember() {}, activate: id => calls.push(['activate', id]),
     closeTerminal: id => calls.push(['close', id]), wakeAgent: id => calls.push(['wake', id]),
+    openAgentMessages: id => calls.push(['messages', id]),
     disconnectTerminal: t => calls.push(['disconnect', t.id]), attachTerminal: t => calls.push(['attach', t.id]),
     overlay: (...args) => calls.push(['overlay', ...args.slice(1)]),
   });
@@ -591,14 +598,20 @@ test('terminal toolbar keeps reconnect and exposes a scoped tmux command menu', 
   const filesState = source.slice(source.indexOf('function agentFileCount('), source.indexOf('function openAgentFiles('));
   const tmuxState = source.slice(source.indexOf('const tmuxMenuItems'), source.indexOf('function openAgentMessages('));
   const setupState = source.slice(source.indexOf('const provisioningAgent'), source.indexOf('function badge('));
-  vm.runInContext(setupState + '\n' + filesState + '\n' + tmuxState + '\n' + open + '\n' + sync, context);
+  const productState = source.slice(source.indexOf('function productLink('), source.indexOf('function renderCard('));
+  vm.runInContext(setupState + '\n' + filesState + '\n' + tmuxState + '\n' + productState + '\n' + open + '\n' + sync, context);
   context.openTerminal(a.id);
   const t = context.terminals.get(a.id), header = t.pane.childNodes[0];
-  assert.deepEqual(header.childNodes.filter(el => el.tagName === 'BUTTON' && !el.hidden).map(el => el.textContent), ['Files', '↻ Reconnect']);
+  assert.deepEqual(header.childNodes.filter(el => el.tagName === 'BUTTON' && !el.hidden).map(el => el.textContent), ['Files', '✉ 0', '↻ Reconnect']);
   assert.equal(t.tmuxControl.toggle.textContent, 'tmux');
   assert.equal('wakeButton' in t, false);
   assert.equal(t.filesButton, find(header, 'terminal-files'));
+  assert.equal(t.filesButton.getAttribute('aria-label'), `Files for ${a.name}`);
+  assert.equal(t.reconnectButton.getAttribute('aria-label'), `Reconnect terminal for ${a.name}`);
   assert.equal(t.tmuxControl.toggle, find(header, 'terminal-tmux-button'));
+  assert.equal(t.productSlot.hidden, true);
+  assert.equal(t.messagesButton.textContent, '✉ 0');
+  assert.equal(t.messagesButton.hidden, false);
   assert.equal(t.tmuxControl.menu.hidden, true);
   t.tmuxControl.toggle.click();
   assert.equal(t.tmuxControl.menu.hidden, false);
@@ -617,6 +630,48 @@ test('terminal toolbar keeps reconnect and exposes a scoped tmux command menu', 
   a.file_count = 0; context.syncTerminal(t);
   assert.equal(t.filesButton.classList.contains('has-files'), false);
   assert.equal(t.filesButton.textContent, 'Files');
+  a.product = {kind: 'link', label: 'Live preview output', url: 'https://example.com/result'}; context.syncTerminal(t);
+  let product = find(header, 'terminal-product');
+  assert.equal(t.productSlot.hidden, false);
+  assert.equal(product.textContent, '↗ Live preview o…');
+  assert.equal(product.href, 'https://example.com/result');
+  assert.equal(product.target, '_blank'); assert.equal(product.rel, 'noopener noreferrer');
+  assert.equal(product.dataset.kind, 'link');
+  assert.equal(product.getAttribute('aria-label'), 'Open latest product: Live preview output');
+  const reconnect = header.childNodes.find(element => element.textContent === '↻ Reconnect');
+  assert.ok(header.childNodes.indexOf(t.connected) < header.childNodes.indexOf(t.productSlot));
+  assert.ok(header.childNodes.indexOf(t.productSlot) < header.childNodes.indexOf(t.filesButton));
+  assert.ok(header.childNodes.indexOf(t.filesButton) < header.childNodes.indexOf(t.messagesButton));
+  assert.ok(header.childNodes.indexOf(t.messagesButton) < header.childNodes.indexOf(t.tmuxControl.wrapper));
+  assert.ok(header.childNodes.indexOf(t.tmuxControl.wrapper) < header.childNodes.indexOf(reconnect));
+  a.product = {kind: 'link', label: 'Unsafe', url: 'javascript:alert(1)'}; context.syncTerminal(t);
+  assert.equal(t.productSlot.hidden, true); assert.equal(find(header, 'terminal-product'), undefined);
+  a.product = {kind: 'file', id: 'report/id', label: 'Report', filename: 'report.md'}; context.syncTerminal(t);
+  product = find(header, 'terminal-product');
+  assert.equal(product.textContent, '↓ Report');
+  assert.equal(product.href, `/remote/api/agents/${a.id}/products/report%2Fid/download`);
+  assert.equal(product.download, 'report.md');
+  assert.equal(product.dataset.kind, 'file');
+  a.message_count = 3; context.syncTerminal(t);
+  assert.equal(t.messagesButton.textContent, '✉ 3');
+  assert.equal(t.messagesButton.classList.contains('has-messages'), true);
+  assert.equal(t.messagesButton.title, '3 outstanding messages');
+  assert.equal(t.messagesButton.getAttribute('aria-label'), `Messages for ${a.name}: 3 outstanding`);
+  t.messagesButton.click(); assert.ok(calls.some(call => call[0] === 'messages' && call[1] === a.id));
+  a.messages_error = 'Message count unavailable'; context.syncTerminal(t);
+  assert.equal(t.messagesButton.title, 'Message count unavailable');
+  a.managed = false; context.syncTerminal(t); assert.equal(t.messagesButton.hidden, true);
+  a.managed = true; delete a.messages_error; context.syncTerminal(t); assert.equal(t.messagesButton.hidden, false);
+  const css = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.css'), 'utf8');
+  assert.match(css, /\.terminal-product\{[^}]*color:var\(--done\)/);
+  const mobileIcons = css.match(/@media\(max-width:650px\)\{\.terminal-header \.terminal-files,[^\n]+/)[0];
+  assert.match(mobileIcons, /\.terminal-files::before\{content:'📁'/);
+  assert.match(mobileIcons, /\.terminal-reconnect::before\{content:'↻'/);
+  assert.match(mobileIcons, /\.terminal-product\[data-kind='link'\]::before\{content:'↗'/);
+  assert.match(mobileIcons, /\.terminal-product\[data-kind='file'\]::before\{content:'↓'/);
+  assert.doesNotMatch(mobileIcons, /terminal-messages|terminal-tmux-button/);
+  assert.match(css, /\.terminal-header \.terminal-info\{display:none\}/);
+  assert.doesNotMatch(css, /\.terminal-header \.hint\{display:none\}/);
   t.tab.classList.toggle('active', true);
   Object.assign(context.labels, {waiting: 'Waiting for input', dormant: 'Dormant', idle: 'Idle', done: 'Done'});
   for (const status of ['running', 'waiting', 'dormant', 'idle', 'done']) {

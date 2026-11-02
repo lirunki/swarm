@@ -306,6 +306,15 @@ function syncFilesButton(control, agent) {
   const count = agentFileCount(agent);
   control.classList.toggle('has-files', count > 0);
   control.title = agent.files_error || `${count} registered file${count === 1 ? '' : 's'}`;
+  control.setAttribute('aria-label', `Files for ${agent?.name || 'agent'}`);
+}
+function syncMessagesButton(control, agent) {
+  const count = agentMessageCount(agent);
+  control.hidden = !agent?.managed;
+  control.textContent = `✉ ${count}`;
+  control.classList.toggle('has-messages', count > 0);
+  control.title = agent?.messages_error || `${count} outstanding message${count === 1 ? '' : 's'}`;
+  control.setAttribute('aria-label', `Messages for ${agent?.name || 'agent'}: ${count} outstanding`);
 }
 function openAgentFiles(id) {
   const agent = agentById(id); if (!agent) return;
@@ -412,6 +421,19 @@ function productLink(a) {
   link.setAttribute('aria-label', link.title);
   return link;
 }
+function syncTerminalProduct(terminal, agent) {
+  const link = productLink(agent);
+  terminal.productSlot.textContent = '';
+  terminal.productSlot.hidden = !link;
+  if (!link) return;
+  const label = typeof agent.product.label === 'string' && agent.product.label.trim() ? agent.product.label.trim() : 'Product';
+  const characters = Array.from(label);
+  const shortLabel = characters.length > 15 ? `${characters.slice(0, 14).join('')}…` : label;
+  link.className = 'terminal-product';
+  link.dataset.kind = agent.product.kind;
+  link.textContent = `${agent.product.kind === 'file' ? '↓' : '↗'} ${shortLabel}`;
+  terminal.productSlot.append(link);
+}
 function renderCard(a) {
   const card = node('article', 'agent-card'); card.dataset.agentId = a.id;
   const setupStage = (a.creation || incompleteSetup(a)) ? creationStage(a) : '';
@@ -465,10 +487,8 @@ function renderCard(a) {
       library.append(files); card.classList.toggle('has-files', true);
     }
     if (a.managed) {
-      const messages = button(`✉ ${messageCount}`, 'card-messages', () => openAgentMessages(a.id));
-      messages.classList.toggle('has-messages', messageCount > 0);
-      messages.title = a.messages_error || `${messageCount} outstanding message${messageCount === 1 ? '' : 's'}`;
-      messages.setAttribute('aria-label', `Messages for ${a.name}: ${messageCount} outstanding`);
+      const messages = button('', 'card-messages', () => openAgentMessages(a.id));
+      syncMessagesButton(messages, a);
       library.append(messages); card.classList.toggle('has-messages', messageCount > 0);
     }
     summary.append(library);
@@ -616,14 +636,17 @@ function openTerminal(id, focus = true) {
     const title = node('strong'), info = node('span', 'hint terminal-info'), connected = node('span', 'hint terminal-connection', 'Detached');
     const copyButton = node('button', 'small terminal-copy-button', 'Copy text'); copyButton.type = 'button'; copyButton.hidden = true; copyButton.dataset.agentId = id;
     const filesButton = button('Files', 'small terminal-files', () => openAgentFiles(id));
+    const productSlot = node('span', 'terminal-product-slot'); productSlot.hidden = true;
+    const messagesButton = button('✉ 0', 'small terminal-messages', () => openAgentMessages(id));
     const tmuxControl = createTmuxControls(id);
-    header.append(title, info, connected, copyButton, filesButton, tmuxControl.wrapper, button('↻ Reconnect', 'small', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); }));
+    const reconnectButton = button('↻ Reconnect', 'small terminal-reconnect', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); });
+    header.append(title, info, connected, productSlot, filesButton, messagesButton, tmuxControl.wrapper, reconnectButton, copyButton);
     const surface = node('div', 'terminal-surface'), screen = node('div', 'terminal-screen'), overlay = node('div', 'terminal-overlay');
     surface.append(screen, overlay); pane.append(header, surface); $('#terminals').append(pane);
     const group = node('span', 'tab-group'), tab = button('', 'tab', () => activate(id));
     const tabLabel = node('span', 'tab-label'); tab.append(node('span', '', '›_'), tabLabel);
     group.append(tab, button('×', 'tab-close', () => closeTerminal(id))); $('.tab-close', group).setAttribute('aria-label', 'Close terminal tab'); $('#tabs').append(group);
-    const t = {id, pane, title, info, connected, screen, overlay, group, tab, tabLabel, copyButton, filesButton, tmuxControl, term: null, fit: null, ws: null, timer: null, closed: false};
+    const t = {id, pane, title, info, connected, screen, overlay, group, tab, tabLabel, copyButton, filesButton, messagesButton, productSlot, tmuxControl, reconnectButton, term: null, fit: null, ws: null, timer: null, closed: false};
     terminals.set(id, t); syncTerminal(t);
   }
   if (focus) activate(id); else remember();
@@ -667,9 +690,12 @@ function terminalAttachable(a) {
 function syncTerminal(t) {
   const a = agentById(t.id); if (!a) return;
   syncFilesButton(t.filesButton, a);
+  syncTerminalProduct(t, a);
+  syncMessagesButton(t.messagesButton, a);
   syncTmuxControls(t.tmuxControl, a);
   t.mobileKeys?.update();
   t.title.textContent = a.name; t.title.title = a.name; t.tabLabel.textContent = a.name;
+  t.reconnectButton.setAttribute('aria-label', `Reconnect terminal for ${a.name}`);
   t.group.dataset.status = a.status;
   t.tab.title = `${a.name} · ${labels[a.status] || a.status}`;
   t.tab.setAttribute('aria-label', t.tab.title);
