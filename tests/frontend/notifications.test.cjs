@@ -19,11 +19,11 @@ class Element {
   showModal() { this.open = true; }
   close() { this.open = false; }
 }
-function fixture(fetch, onOpenAgent = () => {}) {
-  const ids = ['notifications-button', 'notifications-count', 'notifications-dialog', 'notification-list', 'notifications-summary', 'notifications-error', 'refresh-notifications', 'clear-notifications'];
+function fixture(fetch, onOpenAgent = () => {}, systemNotifications = null) {
+  const ids = ['notifications-button', 'notifications-count', 'notifications-dialog', 'notification-list', 'notifications-summary', 'notifications-error', 'refresh-notifications', 'clear-notifications', 'system-notifications'];
   const elements = Object.fromEntries(ids.map(id => [`#${id}`, new Element()]));
   const document = {createElement: tag => new Element(tag), querySelector: selector => elements[selector]};
-  const inbox = new NotificationsInbox({document, fetch, onOpenAgent, setInterval: null});
+  const inbox = new NotificationsInbox({document, fetch, onOpenAgent, systemNotifications, setInterval: null});
   inbox.setSources([{id: 'local', name: 'Local Swarm'}, {id: 'relay/a', name: 'Remote <unsafe>', online: true}, {id: 'offline', name: 'Offline', online: false}]);
   return {inbox, elements};
 }
@@ -53,6 +53,48 @@ test('aggregates connected sources, tolerates partial failures, and renders lite
   const text = row.children[1].children[0].children[1];
   assert.equal(text.textContent, unsafe);
   assert.equal(text.children.length, 0, 'notification text is assigned as text, not parsed markup');
+});
+
+test('OS alerts baseline existing items, announce only new IDs, and remain browser-local opt-in', async () => {
+  let phase = 0, status = 'disabled';
+  const shown = [];
+  const systemNotifications = {
+    status: () => status,
+    enable: async () => { status = 'enabled'; },
+    disable: () => { status = 'disabled'; },
+    notify: async item => { shown.push(item); return true; },
+  };
+  const list = ids => ({revision: phase, notifications: ids.map((id, index) => payload(id, {
+    agent_id: 'agent-shared', agent_name: 'Shared agent', text: `Message ${id}`, created_at: `2025-01-0${index + 1}T00:00:00Z`,
+  }).notifications[0])});
+  const {inbox, elements} = fixture(async url => response(url.includes('federation')
+    ? list(phase ? ['remote-new', 'remote-old'] : ['remote-old'])
+    : list(phase ? ['local-new', 'local-old'] : ['local-old'])), () => {}, systemNotifications);
+
+  await inbox.refresh();
+  assert.deepEqual(shown, [], 'existing unread items establish the baseline');
+  const control = elements['#system-notifications'];
+  assert.equal(control.textContent, 'Enable OS alerts');
+  await control.events.get('click')({currentTarget: control});
+  assert.equal(control.textContent, 'OS alerts on');
+  assert.equal(control.attributes.get('aria-pressed'), 'true');
+
+  phase = 1;
+  await inbox.refresh();
+  assert.equal(shown.length, 2);
+  const byTag = Object.fromEntries(shown.map(item => [item.tag, item]));
+  assert.deepEqual(byTag['swarm:local:local-new'], {
+    title: 'Shared agent · Local Swarm', body: 'Message local-new', tag: 'swarm:local:local-new',
+    data: {sourceId: 'local', agentId: 'agent-shared', notificationId: 'local-new'},
+  });
+  assert.equal(byTag['swarm:relay/a:remote-new'].title, 'Shared agent · Remote <unsafe>');
+  assert.equal(byTag['swarm:relay/a:remote-new'].body, 'Message remote-new');
+  await inbox.refresh();
+  assert.equal(shown.length, 2, 'polling the same unread IDs does not replay OS alerts');
+
+  await control.events.get('click')({currentTarget: control});
+  assert.equal(status, 'disabled');
+  assert.equal(control.textContent, 'Enable OS alerts');
 });
 
 test('refresh requests never overlap and coalesce a refresh requested in flight', async () => {

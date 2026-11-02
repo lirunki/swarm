@@ -42,6 +42,10 @@
       this.sources = [];
       this.cache = new Map();
       this.failures = new Map();
+      this.initializedSources = new Set();
+      this.knownNotifications = new Map();
+      this.systemNotifications = options.systemNotifications || (root.SwarmSystemNotifications ? new root.SwarmSystemNotifications.SystemNotifications() : null);
+      this.systemError = '';
       this.inFlight = null;
       this.refreshQueued = false;
       this.generation = 0;
@@ -52,12 +56,15 @@
       this.list = this.query?.('#notification-list');
       this.summary = this.query?.('#notifications-summary');
       this.error = this.query?.('#notifications-error');
+      this.systemButton = this.query?.('#system-notifications');
       this.boundOpen = () => this.open();
       this.boundRefresh = () => this.refresh();
       this.boundClearAll = event => this.clearAll(event.currentTarget);
+      this.boundToggleSystem = event => this.toggleSystemNotifications(event.currentTarget);
       this.button?.addEventListener('click', this.boundOpen);
       this.query?.('#refresh-notifications')?.addEventListener('click', this.boundRefresh);
       this.query?.('#clear-notifications')?.addEventListener('click', this.boundClearAll);
+      this.systemButton?.addEventListener('click', this.boundToggleSystem);
       this.render();
     }
 
@@ -74,9 +81,46 @@
       this.render();
     }
 
+    captureNew(source, payload) {
+      const current = new Set(payload.notifications.map(item => item.id));
+      const previous = this.knownNotifications.get(source.id) || new Set();
+      const fresh = this.initializedSources.has(source.id)
+        ? payload.notifications.filter(item => !previous.has(item.id)).map(item => ({...item, source}))
+        : [];
+      this.initializedSources.add(source.id);
+      this.knownNotifications.set(source.id, current);
+      return fresh;
+    }
+
+    announce(items) {
+      if (!this.systemNotifications || !items.length) return;
+      for (const item of items) void this.systemNotifications.notify({
+        title: `${item.agent_name} · ${item.source.name}`,
+        body: item.text,
+        tag: `swarm:${item.source.id}:${item.id}`,
+        data: {sourceId: item.source.id, agentId: item.agent_id, notificationId: item.id},
+      });
+    }
+
+    async toggleSystemNotifications(control = this.systemButton) {
+      if (!this.systemNotifications || !control) return;
+      this.systemError = '';
+      control.disabled = true;
+      control.setAttribute('aria-busy', 'true');
+      try {
+        if (this.systemNotifications.status() === 'enabled') this.systemNotifications.disable();
+        else await this.systemNotifications.enable();
+      } catch (error) {
+        this.systemError = error?.message || 'Could not enable system notifications.';
+      }
+      control.setAttribute('aria-busy', 'false');
+      this.render();
+    }
+
     async refresh() {
       if (this.inFlight) { this.refreshQueued = true; return this.inFlight; }
       const generation = this.generation;
+      const announcements = [];
       const operation = Promise.all(this.sources.map(async source => {
         const path = sourcePath(source);
         try {
@@ -84,6 +128,7 @@
           if (!response.ok) throw responseError(response);
           const payload = normalizePayload(await response.json());
           if (generation === this.generation) {
+            announcements.push(...this.captureNew(source, payload));
             this.cache.set(source.id, {...payload, source});
             this.failures.delete(source.id);
           }
@@ -91,7 +136,10 @@
           if (generation === this.generation) this.failures.set(source.id, error);
         }
       })).then(() => {
-        if (generation === this.generation) this.render();
+        if (generation === this.generation) {
+          this.render();
+          this.announce(announcements);
+        }
         return this.items();
       });
       this.inFlight = operation;
@@ -199,7 +247,17 @@
       if (this.summary) this.summary.textContent = `${items.length} unread notification${items.length === 1 ? '' : 's'} across ${this.sources.length} connected Swarm${this.sources.length === 1 ? '' : 's'}.`;
       if (this.error) {
         const failedNames = this.sources.filter(source => this.failures.has(source.id)).map(source => source.name);
-        this.error.textContent = failedNames.length ? `Could not refresh: ${failedNames.join(', ')}. Showing available results.` : '';
+        const refreshError = failedNames.length ? `Could not refresh: ${failedNames.join(', ')}. Showing available results.` : '';
+        this.error.textContent = [this.systemError, refreshError].filter(Boolean).join(' ');
+      }
+      if (this.systemButton) {
+        const status = this.systemNotifications?.status() || 'unsupported';
+        const labels = {enabled: 'OS alerts on', disabled: 'Enable OS alerts', blocked: 'OS alerts blocked', unsupported: 'OS alerts unavailable'};
+        this.systemButton.textContent = labels[status];
+        this.systemButton.disabled = status === 'blocked' || status === 'unsupported';
+        this.systemButton.classList.toggle('active', status === 'enabled');
+        this.systemButton.setAttribute('aria-pressed', String(status === 'enabled'));
+        this.systemButton.title = status === 'blocked' ? 'Allow notifications in this site’s browser settings.' : labels[status];
       }
       const clearAll = this.query?.('#clear-notifications');
       if (clearAll) clearAll.disabled = items.length === 0;
@@ -247,6 +305,7 @@
       this.generation += 1;
       this.refreshQueued = false;
       this.cache.clear(); this.failures.clear();
+      this.systemError = '';
       if (this.error) this.error.textContent = '';
       this.render();
     }
@@ -262,6 +321,7 @@
       this.button?.removeEventListener('click', this.boundOpen);
       this.query?.('#refresh-notifications')?.removeEventListener('click', this.boundRefresh);
       this.query?.('#clear-notifications')?.removeEventListener('click', this.boundClearAll);
+      this.systemButton?.removeEventListener('click', this.boundToggleSystem);
       this.clear();
     }
   }
