@@ -5,7 +5,7 @@ const node = (tag, cls = '', text = '') => { const el = document.createElement(t
 const button = (text, cls, action) => { const el = node('button', cls, text); el.type = 'button'; el.addEventListener('click', action); return el; };
 const labels = {running: 'Running', waiting: 'Waiting for input', dormant: 'Dormant', idle: 'Idle', done: 'Done'};
 let state = {agents: [], errors: {}, health: {}, home: ''};
-let activeTab = 'dashboard', restored = false, stateSocket, stateSocketPending = null, reconnectDelay = 1000;
+let activeTab = 'dashboard', uiViewStateRestored = false, stateSocket, stateSocketPending = null, reconnectDelay = 1000;
 let restartingController = false, restartTimer, activeSwarm = 'local', stateGeneration = 0, presenceSocket, presenceSocketPending = false;
 let federationNodes = new Map(), federationRestored = false;
 let notificationsInbox = null, pendingNotificationReveal = null, notificationHighlightTimer = null;
@@ -60,21 +60,53 @@ function since(value) {
   const s = Math.max(0, Math.floor(ms / 1000));
   return s < 60 ? 'just now' : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`;
 }
-const tabStorageKey = () => `swarm.tabs.${activeSwarm}`;
-function remember() { try { localStorage.setItem(tabStorageKey(), JSON.stringify({ids: [...terminals.keys()], active: activeTab})); } catch { /* storage may be disabled */ } }
+const uiViewStateStorageKey = () => `swarm.ui-view-state.${activeSwarm}`;
+const legacyTabStorageKey = () => `swarm.tabs.${activeSwarm}`;
+const emptyUIViewState = () => ({terminalTabs: {ids: [], active: 'dashboard'}, groupedBranches: []});
+function normalizeUIViewState(value) {
+  if (!value || typeof value !== 'object') return emptyUIViewState();
+  const tabs = value.terminalTabs && typeof value.terminalTabs === 'object' ? value.terminalTabs : value;
+  const ids = Array.isArray(tabs.ids) ? [...new Set(tabs.ids.filter(id => typeof id === 'string' && id).slice(0, 200))] : [];
+  const active = typeof tabs.active === 'string' && tabs.active ? tabs.active : 'dashboard';
+  const grouped = Array.isArray(value.groupedBranches)
+    ? [...new Set(value.groupedBranches.filter(id => typeof id === 'string' && id).slice(0, 1000))]
+    : [];
+  return {terminalTabs: {ids, active}, groupedBranches: grouped};
+}
+function readUIViewState() {
+  try {
+    const current = localStorage.getItem(uiViewStateStorageKey());
+    if (current) return normalizeUIViewState(JSON.parse(current));
+    const legacy = localStorage.getItem(legacyTabStorageKey());
+    return legacy ? normalizeUIViewState(JSON.parse(legacy)) : emptyUIViewState();
+  } catch { return emptyUIViewState(); }
+}
+function rememberUIViewState() {
+  try {
+    const value = {
+      terminalTabs: {ids: [...terminals.keys()], active: activeTab},
+      groupedBranches: [...groupedBranches],
+    };
+    localStorage.setItem(uiViewStateStorageKey(), JSON.stringify(value));
+    localStorage.removeItem?.(legacyTabStorageKey());
+  } catch { /* storage may be disabled */ }
+}
 function applyState(data) {
   if (!Array.isArray(data.agents)) return;
+  const savedView = uiViewStateRestored ? null : readUIViewState();
+  if (savedView) {
+    groupedBranches.clear();
+    for (const id of savedView.groupedBranches) groupedBranches.add(id);
+  }
   state = data;
   fleetControl?.applyState(data);
   for (const id of terminals.keys()) if (!agentById(id)) closeTerminal(id);
   render();
-  if (!restored) {
-    restored = true;
-    try {
-      const saved = JSON.parse(localStorage.getItem(tabStorageKey()) || '{}');
-      for (const id of saved.ids || []) if (agentById(id)) openTerminal(id, false);
-      activate(saved.active === 'dashboard' || terminals.has(saved.active) ? saved.active : 'dashboard');
-    } catch { /* invalid persisted tabs are ignored */ }
+  if (savedView) {
+    uiViewStateRestored = true;
+    for (const id of savedView.terminalTabs.ids) if (agentById(id)) openTerminal(id, false);
+    const selected = savedView.terminalTabs.active;
+    activate(selected === 'dashboard' || terminals.has(selected) ? selected : 'dashboard');
   }
   consumeNotificationReveal();
   notificationsInbox?.refresh();
@@ -190,11 +222,11 @@ async function loadFederation() {
 function switchSwarm(nodeId) {
   if (nodeId === activeSwarm) return;
   notificationsInbox?.clear();
-  remember();
+  rememberUIViewState();
   for (const id of [...terminals.keys()]) closeTerminal(id, false);
   for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
   if (stateSocket) { stateSocket.onclose = null; stateSocket.close(); stateSocket = null; }
-  stateGeneration += 1; reconnectDelay = 1000; restored = false; activeSwarm = nodeId; groupedBranches.clear();
+  stateGeneration += 1; reconnectDelay = 1000; uiViewStateRestored = false; activeSwarm = nodeId; groupedBranches.clear();
   try { localStorage.setItem('swarm.active', activeSwarm); } catch { /* storage may be disabled */ }
   state = {agents: [], errors: {}, health: {}, home: ''}; dashboardControls.status.reset(); $('#search').value = '';
   $('#swarm-selector').value = activeSwarm;
@@ -209,7 +241,7 @@ function revealNotificationAgent({swarmId, agentId}) {
 }
 function consumeNotificationReveal() {
   const target = pendingNotificationReveal;
-  if (!target || target.swarmId !== activeSwarm || !restored) return;
+  if (!target || target.swarmId !== activeSwarm || !uiViewStateRestored) return;
   const agent = agentById(target.agentId);
   pendingNotificationReveal = null;
   if (!agent) { toast('The notification was removed, but its agent is no longer available.', true); return; }
@@ -589,6 +621,7 @@ function render() {
     onGroupChange: (id, grouped) => {
       if (grouped) groupedBranches.add(id);
       else groupedBranches.delete(id);
+      rememberUIViewState();
     },
   }));
   chart.hidden = !forest.shownCount;
@@ -626,7 +659,7 @@ function activate(id, persist = true) {
     t.mobileKeys?.update();
     if (key === activeTab) { initTerminal(t); requestAnimationFrame(() => { t.fit?.fit(); if (!t.copyText?.active) t.term?.focus(); }); }
   }
-  if (persist) remember();
+  if (persist) rememberUIViewState();
 }
 function openTerminal(id, focus = true) {
   if (!agentById(id)) return;
@@ -649,7 +682,7 @@ function openTerminal(id, focus = true) {
     const t = {id, pane, title, info, connected, screen, overlay, group, tab, tabLabel, copyButton, filesButton, messagesButton, productSlot, tmuxControl, reconnectButton, term: null, fit: null, ws: null, timer: null, closed: false};
     terminals.set(id, t); syncTerminal(t);
   }
-  if (focus) activate(id); else remember();
+  if (focus) activate(id); else rememberUIViewState();
 }
 function initTerminal(t) {
   if (t.term) return;
@@ -754,7 +787,7 @@ function closeTerminal(id, persist = true) {
   t.closed = true; t.mobileKeys?.dispose(); t.copyText?.dispose(); t.touchScroll?.dispose(); disconnectTerminal(t); t.observer?.disconnect(); t.term?.dispose(); t.pane.remove(); t.group.remove(); terminals.delete(id);
   // Deliberately no stop API call: only the attachment is disposable.
   if (activeTab === id) activate('dashboard', persist);
-  else if (persist) remember();
+  else if (persist) rememberUIViewState();
 }
 function showDialog(id) { const dlg = $(id); $('.form-error', dlg).textContent = ''; dlg.showModal(); }
 function editAgent(id) {
@@ -1233,12 +1266,13 @@ function clearUnauthorizedWorkspace(nodeId) {
   notificationsInbox?.clear();
   pendingNotificationReveal = null;
   if (nodeId !== 'local' && nodeId !== activeSwarm) return;
-  for (const id of [...terminals.keys()]) closeTerminal(id);
+  rememberUIViewState();
+  for (const id of [...terminals.keys()]) closeTerminal(id, false);
   for (const dialog of document.querySelectorAll('dialog[open]')) if (dialog.id !== 'auth-dialog') dialog.close();
   if (stateSocket) { stateSocket.onclose = null; stateSocket.close(); stateSocket = null; }
   if (nodeId === 'local' && presenceSocket) { presenceSocket.onclose = null; presenceSocket.close(); presenceSocket = null; }
-  stateGeneration += 1; restored = false; state = {agents: [], errors: {}, health: {}, home: ''};
-  dashboardControls.status.reset(); $('#search').value = ''; activate('dashboard'); render();
+  stateGeneration += 1; uiViewStateRestored = false; groupedBranches.clear(); state = {agents: [], errors: {}, health: {}, home: ''};
+  dashboardControls.status.reset(); $('#search').value = ''; activate('dashboard', false); render();
   $('#connection').textContent = 'Sign in required'; $('#connection').className = 'connection offline';
 }
 notificationsInbox = new SwarmNotifications.NotificationsInbox({

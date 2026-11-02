@@ -233,6 +233,8 @@ test('branch grouping has join styling and app state that survives live rerender
   assert.match(app, /const groupedBranches = new Set\(\)/);
   assert.match(app, /groupedIds: groupedBranches/);
   assert.match(app, /groupedBranches\.clear\(\)/);
+  assert.match(app, /onGroupChange:[\s\S]*rememberUIViewState\(\)/);
+  assert.match(app, /swarm\.ui-view-state\.\$\{activeSwarm\}/);
 });
 
 test('renderForest handles deep trees iteratively and validates arguments', () => {

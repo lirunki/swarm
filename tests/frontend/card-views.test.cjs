@@ -756,7 +756,7 @@ test('tab activation marks only the selected title current, including pinned Das
   const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
   const elements = new Map(['#dashboard', '#terminals', '#dashboard-tab'].map(key => [key, new Element('div')]));
   const terminals = new Map(['a', 'b'].map(id => [id, {pane: new Element('div'), tab: new Element('button'), group: new Element('span')}]));
-  const context = vm.createContext({activeTab: 'dashboard', terminals, $: key => elements.get(key), initTerminal() {}, requestAnimationFrame: callback => callback(), remember() {}});
+  const context = vm.createContext({activeTab: 'dashboard', terminals, $: key => elements.get(key), initTerminal() {}, requestAnimationFrame: callback => callback(), rememberUIViewState() {}});
   vm.runInContext(source.slice(source.indexOf('function activate('), source.indexOf('function openTerminal(')), context);
   context.activate('b');
   assert.equal(elements.get('#dashboard-tab').getAttribute('aria-current'), 'false');

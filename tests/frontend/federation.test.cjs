@@ -12,20 +12,19 @@ test('top-level selector switches API, state, and terminal paths by Swarm', () =
   assert.match(source, /const apiPath = path => activeSwarm === 'local' \? path : `\/api\/federation\/\$\{encodeURIComponent\(activeSwarm\)\}\/proxy\$\{path\}`/);
   assert.match(source, /const stateWSPath = \(\) => activeSwarm === 'local' \? '\/ws\/state' : `\/ws\/federation/);
   assert.match(source, /const terminalWSPath = id => activeSwarm === 'local' \? `\/ws\/terminal/);
-  assert.match(source, /remember\(\);\s*for \(const id of \[\.\.\.terminals\.keys\(\)\]\) closeTerminal\(id, false\)/);
+  assert.match(source, /rememberUIViewState\(\);\s*for \(const id of \[\.\.\.terminals\.keys\(\)\]\) closeTerminal\(id, false\)/);
   assert.match(source, /activate\('dashboard', false\); render\(\)/);
 });
 
-test('switching Swarms preserves each browser-local tab list independently', () => {
-  const values = new Map([
-    ['swarm.tabs.remote', JSON.stringify({ids: ['remote-a'], active: 'remote-a'})],
-  ]);
-  const calls = [];
+test('switching Swarms preserves each browser-local UI view state independently', () => {
+  const remoteView = {terminalTabs: {ids: ['remote-a'], active: 'remote-a'}, groupedBranches: ['remote-parent']};
+  const values = new Map([['swarm.ui-view-state.remote', JSON.stringify(remoteView)]]);
+  const calls = [], groupedBranches = new Set(['local-parent']);
   const context = vm.createContext({
-    activeSwarm: 'local', activeTab: 'local-b', terminals: new Map([['local-a', {}], ['local-b', {}]]),
-    localStorage: {getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value)},
+    activeSwarm: 'local', activeTab: 'local-b', terminals: new Map([['local-a', {}], ['local-b', {}]]), groupedBranches,
+    localStorage: {getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key)},
     notificationsInbox: {clear: () => calls.push(['clear'])}, document: {querySelectorAll: () => []}, stateSocket: null,
-    stateGeneration: 0, reconnectDelay: 1000, restored: true, groupedBranches: {clear: () => {}},
+    stateGeneration: 0, reconnectDelay: 1000, uiViewStateRestored: true,
     state: {}, dashboardControls: {status: {reset: () => {}}},
     $: selector => selector === '#swarm-selector'
       ? {value: '', title: '', selectedOptions: [{textContent: 'Remote'}]}
@@ -34,41 +33,65 @@ test('switching Swarms preserves each browser-local tab list independently', () 
     activate: (id, persist) => calls.push(['activate', id, persist]), render: () => {}, updateRestartCapability: () => {},
     connectState: () => {}, updateNotificationSources: () => {},
   });
-  const memory = source.slice(source.indexOf('const tabStorageKey'), source.indexOf('function applyState'));
+  const memory = source.slice(source.indexOf('const uiViewStateStorageKey'), source.indexOf('function applyState'));
   const switching = source.slice(source.indexOf('function switchSwarm('), source.indexOf('function revealNotificationAgent'));
   vm.runInContext(`${memory}\n${switching}`, context);
   context.switchSwarm('remote');
 
-  assert.deepEqual(JSON.parse(values.get('swarm.tabs.local')), {ids: ['local-a', 'local-b'], active: 'local-b'});
-  assert.deepEqual(JSON.parse(values.get('swarm.tabs.remote')), {ids: ['remote-a'], active: 'remote-a'});
+  assert.deepEqual(JSON.parse(values.get('swarm.ui-view-state.local')), {
+    terminalTabs: {ids: ['local-a', 'local-b'], active: 'local-b'}, groupedBranches: ['local-parent'],
+  });
+  assert.deepEqual(JSON.parse(values.get('swarm.ui-view-state.remote')), remoteView);
+  assert.deepEqual([...groupedBranches], []);
   assert.deepEqual(calls.filter(call => call[0] === 'close'), [['close', 'local-a', false], ['close', 'local-b', false]]);
   assert.ok(calls.some(call => call[0] === 'activate' && call[1] === 'dashboard' && call[2] === false));
 });
 
-test('first state from a selected Swarm restores only available remembered tabs and active tab', () => {
-  const values = new Map([['swarm.tabs.remote', JSON.stringify({ids: ['available', 'removed'], active: 'available'})]]);
-  const opened = [], activated = [];
+test('first state restores available tabs, active tab, and grouped branches before rendering', () => {
+  const saved = {terminalTabs: {ids: ['available', 'removed'], active: 'available'}, groupedBranches: ['parent', 'removed-parent']};
+  const values = new Map([['swarm.ui-view-state.remote', JSON.stringify(saved)]]);
+  const opened = [], activated = [], renderedGroups = [], groupedBranches = new Set();
   const context = vm.createContext({
-    activeSwarm: 'remote', activeTab: 'dashboard', terminals: new Map(), restored: false, state: {agents: []},
-    localStorage: {getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value)},
-    fleetControl: null, agentById: id => context.state.agents.find(agent => agent.id === id), closeTerminal: () => {}, render: () => {},
+    activeSwarm: 'remote', activeTab: 'dashboard', terminals: new Map(), groupedBranches, uiViewStateRestored: false, state: {agents: []},
+    localStorage: {getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key)},
+    fleetControl: null, agentById: id => context.state.agents.find(agent => agent.id === id), closeTerminal: () => {},
+    render: () => renderedGroups.push([...groupedBranches]),
     openTerminal: (id, focus) => { opened.push([id, focus]); context.terminals.set(id, {}); },
     activate: id => activated.push(id), consumeNotificationReveal: () => {}, notificationsInbox: null,
   });
-  const restore = source.slice(source.indexOf('const tabStorageKey'), source.indexOf('async function refresh'));
+  const restore = source.slice(source.indexOf('const uiViewStateStorageKey'), source.indexOf('async function refresh'));
+  vm.runInContext(restore, context);
+  context.applyState({agents: [{id: 'available'}, {id: 'parent'}]});
+
+  assert.deepEqual(renderedGroups[0], ['parent', 'removed-parent']);
+  assert.deepEqual(opened, [['available', false]]);
+  assert.deepEqual(activated, ['available']);
+  assert.equal(context.uiViewStateRestored, true);
+
+  values.set('swarm.ui-view-state.remote', '{invalid json');
+  context.terminals.clear(); context.uiViewStateRestored = false; opened.length = 0; activated.length = 0; groupedBranches.clear();
+  assert.doesNotThrow(() => context.applyState({agents: [{id: 'available'}]}));
+  assert.deepEqual(opened, []); assert.deepEqual(activated, ['dashboard']); assert.deepEqual([...groupedBranches], []);
+  assert.equal(context.uiViewStateRestored, true);
+});
+
+test('legacy per-Swarm tab storage migrates into UI view state', () => {
+  const values = new Map([['swarm.tabs.remote', JSON.stringify({ids: ['available'], active: 'available'})]]);
+  const groupedBranches = new Set(), context = vm.createContext({
+    activeSwarm: 'remote', activeTab: 'dashboard', terminals: new Map(), groupedBranches, uiViewStateRestored: false, state: {agents: []},
+    localStorage: {getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key)},
+    fleetControl: null, agentById: id => context.state.agents.find(agent => agent.id === id), closeTerminal: () => {}, render: () => {},
+    openTerminal: id => { context.terminals.set(id, {}); context.rememberUIViewState(); },
+    activate: id => { context.activeTab = id; context.rememberUIViewState(); }, consumeNotificationReveal: () => {}, notificationsInbox: null,
+  });
+  const restore = source.slice(source.indexOf('const uiViewStateStorageKey'), source.indexOf('async function refresh'));
   vm.runInContext(restore, context);
   context.applyState({agents: [{id: 'available'}]});
 
-  assert.deepEqual(opened, [['available', false]]);
-  assert.deepEqual(activated, ['available']);
-  assert.equal(context.restored, true);
-
-  values.set('swarm.tabs.remote', '{invalid json');
-  context.terminals.clear(); context.restored = false; opened.length = 0; activated.length = 0;
-  assert.doesNotThrow(() => context.applyState({agents: [{id: 'available'}]}));
-  assert.deepEqual(opened, []);
-  assert.deepEqual(activated, []);
-  assert.equal(context.restored, true);
+  assert.deepEqual(JSON.parse(values.get('swarm.ui-view-state.remote')), {
+    terminalTabs: {ids: ['available'], active: 'available'}, groupedBranches: [],
+  });
+  assert.equal(values.has('swarm.tabs.remote'), false);
 });
 
 test('remote restart UI obeys advertised capability', () => {
