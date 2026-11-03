@@ -123,3 +123,11 @@ test('mobile copy compacts to a copy/done icon without losing its accessible sta
   t.copy.open();assert.equal(t.button.getAttribute('aria-label'),'Done copying');
   t.copy.close();assert.equal(t.button.getAttribute('aria-label'),'Copy text');
 });
+
+
+test('mobile hides the metadata spacer but anchors the entire control suffix at connection state', () => {
+  const css=fs.readFileSync(path.join(__dirname,'../../src/swarm/static/app.css'),'utf8');
+  assert.match(css,/@media\(max-width:650px\)\{[^\n]*\.terminal-header \.terminal-connection\{margin-left:auto\}/);
+  assert.match(css,/\.terminal-header \.terminal-connection\{[^}]*flex:0 0 auto/);
+  assert.match(css,/@media\(max-width:650px\)\{[^\n]*\.terminal-header \.terminal-product-slot\{flex:0 0 auto\}/);
+});

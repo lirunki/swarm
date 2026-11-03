@@ -619,7 +619,9 @@ On touch-first/mobile browsers, **Copy text** sits immediately to the left of th
 latest product download/link in the terminal toolbar (and remains available when
 there is no product). Narrow screens show only the copy icon **⧉**, switching to
 **✓** while selection is open; its accessible label remains Copy text / Done copying.
-Wider touch screens keep the text label. It puts
+Wider touch screens keep the text label. The mobile connection/copy/product/files/
+mail/tmux/reconnect controls stay grouped against the toolbar's right edge; long
+agent names truncate rather than displacing or overlapping the controls. It puts
 only the currently visible xterm screen into a **read-only native textarea covering
 exactly the terminal control**, not a dialog or a separate history view. Select text
 with the phone's normal handles and choose **Copy**. Once the browser's native copy
