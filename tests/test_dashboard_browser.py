@@ -179,6 +179,7 @@ def test_dense_org_chart_layout_and_interactions(static_url, tmp_path, width):
             playwright.expect(page.locator("#terminals")).to_be_visible()
             assert page.locator(".terminal-header button:visible").all_text_contents() == [
                 "Files",
+                "✉ 0",
                 "tmux",
                 "↻ Reconnect",
             ]
@@ -519,6 +520,7 @@ def test_native_mobile_copy_overlay_and_unchanged_desktop(static_url, mobile):
                 playwright.expect(copy).to_be_hidden()
                 assert page.locator(".terminal-header button:visible").all_text_contents() == [
                     "Files",
+                    "✉ 0",
                     "tmux",
                     "↻ Reconnect",
                 ]

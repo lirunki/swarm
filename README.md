@@ -615,7 +615,11 @@ Refresh the page after updating; no backend restart is needed.
 
 ### Mobile terminal copying
 
-On touch-first/mobile browsers, **Copy text** appears beside **Reconnect**. It puts
+On touch-first/mobile browsers, **Copy text** sits immediately to the left of the
+latest product download/link in the terminal toolbar (and remains available when
+there is no product). Narrow screens show only the copy icon **⧉**, switching to
+**✓** while selection is open; its accessible label remains Copy text / Done copying.
+Wider touch screens keep the text label. It puts
 only the currently visible xterm screen into a **read-only native textarea covering
 exactly the terminal control**, not a dialog or a separate history view. Select text
 with the phone's normal handles and choose **Copy**. Once the browser's native copy

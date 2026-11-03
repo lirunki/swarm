@@ -37,6 +37,7 @@ test('captures only the rendered viewport and exposes a mobile read-only native 
   const t = fixture(); assert.equal(visibleText(t.term), 'VISIBLE <script>literal</script>\nsecond row');
   t.copy.open(); assert.equal(t.copy.active, true); assert.equal(t.copy.text.readOnly, true);
   assert.equal(t.copy.text.value, visibleText(t.term)); assert.equal(t.button.textContent, 'Done copying');
+  assert.equal(t.button.getAttribute('aria-label'), 'Done copying');
   assert.equal(t.copy.text.getAttribute('inputmode'), 'none'); assert.equal(t.copy.text.style.fontSize, '13px');
   assert.equal(t.copy.text.style.lineHeight, '15px');
   assert.equal(t.copy.text.style.fontFamily, 'monospace');
@@ -56,6 +57,7 @@ test('native Copy finishes before auto-close clears the text/selection', () => {
   assert.equal(clipboard, 'VISIBLE');
   t.flush(); assert.equal(t.copy.active, false); assert.equal(t.copy.text.value, '');
   assert.equal(t.button.textContent, 'Copy text'); assert.equal(t.screen.classes.has('copying-text'), false);
+  assert.equal(t.button.getAttribute('aria-label'), 'Copy text');
 });
 
 test('Done copying and Escape close without copying or sending terminal input', () => {
@@ -109,4 +111,15 @@ test('overlay follows custom terminal typography and rendered row stride rather 
   assert.equal(t.copy.text.style.letterSpacing, '1.25px'); assert.equal(t.copy.text.style.lineHeight, '27.5px');
   assert.equal(t.copy.text.style.fontKerning, 'none'); assert.equal(t.copy.text.style.fontVariantLigatures, 'none');
   t.copy.close(); t.term.element = undefined; t.copy.open(); assert.equal(t.copy.text.style.lineHeight, 'normal');
+});
+
+
+test('mobile copy compacts to a copy/done icon without losing its accessible state', () => {
+  const css=fs.readFileSync(path.join(__dirname,'../../src/swarm/static/app.css'),'utf8');
+  assert.match(css,/@media\(max-width:650px\)\{[^\n]*\.terminal-header \.terminal-copy-button\{[^}]*font-size:0/);
+  assert.match(css,/\.terminal-copy-button::before\{content:'⧉'/);
+  assert.match(css,/\.terminal-copy-button\[aria-pressed="true"\]::before\{content:'✓'/);
+  const t=fixture();assert.equal(t.button.getAttribute('aria-label'),'Copy text');
+  t.copy.open();assert.equal(t.button.getAttribute('aria-label'),'Done copying');
+  t.copy.close();assert.equal(t.button.getAttribute('aria-label'),'Copy text');
 });

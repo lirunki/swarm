@@ -639,7 +639,8 @@ test('terminal toolbar keeps reconnect and exposes a scoped tmux command menu', 
   assert.equal(product.dataset.kind, 'link');
   assert.equal(product.getAttribute('aria-label'), 'Open latest product: Live preview output');
   const reconnect = header.childNodes.find(element => element.textContent === '↻ Reconnect');
-  assert.ok(header.childNodes.indexOf(t.connected) < header.childNodes.indexOf(t.productSlot));
+  assert.ok(header.childNodes.indexOf(t.connected) < header.childNodes.indexOf(t.copyButton));
+  assert.equal(header.childNodes.indexOf(t.copyButton) + 1, header.childNodes.indexOf(t.productSlot));
   assert.ok(header.childNodes.indexOf(t.productSlot) < header.childNodes.indexOf(t.filesButton));
   assert.ok(header.childNodes.indexOf(t.filesButton) < header.childNodes.indexOf(t.messagesButton));
   assert.ok(header.childNodes.indexOf(t.messagesButton) < header.childNodes.indexOf(t.tmuxControl.wrapper));

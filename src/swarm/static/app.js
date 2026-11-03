@@ -673,7 +673,7 @@ function openTerminal(id, focus = true) {
     const messagesButton = button('✉ 0', 'small terminal-messages', () => openAgentMessages(id));
     const tmuxControl = createTmuxControls(id);
     const reconnectButton = button('↻ Reconnect', 'small terminal-reconnect', () => { const t = terminals.get(id); disconnectTerminal(t); attachTerminal(t); });
-    header.append(title, info, connected, productSlot, filesButton, messagesButton, tmuxControl.wrapper, reconnectButton, copyButton);
+    header.append(title, info, connected, copyButton, productSlot, filesButton, messagesButton, tmuxControl.wrapper, reconnectButton);
     const surface = node('div', 'terminal-surface'), screen = node('div', 'terminal-screen'), overlay = node('div', 'terminal-overlay');
     surface.append(screen, overlay); pane.append(header, surface); $('#terminals').append(pane);
     const group = node('span', 'tab-group'), tab = button('', 'tab', () => activate(id));

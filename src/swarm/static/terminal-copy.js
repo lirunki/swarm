@@ -46,6 +46,7 @@
       this.button.hidden = !this.media.matches;
       this.button.textContent = this.active ? 'Done copying' : 'Copy text';
       this.button.setAttribute('aria-pressed', String(this.active));
+      this.button.setAttribute('aria-label', this.active ? 'Done copying' : 'Copy text');
       this.button.title = this.active ? 'Close text selection and return to terminal' : 'Select and copy visible terminal text';
       this.text.hidden = !this.active;
       this.screen.classList.toggle('copying-text', this.active);
