@@ -1,4 +1,5 @@
 import json
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -39,6 +40,48 @@ def test_bad_edit_keeps_last_good_and_deletion_removes_record(store):
     assert f"{agent.id}.md" in store.errors
     store.path(agent.id).unlink()
     assert store.scan() == []
+
+
+def test_concurrent_scan_snapshots_keep_agents_and_errors_paired(store, monkeypatch):
+    agent = make_agent(store)
+    store.scan()
+    store.path(agent.id).write_text("---\nstatus: [oops\n", encoding="utf-8")
+    original_scan = store._scan_unlocked
+    first_scanned = threading.Barrier(2)
+    release_first = threading.Barrier(2)
+    second_attempted = threading.Event()
+    calls = 0
+
+    def paused_first_scan():
+        nonlocal calls
+        result = original_scan()
+        calls += 1
+        if calls == 1:
+            first_scanned.wait(timeout=5)
+            release_first.wait(timeout=5)
+        return result
+
+    def second_snapshot():
+        second_attempted.set()
+        return store.scan_with_errors()
+
+    monkeypatch.setattr(store, "_scan_unlocked", paused_first_scan)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(store.scan_with_errors)
+        first_scanned.wait(timeout=5)
+        store.path(agent.id).write_text(encode(agent), encoding="utf-8")
+        second = pool.submit(second_snapshot)
+        assert second_attempted.wait(timeout=5)
+        assert not second.done()
+        release_first.wait(timeout=5)
+        first_agents, first_errors = first.result(timeout=5)
+        second_agents, second_errors = second.result(timeout=5)
+
+    assert first_agents == second_agents == (agent,)
+    assert f"{agent.id}.md" in first_errors
+    assert not second_errors
+    with pytest.raises(TypeError):
+        first_errors["changed"] = "not allowed"
 
 
 def test_wrong_filename_and_path_traversal_rejected(store):

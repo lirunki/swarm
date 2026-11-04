@@ -16,6 +16,8 @@ let forgettingAgent = false, metaCompactingId = null, toolInputCompactingId = nu
 const toolOutputRepairRequests = new Map();
 const terminals = new Map();
 const groupedBranches = new Set();
+let selectedAgentGroup = null, agentGroupsController = null;
+const openedAgentGroups = new Set(), agentGroupTabs = new Map();
 const cardViews = new SwarmCardViews.CardViews();
 let toastTimer;
 function toast(message, error = false) {
@@ -62,7 +64,7 @@ function since(value) {
 }
 const uiViewStateStorageKey = () => `swarm.ui-view-state.${activeSwarm}`;
 const legacyTabStorageKey = () => `swarm.tabs.${activeSwarm}`;
-const emptyUIViewState = () => ({terminalTabs: {ids: [], active: 'dashboard'}, groupedBranches: []});
+const emptyUIViewState = () => ({terminalTabs: {ids: [], active: 'dashboard'}, groupedBranches: [], agentGroupView: {selected: null, opened: []}});
 function normalizeUIViewState(value) {
   if (!value || typeof value !== 'object') return emptyUIViewState();
   const tabs = value.terminalTabs && typeof value.terminalTabs === 'object' ? value.terminalTabs : value;
@@ -71,7 +73,9 @@ function normalizeUIViewState(value) {
   const grouped = Array.isArray(value.groupedBranches)
     ? [...new Set(value.groupedBranches.filter(id => typeof id === 'string' && id).slice(0, 1000))]
     : [];
-  return {terminalTabs: {ids, active}, groupedBranches: grouped};
+  const groupView = value.agentGroupView && typeof value.agentGroupView === 'object' ? value.agentGroupView : {};
+  const opened = Array.isArray(groupView.opened) ? [...new Set(groupView.opened.filter(id => typeof id === 'string' && id).slice(0,100))] : [];
+  return {terminalTabs: {ids, active}, groupedBranches: grouped, agentGroupView: {selected: typeof groupView.selected === 'string' ? groupView.selected : null, opened}};
 }
 function readUIViewState() {
   try {
@@ -86,6 +90,7 @@ function rememberUIViewState() {
     const value = {
       terminalTabs: {ids: [...terminals.keys()], active: activeTab},
       groupedBranches: [...groupedBranches],
+      agentGroupView: {selected: selectedAgentGroup, opened: [...openedAgentGroups]},
     };
     localStorage.setItem(uiViewStateStorageKey(), JSON.stringify(value));
     localStorage.removeItem?.(legacyTabStorageKey());
@@ -98,7 +103,15 @@ function applyState(data) {
     groupedBranches.clear();
     for (const id of savedView.groupedBranches) groupedBranches.add(id);
   }
+  const groupingAvailable = SwarmAgentGroups.validProjection(data.agent_groups) && !data.federation_offline;
+  if (!groupingAvailable) data={...data,agent_groups:state.agent_groups || {revision:0,groups:[],assignments:{}},agent_groups_error:data.agent_groups_error || 'Grouping is unavailable until this Swarm provides a current group state.'};
+  else if (!savedView && state.agent_groups && data.agent_groups.revision < state.agent_groups.revision) data={...data,agent_groups:state.agent_groups};
   state = data;
+  if (savedView) {
+    selectedAgentGroup = savedView.agentGroupView.selected;
+    openedAgentGroups.clear();
+    for (const id of savedView.agentGroupView.opened) openedAgentGroups.add(id);
+  }
   fleetControl?.applyState(data);
   for (const id of terminals.keys()) if (!agentById(id)) closeTerminal(id);
   render();
@@ -106,7 +119,7 @@ function applyState(data) {
     uiViewStateRestored = true;
     for (const id of savedView.terminalTabs.ids) if (agentById(id)) openTerminal(id, false);
     const selected = savedView.terminalTabs.active;
-    activate(selected === 'dashboard' || terminals.has(selected) ? selected : 'dashboard');
+    activate(selected === 'dashboard' || terminals.has(selected) || isAgentGroupTab(selected) ? selected : 'dashboard');
   }
   consumeNotificationReveal();
   notificationsInbox?.refresh();
@@ -222,11 +235,12 @@ async function loadFederation() {
 function switchSwarm(nodeId) {
   if (nodeId === activeSwarm) return;
   notificationsInbox?.clear();
-  rememberUIViewState();
+  if(uiViewStateRestored) rememberUIViewState();
   for (const id of [...terminals.keys()]) closeTerminal(id, false);
   for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
   if (stateSocket) { stateSocket.onclose = null; stateSocket.close(); stateSocket = null; }
-  stateGeneration += 1; reconnectDelay = 1000; uiViewStateRestored = false; activeSwarm = nodeId; groupedBranches.clear();
+  stateGeneration += 1; reconnectDelay = 1000; uiViewStateRestored = false; activeSwarm = nodeId; groupedBranches.clear(); selectedAgentGroup = null; openedAgentGroups.clear();
+  for (const tab of agentGroupTabs.values()) tab.wrapper.remove(); agentGroupTabs.clear();
   try { localStorage.setItem('swarm.active', activeSwarm); } catch { /* storage may be disabled */ }
   state = {agents: [], errors: {}, health: {}, home: ''}; dashboardControls.status.reset(); $('#search').value = '';
   $('#swarm-selector').value = activeSwarm;
@@ -248,7 +262,7 @@ function consumeNotificationReveal() {
   if (agent.alive && terminals.has(agent.id)) { activate(agent.id); return; }
   dashboardControls.status.reset(); $('#search').value = '';
   cardViews.setCompact(state.home, agent.id, false);
-  activate('dashboard'); render();
+  openAgentGroup(agentGroupFor(agent.id)); render();
   const card = [...$('#agents').querySelectorAll('.agent-card')].find(value => value.dataset.agentId === agent.id);
   if (!card) { toast('The agent is hidden by unavailable hierarchy data.', true); return; }
   card.scrollIntoView({behavior: 'smooth', block: 'center', inline: 'center'});
@@ -599,22 +613,90 @@ function renderCard(a) {
   SwarmCardViews.applyCardView({card, details, foot, avatar, subtitle, toggle}, compact, a.name);
   terminal.hidden = !compact;
   if (!compact) setupMessages();
+  agentGroupsController?.decorateCard(card, a);
   return card;
+}
+const agentGroupTabId = id => `agent-group:${id}`;
+function agentGroupProjection() { return state.agent_groups || {revision:0, groups:[], assignments:{}}; }
+function agentGroupFor(id) { return SwarmAgentGroups.effectiveAssignments(state.agents, agentGroupProjection())[id] || null; }
+function isAgentGroupTab(id) { return typeof id === 'string' && id.startsWith('agent-group:') && (agentGroupProjection().groups.some(group => agentGroupTabId(group.id) === id) || (!!state.agent_groups_error && openedAgentGroups.has(id.slice('agent-group:'.length)))); }
+function openAgentGroup(id, persist=true) {
+  const group = agentGroupProjection().groups.find(group=>group.id===id);
+  selectedAgentGroup = group?.id || null;
+  if (group) openedAgentGroups.add(group.id);
+  agentGroupsController?.clearSelection();
+  activate(group ? agentGroupTabId(group.id) : 'dashboard', false);
+  render();
+  if (persist) rememberUIViewState();
+}
+function syncAgentGroupTabs() {
+  const groups = new Map(agentGroupProjection().groups.map(group=>[group.id,group]));
+  if(state.agent_groups_error) for(const id of openedAgentGroups) if(!groups.has(id)) groups.set(id,{id,name:'Group unavailable'});
+  if (selectedAgentGroup && !groups.has(selectedAgentGroup) && !state.agent_groups_error) selectedAgentGroup=null;
+  for (const [id,entry] of agentGroupTabs) if (!openedAgentGroups.has(id) || !groups.has(id)) { entry.wrapper.remove(); agentGroupTabs.delete(id); openedAgentGroups.delete(id); }
+  for (const id of openedAgentGroups) {
+    const group=groups.get(id); if (!group) continue;
+    if (!agentGroupTabs.has(id)) {
+      const wrapper=node('span','tab-group agent-group-tab'), tab=button('','tab',()=>openAgentGroup(id));
+      const close=button('×','tab-close',()=>{openedAgentGroups.delete(id); if(selectedAgentGroup===id) openAgentGroup(null); else {syncAgentGroupTabs();rememberUIViewState();}});
+      close.setAttribute('aria-label',`Close group dashboard`);wrapper.append(tab,close);wrapper.dataset.groupId=id;
+      agentGroupTabs.set(id,{wrapper,tab});
+    }
+    const entry=agentGroupTabs.get(id);entry.tab.textContent=`▰ ${group.name}`;entry.tab.title=group.name;
+    entry.wrapper.classList.toggle('active',activeTab===agentGroupTabId(id));
+    entry.tab.setAttribute('aria-current',activeTab===agentGroupTabId(id)?'page':'false');
+  }
+  // Selected folder sits directly before its terminal suffix; other open folders remain navigable.
+  if(selectedAgentGroup && agentGroupTabs.has(selectedAgentGroup)) $('#tabs').append(agentGroupTabs.get(selectedAgentGroup).wrapper);
+  const assignments=SwarmAgentGroups.effectiveAssignments(state.agents,agentGroupProjection());
+  for(const [id,t] of terminals) {t.group.hidden=(assignments[id]||null)!==selectedAgentGroup;$('#tabs').append(t.group);}
+  for (const [id,entry] of agentGroupTabs) if(id!==selectedAgentGroup) $('#tabs').append(entry.wrapper);
+}
+function renderAgentFolders(matching) {
+  const container=$('#agent-group-folders');container.replaceChildren();
+  if(selectedAgentGroup){container.hidden=true;return;}
+  const assignments=SwarmAgentGroups.effectiveAssignments(state.agents,agentGroupProjection());
+  for(const group of agentGroupProjection().groups){
+    const members=state.agents.filter(agent=>assignments[agent.id]===group.id);
+    if(matching && members.length && !members.some(agent=>matching.has(agent.id))) continue;
+    const folder=node('article','agent-group-folder');folder.dataset.groupId=group.id;
+    const open=button('','agent-group-folder-open',()=>openAgentGroup(group.id));
+    const icon=node('span','agent-group-folder-icon','▰');icon.setAttribute('aria-hidden','true');
+    open.append(icon,node('strong','',group.name),node('span','hint',`${members.length} agent${members.length===1?'':'s'}`));
+    open.setAttribute('aria-label',`Open group ${group.name}: ${members.length} agents`);
+      folder.append(open);container.append(folder);
+  }
+  container.hidden=!container.childNodes.length;
 }
 function render() {
   $('#home-path').textContent = state.home ? `${state.home}/agents` : '~/.swarm/agents';
   $('#agent-count').textContent = state.agents.length;
   const health = $('#health'); health.replaceChildren();
   for (const name of ['tmux', 'pi']) health.append(node('span', `health-pill${state.health[name] ? '' : ' bad'}`, `${state.health[name] ? '●' : '○'} ${name}`));
-  dashboardControls.update(state.agents);
+  agentGroupsController?.setState(state.agents, agentGroupProjection(), state.agent_groups_error);
+  const assignments = SwarmAgentGroups.effectiveAssignments(state.agents,agentGroupProjection());
+  const groups=agentGroupProjection().groups;
+  if(selectedAgentGroup && !groups.some(group=>group.id===selectedAgentGroup) && !state.agent_groups_error) selectedAgentGroup=null;
+  if(isAgentGroupTab(activeTab)===false && activeTab.startsWith('agent-group:')) activate('dashboard',uiViewStateRestored);
+  const scopedAgents=state.agents.filter(agent=>(assignments[agent.id]||null)===selectedAgentGroup);
+  dashboardControls.update(scopedAgents);
+  const groupName=groups.find(group=>group.id===selectedAgentGroup)?.name || (selectedAgentGroup && state.agent_groups_error ? 'Group unavailable' : null);
+  $('#dashboard-title').textContent=groupName || 'Agent dashboard';
+  $('#dashboard-title').classList.toggle('sr-only',!groupName);
+  $('#agent-group-back').hidden=!selectedAgentGroup;
+  $('#agent-group-rename').hidden=!selectedAgentGroup;$('#agent-group-delete').hidden=!selectedAgentGroup;
+  $('#agent-group-rename').disabled=!!state.agent_groups_error;$('#agent-group-delete').disabled=!!state.agent_groups_error;
+  $('#agent-groups-error').textContent=state.agent_groups_error || '';$('#agent-groups-error').hidden=!state.agent_groups_error;
   const query = $('#search').value.trim().toLowerCase();
-  const visible = state.agents.filter(a => dashboardControls.status.matches(a.status) && [a.name, a.goal, a.activity, a.folder, a.branch].join(' ').toLowerCase().includes(query));
+  const visible = scopedAgents.filter(a => dashboardControls.status.matches(a.status) && [a.name, a.goal, a.activity, a.folder, a.branch].join(' ').toLowerCase().includes(query));
   const active = document.activeElement;
-  const controlClass = active?.classList.contains('card-toggle') ? 'card-toggle' : active?.classList.contains('card-terminal') ? 'card-terminal' : null;
+  const controlClass = active?.classList.contains('card-toggle') ? 'card-toggle' : active?.classList.contains('card-terminal') ? 'card-terminal' : active?.classList.contains('group-family-select') ? 'group-family-select' : null;
   const focusedControl = active?.classList.contains('org-branch-toggle')
     ? {id: active.getAttribute('data-agent-id'), selector: '.org-branch-toggle'}
-    : controlClass ? {id: active.closest('.agent-card')?.dataset.agentId, selector: `.${controlClass}`} : null;
-  const forest = SwarmOrgChart.buildForest(state.agents, new Set(visible.map(a => a.id)));
+    : controlClass ? {id: active.closest('.agent-card')?.dataset.agentId, selector: `.${controlClass}`} : active?.classList.contains('agent-card') ? {id:active.dataset.agentId,selector:'.agent-card'} : null;
+  const matching=state.agents.filter(a=>dashboardControls.status.matches(a.status)&&[a.name,a.goal,a.activity,a.folder,a.branch].join(' ').toLowerCase().includes(query));
+  renderAgentFolders(new Set(matching.map(a=>a.id)));
+  const forest = SwarmOrgChart.buildForest(scopedAgents, new Set(visible.map(a => a.id)));
   const chart = $('#agents'), scrollLeft = chart.scrollLeft;
   chart.replaceChildren(SwarmOrgChart.renderForest(forest.roots, renderCard, document, {
     groupedIds: groupedBranches,
@@ -635,22 +717,29 @@ function render() {
     const replacement = focusedControl.selector === '.org-branch-toggle'
       ? [...chart.querySelectorAll(focusedControl.selector)].find(control => control.getAttribute('data-agent-id') === focusedControl.id)
       : [...chart.querySelectorAll('.agent-card')].find(card => card.dataset.agentId === focusedControl.id);
-    if (replacement) (focusedControl.selector === '.org-branch-toggle' ? replacement : $(focusedControl.selector, replacement))?.focus({preventScroll: true});
+    if (replacement) (['.org-branch-toggle','.agent-card'].includes(focusedControl.selector) ? replacement : $(focusedControl.selector, replacement))?.focus({preventScroll: true});
   }
-  const empty = $('#empty'); empty.hidden = visible.length > 0;
+  const empty = $('#empty'); empty.hidden = visible.length > 0 || !$('#agent-group-folders').hidden;
   $('h2', empty).textContent = state.agents.length ? 'No agents match this view.' : 'A little quiet in the swarm.';
   $('#empty-create').hidden = state.agents.length > 0;
   const errors = Object.entries(state.errors || {}); $('#registry-errors').hidden = !errors.length;
   $('#error-list').replaceChildren(...errors.map(([file, message]) => node('pre', '', `${file}: ${message}`)));
   for (const terminal of terminals.values()) syncTerminal(terminal);
+  if (terminals.has(activeTab) && (assignments[activeTab]||null)!==selectedAgentGroup) activate(selectedAgentGroup?agentGroupTabId(selectedAgentGroup):'dashboard',uiViewStateRestored);
+  syncAgentGroupTabs();
   if ($('#edit-dialog').open) updateEditAvailability();
   if ($('#wake-dialog').open) updateWakeAvailability();
   agentFilesDialog.sync(agentById(agentFilesDialog.agentId));
   agentMessagesController.sync(agentById(agentMessagesController.agentId));
 }
 function activate(id, persist = true) {
-  activeTab = id && terminals.has(id) ? id : 'dashboard';
-  $('#dashboard').hidden = activeTab !== 'dashboard'; $('#terminals').hidden = activeTab === 'dashboard';
+  const previousGroup=selectedAgentGroup;
+  if (id && terminals.has(id)) {selectedAgentGroup=agentGroupFor(id);if(selectedAgentGroup)openedAgentGroups.add(selectedAgentGroup);}
+  else if(isAgentGroupTab(id)) {selectedAgentGroup=id.slice('agent-group:'.length);openedAgentGroups.add(selectedAgentGroup);}
+  else {selectedAgentGroup=null;}
+  activeTab = id && (terminals.has(id) || isAgentGroupTab(id)) ? id : 'dashboard';
+  const dashboardVisible=activeTab==='dashboard'||isAgentGroupTab(activeTab);
+  $('#dashboard').hidden = !dashboardVisible; $('#terminals').hidden = dashboardVisible;
   $('#dashboard-tab').classList.toggle('active', activeTab === 'dashboard');
   $('#dashboard-tab').setAttribute('aria-current', activeTab === 'dashboard' ? 'page' : 'false');
   for (const [key, t] of terminals) {
@@ -659,6 +748,8 @@ function activate(id, persist = true) {
     t.mobileKeys?.update();
     if (key === activeTab) { initTerminal(t); requestAnimationFrame(() => { t.fit?.fit(); if (!t.copyText?.active) t.term?.focus(); }); }
   }
+  syncAgentGroupTabs();
+  if(previousGroup!==selectedAgentGroup) render();
   if (persist) rememberUIViewState();
 }
 function openTerminal(id, focus = true) {
@@ -682,7 +773,7 @@ function openTerminal(id, focus = true) {
     const t = {id, pane, title, info, connected, screen, overlay, group, tab, tabLabel, copyButton, filesButton, messagesButton, productSlot, tmuxControl, reconnectButton, term: null, fit: null, ws: null, timer: null, closed: false};
     terminals.set(id, t); syncTerminal(t);
   }
-  if (focus) activate(id); else rememberUIViewState();
+  if (focus) {activate(id);render();} else {syncAgentGroupTabs();rememberUIViewState();}
 }
 function initTerminal(t) {
   if (t.term) return;
@@ -786,7 +877,7 @@ function closeTerminal(id, persist = true) {
   const t = terminals.get(id); if (!t) return;
   t.closed = true; t.mobileKeys?.dispose(); t.copyText?.dispose(); t.touchScroll?.dispose(); disconnectTerminal(t); t.observer?.disconnect(); t.term?.dispose(); t.pane.remove(); t.group.remove(); terminals.delete(id);
   // Deliberately no stop API call: only the attachment is disposable.
-  if (activeTab === id) activate('dashboard', persist);
+  if (activeTab === id) {activate(selectedAgentGroup ? agentGroupTabId(selectedAgentGroup) : 'dashboard', persist);render();}
   else if (persist) rememberUIViewState();
 }
 function showDialog(id) { const dlg = $(id); $('.form-error', dlg).textContent = ''; dlg.showModal(); }
@@ -1260,13 +1351,13 @@ const createDialog = () => {
 $('#create-button').addEventListener('click', createDialog); $('#empty-create').addEventListener('click', createDialog);
 $('#adopt-button').addEventListener('click', () => { dashboardControls.adoption.close(); $('#create-dialog').close(); $('#adopt-form').reset(); $('#session-search').value = ''; showDialog('#adopt-dialog'); loadSessions(); });
 $('#refresh-sessions').addEventListener('click', loadSessions); $('#session-search').addEventListener('input', renderSessions);
-$('#dashboard-tab').addEventListener('click', () => activate('dashboard')); $('#search').addEventListener('input', render);
-document.addEventListener('keydown', event => { if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && activeTab === 'dashboard' && !document.querySelector('dialog[open]')) { event.preventDefault(); dashboardControls.status.dropdown.open(); $('#search').focus(); } });
+$('#dashboard-tab').addEventListener('click', () => {agentGroupsController?.clearSelection();activate('dashboard');}); $('#search').addEventListener('input', render);
+document.addEventListener('keydown', event => { if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && (activeTab === 'dashboard' || isAgentGroupTab(activeTab)) && !document.querySelector('dialog[open]')) { event.preventDefault(); dashboardControls.status.dropdown.open(); $('#search').focus(); } });
 function clearUnauthorizedWorkspace(nodeId) {
   notificationsInbox?.clear();
   pendingNotificationReveal = null;
   if (nodeId !== 'local' && nodeId !== activeSwarm) return;
-  rememberUIViewState();
+  if(uiViewStateRestored) rememberUIViewState();
   for (const id of [...terminals.keys()]) closeTerminal(id, false);
   for (const dialog of document.querySelectorAll('dialog[open]')) if (dialog.id !== 'auth-dialog') dialog.close();
   if (stateSocket) { stateSocket.onclose = null; stateSocket.close(); stateSocket = null; }
@@ -1281,6 +1372,17 @@ notificationsInbox = new SwarmNotifications.NotificationsInbox({
 });
 updateNotificationSources(false);
 notificationsInbox.start();
+agentGroupsController = new SwarmAgentGroups.AgentGroupsController({
+  api, currentSwarm:()=>activeSwarm,currentGeneration:()=>stateGeneration,toast:message=>toast(message,true),
+  onOpenGroup:id=>openAgentGroup(id),
+  onChanged:async(projection,options)=>{
+    if(options?.refresh){await refresh();return;}
+    if(projection && projection.revision >= (state.agent_groups?.revision||0)){state.agent_groups=projection;state.agent_groups_error=null;agentGroupsController.clearSelection();render();rememberUIViewState();}
+  },
+});
+$('#agent-group-back').addEventListener('click',()=>openAgentGroup(null));
+$('#agent-group-rename').addEventListener('click',()=>agentGroupsController.renameGroup(selectedAgentGroup));
+$('#agent-group-delete').addEventListener('click',()=>agentGroupsController.deleteGroup(selectedAgentGroup));
 const agentBroadcast = new SwarmAgentBroadcast.BroadcastController({
   api: localApi,
   currentSwarm: () => activeSwarm,

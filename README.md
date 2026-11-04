@@ -613,6 +613,63 @@ keyboards without the software keyboard do not show the accessory bar.
 This uses the existing terminal WebSocket/PTY transport, including remote terminals.
 Refresh the page after updating; no backend restart is needed.
 
+### Agent grouping and folder dashboards
+
+Groups are **shared per Swarm**, saved in its private `$SWARM_HOME/groups.json`.
+The selected group, opened folder tabs and terminal-tab layout remain browser-local
+and isolated per Swarm. They are separate from the existing +/− child-branch
+collapse controls.
+
+1. Select agent cards/mini-cards with their small selection checkbox; Ctrl/⌘-click
+   adds or removes another family. Clicking card background selects a single family.
+   Touch users can use the same checkboxes and the selection toolbar.
+2. A **family** is the whole connected parent/child component: selecting a parent,
+   child or sibling includes all of them, including agents hidden by branch collapse
+   or filters. This keeps parents and children together. Dangling/missing parent
+   records do not fabricate new family relationships; cycles are handled safely.
+3. Right-click a selected card, or use **Grouping ▾** in the selection toolbar.
+   Keyboard users can focus a card and press Shift+F10, then use arrow keys/Enter.
+   Choose **Default group**, **New group…**, or an existing group. Default group is
+   the ungrouped root dashboard, not an extra folder. New groups require unique
+   names (1–80 characters, no controls or reserved default-group names).
+4. On the root Dashboard, each named group is one **blue 128×128 folder** with its
+   total contained-agent count. Grouped agents disappear from the root hierarchy.
+   Text/status filters can narrow which folders match; counts still describe their
+   whole family membership. Empty named groups remain available.
+5. Click a folder to open its **sub-dashboard tab beside Dashboard**. Only that
+   group's hierarchy and terminal tabs are shown; its terminal tabs follow the
+   selected sub-dashboard. Other opened group-dashboard tabs remain navigable.
+   Click Dashboard to return to ungrouped agents/tabs and the folder overview.
+
+**Changing group view never closes a terminal or stops, wakes, or sends input to
+an agent.** Existing terminal objects/connections remain retained while their tabs
+are hidden. Opening an agent terminal or a notification automatically selects that
+agent's group; the navigation is persisted consistently. Closing a group dashboard
+returns to the root view if needed, without disposing its terminals. Closing an
+individual terminal still disposes only its attachment, not the agent process.
+
+Inside a group, **Rename group** updates the shared name. **Delete group** requires
+confirmation and returns its families to Default group; it never deletes agents,
+worktrees, sessions, or terminal attachments. Newly registered children inherit
+their existing family's group. When previously separate families merge, the group
+of the highest assigned ancestor wins; equal-depth/cycle conflicts use stable UUID
+order. A missing/deleted agent is pruned only from a successfully read registry.
+
+Edits use authenticated local/federated APIs (`GET/POST /api/groups`), optimistic
+revisions and persisted request-ID receipts. Conflicting edits refresh the view
+instead of silently overwriting another browser's changes. Requests are never
+blindly retried: on a timeout or unknown outcome, retain the displayed request ID
+and inspect groups before repeating the action. Exact same-ID/payload retries can
+recover a committed operation; IDs must not be reused for new edits. Limits are
+100 groups, 256 retained operation receipts and a bounded private state file.
+Unreadable group state is shown as an error and mutation controls are disabled;
+its source file is not overwritten. Bad/partial agent records suppress membership
+reconciliation rather than discarding saved assignments.
+
+Install the updated backend and restart that controller explicitly when convenient,
+then refresh the dashboard. The feature makes no production changes on install,
+and does not automatically restart a running controller or migrate agents.
+
 ### Mobile terminal copying
 
 On touch-first/mobile browsers, **Copy text** sits immediately to the left of the

@@ -512,6 +512,7 @@ def test_generated_service_arguments_are_accepted_by_real_swarm_parser(config, t
 @pytest.mark.parametrize(
     "relative",
     [
+        "groups.json",
         "relay-settings.json",
         "state.json",
         "controller.lock",

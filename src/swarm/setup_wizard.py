@@ -144,6 +144,7 @@ SERVICE_PATHS = {
     "state.json",
     "controller.lock",
     "relay-settings.json",
+    "groups.json",
     "api-auth",
     "agents",
     "sessions",

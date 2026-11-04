@@ -11,6 +11,7 @@ from pathlib import Path
 from .adapters import resume_prompt, session_header
 from .discovery import sibling_worktree_path
 from .files import AgentFiles
+from .grouping import Groups
 from .messaging import Messages
 from .meta_compact import busy, require_not_busy
 from .models import Agent, CreateAgent, Status
@@ -51,6 +52,7 @@ class Controller:
         self.processes = processes
         self.lock = threading.RLock()
         self.files = AgentFiles(store)
+        self.groups = Groups(store)
         self.notifications = Notifications(store)
         self.wakes = ScheduledWakes(self)
         self.messages = Messages(self)
@@ -201,7 +203,8 @@ class Controller:
         """Restore unscheduled sessions once; explicitly scheduled wakes use a durable outbox."""
         with self.lock:
             self.restarts.recover()
-            for agent in self.store.scan():
+            agents, record_errors = self.store.scan_with_errors()
+            for agent in agents:
                 if restarting(agent):
                     self.restarts.guard(agent)
                     continue
@@ -212,7 +215,7 @@ class Controller:
                         log.warning("Pending stop failed: %s", exc)
                     continue
                 if (
-                    f"{agent.id}.md" in self.store.errors
+                    f"{agent.id}.md" in record_errors
                     or not agent.managed
                     or not agent.auto_resume
                     or busy(agent)
@@ -369,12 +372,12 @@ class Controller:
     def tick(self) -> bool:
         with self.lock:
             self.restarts.recover()
-            agents = self.store.scan()
+            agents, record_errors = self.store.scan_with_errors()
             for agent in agents:
                 if restarting(agent):
                     self.restarts.guard(agent)
                     continue
-                if f"{agent.id}.md" in self.store.errors or busy(agent):
+                if f"{agent.id}.md" in record_errors or busy(agent):
                     continue
                 if getattr(agent, "stop_pending", False):
                     try:
@@ -409,10 +412,18 @@ class Controller:
                     log.exception("Mailbox remains queued; could not pump agent %s", agent.id)
             return self.refresh()
 
+    def apply_groups(self, body: object) -> dict:
+        """Apply a grouping mutation against one controller-serialized registry view."""
+        with self.lock:
+            agents, record_errors = self.store.scan_with_errors()
+            result = self.groups.apply(body, agents, records_valid=not record_errors)
+            self.refresh()
+            return result
+
     def refresh(self) -> bool:
         with self.lock:
-            agents = self.store.scan()
-            entries, errors = [], dict(self.store.errors)
+            agents, record_errors = self.store.scan_with_errors()
+            entries, errors = [], dict(record_errors)
             for agent in agents:
                 try:
                     files = self.files.summary(agent.id)
@@ -448,10 +459,17 @@ class Controller:
             except (OSError, ValueError):
                 notifications = {"count": 0, "revision": None}
                 errors["notifications.json"] = "Notifications could not be read"
+            agent_groups, agent_groups_error = self.groups.refresh(
+                agents, records_valid=not record_errors
+            )
+            if agent_groups_error:
+                errors["groups.json"] = agent_groups_error
             self.state = {
                 "restart_jobs": restart_jobs,
                 "notifications": notifications,
                 "agents": entries,
+                "agent_groups": agent_groups,
+                "agent_groups_error": agent_groups_error,
                 "errors": errors,
                 "home": str(self.store.home),
                 "health": self.processes.health(),

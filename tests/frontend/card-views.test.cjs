@@ -93,7 +93,7 @@ function renderer() {
   const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
   const storage = memoryStorage(), calls = [];
   const context = vm.createContext({
-    document: {createElement: tag => new Element(tag), createTextNode: value => new Text(value)}, URL,
+    document: {createElement: tag => new Element(tag), createTextNode: value => new Text(value)}, URL, agentGroupsController:null,
     state: {home, agents: []}, cardViews: new CardViews(() => storage), SwarmCardViews: {applyCardView},
     agentById: id => context.state.agents.find(a => a.id === id),
     activeSwarm: 'local', federationNodes: new Map(), agentFilesDialog: {open: (a, base, workspace) => calls.push(['files', a.id, base, workspace])},
@@ -215,7 +215,7 @@ test('ready setup state permits Wake even when Pi later failed to stay alive', (
 test('dashboard omits the Mission Control label and keeps card assets versioned', () => {
   const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
   assert.doesNotMatch(html, /MISSION CONTROL/);
-  assert.match(html, /<h1 class="sr-only">Agent dashboard<\/h1>/);
+  assert.match(html, /<h1 id="dashboard-title" class="sr-only">Agent dashboard<\/h1>/);
   const version = html.match(/app\.js\?v=([^"']+)/)[1];
   assert.ok(html.includes(`/static/app.css?v=${version}`));
   const css = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.css'), 'utf8');
@@ -521,7 +521,7 @@ test('org chart integration loads before app and keeps nested-toggle focus', () 
   assert.ok(html.indexOf('src="/static/org-chart.js?') < html.indexOf('src="/static/app.js?'));
   assert.match(html, /id="agents" class="agent-grid org-chart"/);
   assert.doesNotMatch(html, /id="collapse-all"/);
-  assert.match(source, /SwarmOrgChart.buildForest\(state.agents, new Set\(visible.map/);
+  assert.match(source, /SwarmOrgChart.buildForest\(scopedAgents, new Set\(visible.map/);
   assert.match(source, /chart.querySelectorAll\('.agent-card'\)/);
   assert.doesNotMatch(source, /cardViews.setAllCompact\(state.home, state.agents, true\)/);
 });
@@ -586,7 +586,7 @@ test('terminal toolbar keeps reconnect and exposes a scoped tmux command menu', 
     document: {createElement: tag => new Element(tag)}, URL, apiPath: value => `/remote${value}`,
     $: (selector, root) => root ? find(root, selector.slice(1)) : selector === '#terminals' ? panels : tabs,
     agentById: id => id === a.id ? a : null, terminals: new Map(), labels: {running: 'Running'},
-    api: async (...args) => tmuxCalls.push(args), toast() {},
+    api: async (...args) => tmuxCalls.push(args), toast() {}, render(){},syncAgentGroupTabs(){},
     compactionBlocked: () => false, restartInProgress: () => false, remember() {}, activate: id => calls.push(['activate', id]),
     closeTerminal: id => calls.push(['close', id]), wakeAgent: id => calls.push(['wake', id]),
     openAgentMessages: id => calls.push(['messages', id]),
@@ -757,7 +757,7 @@ test('tab activation marks only the selected title current, including pinned Das
   const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
   const elements = new Map(['#dashboard', '#terminals', '#dashboard-tab'].map(key => [key, new Element('div')]));
   const terminals = new Map(['a', 'b'].map(id => [id, {pane: new Element('div'), tab: new Element('button'), group: new Element('span')}]));
-  const context = vm.createContext({activeTab: 'dashboard', terminals, $: key => elements.get(key), initTerminal() {}, requestAnimationFrame: callback => callback(), rememberUIViewState() {}});
+  const context = vm.createContext({selectedAgentGroup:null,openedAgentGroups:new Set(),agentGroupFor:()=>null,isAgentGroupTab:()=>false,syncAgentGroupTabs(){},render(){},activeTab: 'dashboard', terminals, $: key => elements.get(key), initTerminal() {}, requestAnimationFrame: callback => callback(), rememberUIViewState() {}});
   vm.runInContext(source.slice(source.indexOf('function activate('), source.indexOf('function openTerminal(')), context);
   context.activate('b');
   assert.equal(elements.get('#dashboard-tab').getAttribute('aria-current'), 'false');

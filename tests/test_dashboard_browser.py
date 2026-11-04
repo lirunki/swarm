@@ -129,24 +129,34 @@ def test_dense_org_chart_layout_and_interactions(static_url, tmp_path, width):
             assert not page.locator(".agent-card img").count()
             playwright.expect(page.locator(".product-link:visible")).to_have_count(2)
             assert (
-                page.locator('[data-agent-id="a0"] .product-link').get_attribute("href")
+                page.locator('.agent-card[data-agent-id="a0"] .product-link').get_attribute(
+                    "href"
+                )
                 == "https://example.com/pr/42"
             )
             assert (
-                page.locator('[data-agent-id="a7"] .product-link').get_attribute("download")
+                page.locator('.agent-card[data-agent-id="a7"] .product-link').get_attribute(
+                    "download"
+                )
                 == "report.zip"
             )
             for id in ("a0", "a7"):
-                tile = page.locator(f'[data-agent-id="{id}"]').bounding_box()
-                link = page.locator(f'[data-agent-id="{id}"] .product-link').bounding_box()
+                tile = page.locator(f'.agent-card[data-agent-id="{id}"]').bounding_box()
+                link = page.locator(
+                    f'.agent-card[data-agent-id="{id}"] .product-link'
+                ).bounding_box()
                 assert link["y"] + link["height"] <= tile["y"] + tile["height"]
                 assert link["x"] + link["width"] <= tile["x"] + tile["width"]
             assert (
-                page.locator('[data-agent-id="a0"] h3').evaluate("e => getComputedStyle(e).color")
+                page.locator('.agent-card[data-agent-id="a0"] h3').evaluate(
+                    "e => getComputedStyle(e).color"
+                )
                 == "rgb(255, 123, 123)"
             )
             assert (
-                page.locator('[data-agent-id="a1"] h3').evaluate("e => getComputedStyle(e).color")
+                page.locator('.agent-card[data-agent-id="a1"] h3').evaluate(
+                    "e => getComputedStyle(e).color"
+                )
                 != "rgb(255, 123, 123)"
             )
             boxes = page.locator(".agent-card").evaluate_all(
@@ -164,13 +174,15 @@ def test_dense_org_chart_layout_and_interactions(static_url, tmp_path, width):
                     )
             assert page.evaluate("document.body.scrollWidth <= window.innerWidth")
             assert (
-                page.locator('[data-agent-id="a5"]').evaluate(
+                page.locator('.agent-card[data-agent-id="a5"]').evaluate(
                     "e => e.parentElement.parentElement.parentElement.querySelector(':scope > .agent-card').dataset.agentId"
                 )
                 == "a2"
             )
-            expand = page.locator('[data-agent-id="a0"] .card-toggle').bounding_box()
-            shortcut = page.locator('[data-agent-id="a0"] .card-terminal')
+            expand = page.locator(
+                '.agent-card[data-agent-id="a0"] .card-toggle'
+            ).bounding_box()
+            shortcut = page.locator('.agent-card[data-agent-id="a0"] .card-terminal')
             shortcut_box = shortcut.bounding_box()
             assert shortcut.inner_text() == "↗"
             assert shortcut_box["x"] == expand["x"]
@@ -185,29 +197,40 @@ def test_dense_org_chart_layout_and_interactions(static_url, tmp_path, width):
             ]
             page.locator(".tab-group .tab-close").click()
             playwright.expect(page.locator("#dashboard")).to_be_visible()
-            page.locator('[data-agent-id="a0"] .card-toggle').click()
-            playwright.expect(page.locator('[data-agent-id="a0"] .card-terminal')).to_be_hidden()
-            playwright.expect(page.locator('[data-agent-id="a0"] .goal')).to_be_visible()
-            assert page.locator('[data-agent-id="a0"]').bounding_box()["width"] > 128
+            page.locator('.agent-card[data-agent-id="a0"] .card-toggle').click()
+            playwright.expect(
+                page.locator('.agent-card[data-agent-id="a0"] .card-terminal')
+            ).to_be_hidden()
+            playwright.expect(
+                page.locator('.agent-card[data-agent-id="a0"] .goal')
+            ).to_be_visible()
+            assert (
+                page.locator('.agent-card[data-agent-id="a0"]').bounding_box()["width"]
+                > 128
+            )
             assert not page.locator("#collapse-all").count()
-            page.locator('[data-agent-id="a0"] .card-toggle').click()
+            page.locator('.agent-card[data-agent-id="a0"] .card-toggle').click()
             playwright.expect(page.locator(".agent-card.is-compact")).to_have_count(18)
             page.locator("#status-filter-button").click()
             page.locator("#search").fill("Needle")
             playwright.expect(page.locator(".agent-card")).to_have_count(3)
             playwright.expect(page.locator(".org-node.is-context")).to_have_count(2)
             playwright.expect(page.locator("#hierarchy-summary")).to_contain_text("1 match")
-            toggle = page.locator('[data-agent-id="a5"] .card-toggle')
+            toggle = page.locator('.agent-card[data-agent-id="a5"] .card-toggle')
             toggle.focus()
             state["agents"][5]["activity"] = "Updated hover task"
             page.evaluate("data => applyState(data)", state)
-            playwright.expect(page.locator('[data-agent-id="a5"] .card-toggle')).to_be_focused()
-            assert "Updated hover task" in page.locator('[data-agent-id="a5"]').get_attribute(
-                "title"
-            )
-            page.locator('[data-agent-id="a5"] .card-terminal').focus()
+            playwright.expect(
+                page.locator('.agent-card[data-agent-id="a5"] .card-toggle')
+            ).to_be_focused()
+            assert "Updated hover task" in page.locator(
+                '.agent-card[data-agent-id="a5"]'
+            ).get_attribute("title")
+            page.locator('.agent-card[data-agent-id="a5"] .card-terminal').focus()
             page.evaluate("data => applyState(data)", state)
-            playwright.expect(page.locator('[data-agent-id="a5"] .card-terminal')).to_be_focused()
+            playwright.expect(
+                page.locator('.agent-card[data-agent-id="a5"] .card-terminal')
+            ).to_be_focused()
             page.locator("#status-filter-button").click()
             page.locator("#search").fill("")
             page.locator("#status-filter-button").click()
@@ -394,13 +417,16 @@ def test_compact_status_adoption_and_help_controls(static_url, width):
             playwright.expect(page.locator(".agent-card")).to_have_count(8)
             assert not page.locator("#summary").count()
             if width >= 1000:
-                title = page.locator(".page-head-title .eyebrow").bounding_box()
+                title = page.locator("#dashboard-title")
+                playwright.expect(title).to_have_text("Agent dashboard")
+                playwright.expect(title).to_have_class("sr-only")
+                title_box = title.bounding_box()
+                assert title_box["width"] <= 1 and title_box["height"] <= 1
                 control = page.locator("#status-filter").bounding_box()
                 create = page.locator("#create-button").bounding_box()
-                assert title["x"] == control["x"]
-                assert control["y"] >= title["y"] + title["height"]
                 assert control["x"] + control["width"] <= create["x"]
-                assert abs(create["y"] + create["height"] - control["y"] - control["height"]) < 1
+                assert abs(create["y"] - control["y"]) < 1
+                assert abs(create["height"] - control["height"]) < 1
                 playwright.expect(page.locator("#adoption-menu-button")).to_be_hidden()
                 playwright.expect(page.locator("#search")).to_be_hidden()
             assert not page.locator("#collapse-all").count()
@@ -669,14 +695,22 @@ def test_dashboard_reference_layout(static_url, tmp_path):
             page.goto(static_url)
             playwright.expect(page.locator(".agent-card")).to_have_count(13)
             dashboard = page.locator("#dashboard").bounding_box()
-            boxes = [page.locator(f'[data-agent-id="a{i}"]').bounding_box() for i in range(13)]
+            boxes = [
+                page.locator(f'.agent-card[data-agent-id="a{i}"]').bounding_box()
+                for i in range(13)
+            ]
             assert all(abs(box["y"] - boxes[0]["y"]) < 1 for box in boxes[:10])
-            assert 110 <= boxes[0]["y"] - dashboard["y"] <= 125
+            assert 125 <= boxes[0]["y"] - dashboard["y"] <= 127
             assert all(box["width"] == 128 and box["height"] == 128 for box in boxes)
             assert boxes[10]["y"] > boxes[0]["y"] + 128
             assert boxes[12]["y"] > boxes[10]["y"] + 128
             assert abs(boxes[10]["x"] - boxes[12]["x"]) < 1
-            assert page.get_by_text("Your agents, in sync.", exact=True).count() == 0
+            title = page.locator("#dashboard-title")
+            playwright.expect(title).to_have_text("Agent dashboard")
+            playwright.expect(title).to_have_class("sr-only")
+            title_box = title.bounding_box()
+            assert title_box["width"] <= 1 and title_box["height"] <= 1
+            assert page.locator(".page-head").bounding_box()["height"] == 41
             assert page.locator("#hierarchy-summary").evaluate(
                 "e => e.classList.contains('sr-only')"
             )
@@ -1113,8 +1147,18 @@ def test_workspace_tabs_pin_dashboard_show_status_and_frame_active_title(static_
             playwright.expect(groups).to_have_count(18)
             playwright.expect(dashboard).to_have_css("color", "rgb(255, 161, 106)")
             playwright.expect(
-                page.locator(".terminal-files + .terminal-tmux-control")
+                page.locator(
+                    ".terminal-files + .terminal-messages + .terminal-tmux-control"
+                )
             ).to_have_count(18)
+            mail_buttons = page.locator(".terminal-messages")
+            assert set(mail_buttons.all_text_contents()) == {"✉ 0"}
+            assert all(
+                "Messages" in label
+                for label in mail_buttons.evaluate_all(
+                    "buttons => buttons.map(button => button.getAttribute('aria-label'))"
+                )
+            )
             playwright.expect(page.locator(".terminal-tmux-button").first).to_be_disabled()
             playwright.expect(
                 page.locator(".terminal-tmux-item").filter(has_text="Split vertical · side-by-side")

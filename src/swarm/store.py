@@ -7,9 +7,11 @@ import json
 import logging
 import os
 import tempfile
-from collections.abc import Callable, Iterator
+import threading
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
@@ -77,6 +79,7 @@ class Store:
             folder.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.cache: dict[str, Agent] = {}
         self.errors: dict[str, str] = {}
+        self._scan_lock = threading.RLock()
 
     def path(self, agent_id: str | UUID) -> Path:
         return self.agents_dir / f"{UUID(str(agent_id))}.md"
@@ -217,8 +220,7 @@ class Store:
         self.errors.pop(f"{agent.id}.md", None)
         return agent
 
-    def scan(self) -> list[Agent]:
-        """Keep last-good records during a bad/partial external edit; report the error."""
+    def _scan_unlocked(self) -> list[Agent]:
         found: set[str] = set()
         errors: dict[str, str] = {}
         for path in sorted(self.agents_dir.glob("*.md")):
@@ -235,6 +237,18 @@ class Store:
         self.cache = {key: value for key, value in self.cache.items() if key in found}
         self.errors = errors
         return sorted(self.cache.values(), key=lambda agent: agent.created_at)
+
+    def scan(self) -> list[Agent]:
+        """Keep last-good records during a bad/partial external edit; report the error."""
+        with self._scan_lock:
+            return self._scan_unlocked()
+
+    def scan_with_errors(self) -> tuple[tuple[Agent, ...], Mapping[str, str]]:
+        """Return agents and their errors from one immutable, serialized scan."""
+        with self._scan_lock:
+            agents = tuple(self._scan_unlocked())
+            errors = MappingProxyType(dict(self.errors))
+            return agents, errors
 
     def snapshot(self, agents: list[Agent]) -> None:
         """Source records survive reboot independently; snapshot is a last-good audit view."""

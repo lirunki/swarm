@@ -31,6 +31,7 @@ from .controller import Controller
 from .discovery import browse_folders, discover_models
 from .federation import MAX_RPC_REQUEST, FederationConfig
 from .files import FileRequest, FileUnavailable
+from .grouping import GroupingConflict, GroupingCorrupt, GroupingError
 from .importers.grok import GrokImportRequest, GrokSessions
 from .messaging import MessageRequest
 from .meta_compact import MetaCompactor, MetaCompactRequest, require_not_busy
@@ -308,6 +309,18 @@ def create_app(
     async def ownership_error(request: Request, exc: OwnershipError):
         return JSONResponse({"detail": str(exc)}, status_code=403)
 
+    @app.exception_handler(GroupingError)
+    async def grouping_bad_request(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    @app.exception_handler(GroupingConflict)
+    async def grouping_conflict(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
+    @app.exception_handler(GroupingCorrupt)
+    async def grouping_corrupt(request, exc):
+        return JSONResponse({"detail": "Saved groups could not be read"}, status_code=409)
+
     @app.exception_handler(ValueError)
     async def bad_request(request, exc):
         return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -356,6 +369,25 @@ def create_app(
     def state():
         controller.refresh()
         return controller.state
+
+    @app.get("/api/groups")
+    async def list_groups():
+        return await asyncio.to_thread(controller.groups.get)
+
+    @app.post("/api/groups")
+    async def update_groups(request: Request):
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > 128 * 1024:
+                raise GroupingError("Grouping request is too large")
+            raw.extend(chunk)
+        try:
+            body = json.loads(raw)
+        except (UnicodeError, json.JSONDecodeError):
+            raise GroupingError("Request body must be valid JSON") from None
+        result = await asyncio.to_thread(controller.apply_groups, body)
+        await broadcast()
+        return result
 
     @app.get("/api/notifications")
     async def list_notifications():
