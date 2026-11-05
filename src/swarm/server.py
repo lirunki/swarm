@@ -389,6 +389,25 @@ def create_app(
         await broadcast()
         return result
 
+    @app.get("/api/grouping-settings")
+    async def grouping_settings():
+        return await asyncio.to_thread(controller.groups.settings)
+
+    @app.post("/api/grouping-settings")
+    async def update_grouping_settings(request: Request):
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > 128 * 1024:
+                raise GroupingError("Grouping request is too large")
+            raw.extend(chunk)
+        try:
+            body = json.loads(raw)
+        except (UnicodeError, json.JSONDecodeError):
+            raise GroupingError("Request body must be valid JSON") from None
+        result = await asyncio.to_thread(controller.apply_group_settings, body)
+        await broadcast()
+        return result
+
     @app.get("/api/notifications")
     async def list_notifications():
         return await asyncio.to_thread(controller.notifications.list)

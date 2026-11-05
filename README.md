@@ -615,10 +615,38 @@ Refresh the page after updating; no backend restart is needed.
 
 ### Agent grouping and folder dashboards
 
-Groups are **shared per Swarm**, saved in its private `$SWARM_HOME/groups.json`.
-The selected group, opened folder tabs and terminal-tab layout remain browser-local
-and isolated per Swarm. They are separate from the existing +/− child-branch
-collapse controls.
+Open **bell → Notifications (All connected Swarms) → Agent grouping storage** to
+choose **Manage this Swarm's grouping on its server** for the active Swarm. The
+owner is shown explicitly: when viewing **Swarm A through Swarm B**, settings and
+server-managed edits are authenticated against and saved on **A**, never B.
+
+- **On:** named folders, whole-family memberships, and +/− child-branch grouping
+  are shared across browsers and saved in A's private `$SWARM_HOME/groups.json`.
+- **Off:** those grouping choices are browser-local, isolated per Swarm and registry.
+  The server's canonical groups remain saved but are not changed by local edits.
+  This is the default for new registries. Existing v1 server-shared group files
+  retain server mode so upgrading does not hide their existing groups.
+- Active/opened group-dashboard and terminal tabs remain browser-local in either
+  mode. Changing storage mode never stops, wakes, or sends input to agents.
+
+On the **first explicit server-mode enable**, a dialog offers **Prime from this
+browser**, **Keep saved server grouping**, or **Cancel**. Priming copies the current
+UI folders, family memberships and branch grouping in one revision-checked atomic
+operation; the dialog explicitly warns that this replaces the owner's saved grouping.
+Keeping server grouping does not import browser choices. Cancel writes nothing.
+The initialized marker is persisted on the owner: disabling/re-enabling later never
+silently re-primes or overwrites it from another browser. For upgraded v1 stores,
+the first explicit Apply offers the same choice, including the browser's legacy
+branch-collapse state.
+
+Browser-local edits use cross-tab Web Locks and bounded localStorage, with revision
+conflicts and storage-event synchronization. A seed is re-read just before both
+showing and confirming the dialog: if another tab changes it, priming is canceled
+and a fresh review is required. HTTPS/localhost and a recent browser are required
+for browser-local writes. If browser storage is blocked/corrupt, local edits and
+priming are disabled, but you can still enable server mode using **Keep saved server
+grouping**. Corrupt local records are not overwritten. Old backends without mode
+support keep their existing behavior and show the mode switch as unavailable.
 
 1. Select agent cards/mini-cards with their small selection checkbox; Ctrl/⌘-click
    adds or removes another family. Clicking card background selects a single family.
@@ -648,15 +676,18 @@ agent's group; the navigation is persisted consistently. Closing a group dashboa
 returns to the root view if needed, without disposing its terminals. Closing an
 individual terminal still disposes only its attachment, not the agent process.
 
-Inside a group, **Rename group** updates the shared name. **Delete group** requires
+Inside a group, **Rename group** updates the name in the selected storage mode. **Delete group** requires
 confirmation and returns its families to Default group; it never deletes agents,
 worktrees, sessions, or terminal attachments. Newly registered children inherit
 their existing family's group. When previously separate families merge, the group
 of the highest assigned ancestor wins; equal-depth/cycle conflicts use stable UUID
 order. A missing/deleted agent is pruned only from a successfully read registry.
 
-Edits use authenticated local/federated APIs (`GET/POST /api/groups`), optimistic
-revisions and persisted request-ID receipts. Conflicting edits refresh the view
+Server edits use authenticated local/federated APIs (`GET/POST /api/groups` and
+`GET/POST /api/grouping-settings`), optimistic shared revisions and persisted
+request-ID receipts. Disabled server mode rejects new canonical group writes,
+including stale clients; already-committed exact request receipts remain recoverable.
+Branch and folder edits share one revision to avoid cross-type lost updates. Conflicting edits refresh the view
 instead of silently overwriting another browser's changes. Requests are never
 blindly retried: on a timeout or unknown outcome, retain the displayed request ID
 and inspect groups before repeating the action. Exact same-ID/payload retries can

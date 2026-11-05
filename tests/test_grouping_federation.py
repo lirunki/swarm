@@ -132,11 +132,37 @@ def test_remote_groups_are_authenticated_family_aware_and_destination_owned(tmp_
             {"revision": 0, "groups": [], "assignments": {}},
         )
 
+        # Grouping policy is owned by the destination Swarm just like its groups.
+        settings_prefix = "/api/federation/beta/proxy/api/grouping-settings"
+        assert http(alpha_base, settings_prefix, headers=local_auth)[0] == 401
+        assert http(alpha_base, settings_prefix, headers=both_auth) == (
+            200,
+            {
+                "revision": 0,
+                "server_managed": False,
+                "initialized": False,
+                "grouped_branches": [],
+            },
+        )
+        settings_body = {
+            "action": "configure",
+            "revision": 0,
+            "request_id": str(uuid4()),
+            "server_managed": True,
+        }
+        settings_status, configured = http(
+            alpha_base, settings_prefix, "POST", settings_body, both_auth
+        )
+        assert settings_status == 200
+        assert configured["revision"] == 1
+        assert configured["server_managed"] is True
+        assert configured["initialized"] is True
+
         unsafe_name = "<img src=x onerror=alert(1)>"
         request_id = str(uuid4())
         body = {
             "action": "create",
-            "revision": 0,
+            "revision": configured["revision"],
             "request_id": request_id,
             "name": unsafe_name,
             "agent_ids": [str(remote_child.id)],
@@ -146,7 +172,7 @@ def test_remote_groups_are_authenticated_family_aware_and_destination_owned(tmp_
         group_id = created["operation"]["group_id"]
         UUID(group_id)
         expected = {
-            "revision": 1,
+            "revision": configured["revision"] + 1,
             "groups": [{"id": group_id, "name": unsafe_name}],
             "assignments": {
                 str(remote_root.id): group_id,
@@ -169,11 +195,26 @@ def test_remote_groups_are_authenticated_family_aware_and_destination_owned(tmp_
         assert app_beta.state.controller.groups.get() == expected
         shared = json.loads(app_beta.state.controller.groups.path.read_text(encoding="utf-8"))
         assert {key: shared[key] for key in expected} == expected
-        assert shared["receipts"][0]["request_id"] == request_id
+        assert shared["receipts"][-1]["request_id"] == request_id
+        assert len(shared["receipts"]) == expected["revision"]
         assert app_alpha.state.controller.groups.get() == {
             "revision": 0,
             "groups": [],
             "assignments": {},
+        }
+
+        remote_settings = app_beta.state.controller.groups.settings()
+        assert remote_settings == {
+            "revision": expected["revision"],
+            "server_managed": True,
+            "initialized": True,
+            "grouped_branches": [],
+        }
+        assert app_alpha.state.controller.groups.settings() == {
+            "revision": 0,
+            "server_managed": False,
+            "initialized": False,
+            "grouped_branches": [],
         }
         assert app_alpha.state.controller.store.scan() == []
         assert all(

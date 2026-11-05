@@ -27,6 +27,13 @@ def request(action, revision, **fields):
     return {"action": action, "revision": revision, "request_id": str(uuid4()), **fields}
 
 
+def enable_server_grouping(groups, agents=()):
+    revision = groups.settings()["revision"]
+    return groups.apply_settings(
+        request("configure", revision, server_managed=True), list(agents)
+    )
+
+
 def test_create_assigns_entire_family_and_retry_is_idempotent(tmp_path):
     store = Store(tmp_path / "home")
     root = agent(tmp_path)
@@ -35,7 +42,13 @@ def test_create_assigns_entire_family_and_retry_is_idempotent(tmp_path):
     unrelated = agent(tmp_path)
     agents = [root, child, sibling, unrelated]
     groups = Groups(store)
-    body = request("create", 0, name="<b>literal</b>", agent_ids=[str(child.id)])
+    enabled = enable_server_grouping(groups, agents)
+    body = request(
+        "create",
+        enabled["revision"],
+        name="<b>literal</b>",
+        agent_ids=[str(child.id)],
+    )
 
     created = groups.apply(body, agents)
     duplicate = groups.apply(body, agents)
@@ -56,7 +69,8 @@ def test_revision_validation_names_ids_and_request_reuse_do_not_mutate(tmp_path)
     groups = Groups(Store(tmp_path / "home"))
     one = agent(tmp_path)
     agents = [one]
-    body = request("create", 0, name="valid", agent_ids=[])
+    enabled = enable_server_grouping(groups, agents)
+    body = request("create", enabled["revision"], name="valid", agent_ids=[])
     created = groups.apply(body, agents)
 
     with pytest.raises(GroupingConflict):
@@ -72,9 +86,19 @@ def test_revision_validation_names_ids_and_request_reuse_do_not_mutate(tmp_path)
         "UNGROUPED",
     ):
         with pytest.raises(GroupingError):
-            groups.apply(request("create", 1, name=name, agent_ids=[]), agents)
+            groups.apply(
+                request("create", created["revision"], name=name, agent_ids=[]), agents
+            )
     with pytest.raises(GroupingError):
-        groups.apply(request("assign", 1, group_id=None, agent_ids=[str(uuid4())]), agents)
+        groups.apply(
+            request(
+                "assign",
+                created["revision"],
+                group_id=None,
+                agent_ids=[str(uuid4())],
+            ),
+            agents,
+        )
     with pytest.raises(GroupingError):
         groups.apply(request("assign", True, group_id=None, agent_ids=[]), agents)
     assert groups.get() == {key: created[key] for key in ("revision", "groups", "assignments")}
@@ -82,41 +106,52 @@ def test_revision_validation_names_ids_and_request_reuse_do_not_mutate(tmp_path)
 
 def test_names_are_trimmed_and_unique_by_casefold_on_create_and_rename(tmp_path):
     groups = Groups(Store(tmp_path / "home"))
-    made = groups.apply(request("create", 0, name="  Team  ", agent_ids=[]), [])
+    enabled = enable_server_grouping(groups)
+    made = groups.apply(
+        request("create", enabled["revision"], name="  Team  ", agent_ids=[]), []
+    )
     assert made["groups"][0]["name"] == "Team"
 
     with pytest.raises(GroupingError, match="unique"):
-        groups.apply(request("create", 1, name="team", agent_ids=[]), [])
-    second = groups.apply(request("create", 1, name="Other", agent_ids=[]), [])
+        groups.apply(
+            request("create", made["revision"], name="team", agent_ids=[]), []
+        )
+    second = groups.apply(
+        request("create", made["revision"], name="Other", agent_ids=[]), []
+    )
     with pytest.raises(GroupingError, match="unique"):
         groups.apply(
             request(
                 "rename",
-                2,
+                second["revision"],
                 group_id=second["operation"]["group_id"],
                 name=" TEAM ",
             ),
             [],
         )
-    assert groups.get()["revision"] == 2
+    assert groups.get()["revision"] == second["revision"]
 
 
 def test_action_specific_fields_and_invalid_unicode_hash_do_not_mutate(tmp_path):
     groups = Groups(Store(tmp_path / "home"))
+    enabled = enable_server_grouping(groups)
+    revision = enabled["revision"]
     invalid = [
-        request("create", 0, name="x", group_id=None),
-        request("assign", 0, group_id=None, agent_ids=[], name="x"),
-        request("rename", 0, group_id=str(uuid4()), name="x", agent_ids=[]),
-        request("delete", 0, group_id=str(uuid4()), agent_ids=[]),
+        request("create", revision, name="x", group_id=None),
+        request("assign", revision, group_id=None, agent_ids=[], name="x"),
+        request("rename", revision, group_id=str(uuid4()), name="x", agent_ids=[]),
+        request("delete", revision, group_id=str(uuid4()), agent_ids=[]),
     ]
     for body in invalid:
         with pytest.raises(GroupingError, match="Invalid fields"):
             groups.apply(body, [])
     with pytest.raises(GroupingError, match="Unknown grouping action"):
-        groups.apply({"action": [], "revision": 0, "request_id": str(uuid4())}, [])
+        groups.apply(
+            {"action": [], "revision": revision, "request_id": str(uuid4())}, []
+        )
     with pytest.raises(GroupingError, match="valid JSON"):
-        groups.apply(request("create", 0, name="\ud800", agent_ids=[]), [])
-    assert groups.get() == {"revision": 0, "groups": [], "assignments": {}}
+        groups.apply(request("create", revision, name="\ud800", agent_ids=[]), [])
+    assert groups.get() == {"revision": revision, "groups": [], "assignments": {}}
 
 
 def test_saved_state_rejects_bool_version_bad_hash_duplicate_receipts_and_assignment_cap():
@@ -153,12 +188,16 @@ def test_reconcile_new_child_reparent_deleted_root_missing_parent_and_cycle(tmp_
     root = agent(tmp_path)
     child = agent(tmp_path, parent_id=root.id)
     other = agent(tmp_path)
+    agents = [root, child, other]
+    enabled = enable_server_grouping(groups, agents)
     made = groups.apply(
-        request("create", 0, name="A", agent_ids=[str(root.id)]), [root, child, other]
+        request("create", enabled["revision"], name="A", agent_ids=[str(root.id)]),
+        agents,
     )
     group_a = made["operation"]["group_id"]
     made = groups.apply(
-        request("create", 1, name="B", agent_ids=[str(other.id)]), [root, child, other]
+        request("create", made["revision"], name="B", agent_ids=[str(other.id)]),
+        agents,
     )
     group_b = made["operation"]["group_id"]
 
@@ -192,15 +231,27 @@ def test_create_rejects_family_over_assignment_cap_without_writing(tmp_path, mon
     root = agent(tmp_path)
     child = agent(tmp_path, parent_id=root.id)
     grandchild = agent(tmp_path, parent_id=child.id)
+    agents = [root, child, grandchild]
+    enabled = enable_server_grouping(groups, agents)
+    original = groups.path.read_bytes()
 
     with pytest.raises(GroupingError, match="At most 2 agent assignments are allowed"):
         groups.apply(
-            request("create", 0, name="too large", agent_ids=[str(root.id)]),
-            [root, child, grandchild],
+            request(
+                "create",
+                enabled["revision"],
+                name="too large",
+                agent_ids=[str(root.id)],
+            ),
+            agents,
         )
 
-    assert not groups.path.exists()
-    assert groups.get() == {"revision": 0, "groups": [], "assignments": {}}
+    assert groups.path.read_bytes() == original
+    assert groups.get() == {
+        "revision": enabled["revision"],
+        "groups": [],
+        "assignments": {},
+    }
 
 
 def test_refresh_over_assignment_cap_keeps_last_good_file(tmp_path, monkeypatch):
@@ -210,8 +261,10 @@ def test_refresh_over_assignment_cap_keeps_last_good_file(tmp_path, monkeypatch)
     child = agent(tmp_path, parent_id=root.id)
     sibling = agent(tmp_path, parent_id=root.id)
     agents = [root, child, sibling]
+    enabled = enable_server_grouping(groups, agents)
     created = groups.apply(
-        request("create", 0, name="safe", agent_ids=[str(root.id)]), agents
+        request("create", enabled["revision"], name="safe", agent_ids=[str(root.id)]),
+        agents,
     )
     expected = {key: created[key] for key in ("revision", "groups", "assignments")}
     original = groups.path.read_bytes()
@@ -228,8 +281,10 @@ def test_refresh_over_assignment_cap_keeps_last_good_file(tmp_path, monkeypatch)
 def test_refresh_over_serialization_cap_keeps_last_good_file(tmp_path, monkeypatch):
     groups = Groups(Store(tmp_path / "home"))
     root = agent(tmp_path)
+    enabled = enable_server_grouping(groups, [root])
     created = groups.apply(
-        request("create", 0, name="safe", agent_ids=[str(root.id)]), [root]
+        request("create", enabled["revision"], name="safe", agent_ids=[str(root.id)]),
+        [root],
     )
     expected = {key: created[key] for key in ("revision", "groups", "assignments")}
     original = groups.path.read_bytes()
@@ -248,7 +303,11 @@ def test_bad_group_file_and_bad_agent_read_never_overwrite_memberships(tmp_path)
     store = Store(tmp_path / "home")
     groups = Groups(store)
     one = agent(tmp_path)
-    made = groups.apply(request("create", 0, name="safe", agent_ids=[str(one.id)]), [one])
+    enabled = enable_server_grouping(groups, [one])
+    made = groups.apply(
+        request("create", enabled["revision"], name="safe", agent_ids=[str(one.id)]),
+        [one],
+    )
     original = groups.path.read_bytes()
 
     state, error = groups.refresh([], records_valid=False)
@@ -310,12 +369,21 @@ def test_group_lock_symlink_is_rejected_without_chmodding_target(tmp_path):
 def test_invalid_agent_records_guard_apply_without_pruning_or_writing(tmp_path):
     groups = Groups(Store(tmp_path / "home"))
     one = agent(tmp_path)
-    made = groups.apply(request("create", 0, name="safe", agent_ids=[str(one.id)]), [one])
+    enabled = enable_server_grouping(groups, [one])
+    made = groups.apply(
+        request("create", enabled["revision"], name="safe", agent_ids=[str(one.id)]),
+        [one],
+    )
     original = groups.path.read_bytes()
 
     with pytest.raises(GroupingConflict, match="Agent records could not be read"):
         groups.apply(
-            request("assign", 1, group_id=None, agent_ids=[str(one.id)]),
+            request(
+                "assign",
+                made["revision"],
+                group_id=None,
+                agent_ids=[str(one.id)],
+            ),
             [],
             records_valid=False,
         )
@@ -327,7 +395,8 @@ def test_two_group_instances_share_lock_for_idempotent_concurrent_retry(tmp_path
     home = tmp_path / "home"
     first = Groups(Store(home))
     second = Groups(Store(home))
-    body = request("create", 0, name="one", agent_ids=[])
+    enabled = enable_server_grouping(first)
+    body = request("create", enabled["revision"], name="one", agent_ids=[])
     barrier = threading.Barrier(2)
     outcomes = []
 
@@ -344,20 +413,26 @@ def test_two_group_instances_share_lock_for_idempotent_concurrent_retry(tmp_path
     assert len(outcomes) == 2 and outcomes[0] == outcomes[1]
     saved = json.loads(first.path.read_text(encoding="utf-8"))
     assert len(saved["groups"]) == 1
-    assert len(saved["receipts"]) == 1
+    assert len(saved["receipts"]) == enabled["revision"] + 1
 
 
 def test_concurrent_same_revision_allows_one_commit(tmp_path):
     store = Store(tmp_path / "home")
     agents = [agent(tmp_path)]
     groups = Groups(store)
+    enabled = enable_server_grouping(groups, agents)
     barrier = threading.Barrier(2)
     outcomes = []
 
     def create(name):
         barrier.wait()
         try:
-            outcomes.append(groups.apply(request("create", 0, name=name, agent_ids=[]), agents))
+            outcomes.append(
+                groups.apply(
+                    request("create", enabled["revision"], name=name, agent_ids=[]),
+                    agents,
+                )
+            )
         except GroupingConflict:
             outcomes.append("conflict")
 
@@ -369,4 +444,4 @@ def test_concurrent_same_revision_allows_one_commit(tmp_path):
     assert outcomes.count("conflict") == 1
     assert len(groups.get()["groups"]) == 1
     saved = json.loads(groups.path.read_text(encoding="utf-8"))
-    assert len(saved["receipts"]) == 1
+    assert len(saved["receipts"]) == enabled["revision"] + 1

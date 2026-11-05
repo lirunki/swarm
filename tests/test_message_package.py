@@ -41,6 +41,7 @@ def test_wheel_includes_mailbox_extension_and_messages_ui(tmp_path):
             "swarm/static/agent-messages.js",
             "swarm/static/agent-broadcast.js",
             "swarm/static/agent-groups.js",
+            "swarm/static/grouping-mode.js",
             "swarm/grouping.py",
             "swarm/messaging.py",
         }.issubset(archive.namelist())

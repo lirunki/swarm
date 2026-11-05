@@ -823,7 +823,7 @@ def test_missing_or_offline_group_projection_preserves_view_and_disables_mutatio
             page.get_by_role("heading", name="Retained group", exact=True)
         ).to_be_visible()
         playwright.expect(page.locator("#agent-groups-error")).to_contain_text(
-            "Grouping is unavailable"
+            "Swarm is offline" if offline else "Grouping is unavailable"
         )
         playwright.expect(page.locator("#agent-group-rename")).to_be_disabled()
         card(page, 0).get_by_role("checkbox", name="Select family of Agent 0").check()

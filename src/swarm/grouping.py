@@ -46,14 +46,32 @@ class Groups:
 
     @staticmethod
     def empty() -> dict[str, Any]:
-        return {"version": 1, "revision": 0, "groups": [], "assignments": {}, "receipts": []}
+        return {
+            "version": 2,
+            "revision": 0,
+            "groups": [],
+            "assignments": {},
+            "receipts": [],
+            "settings": {"server_managed": False, "initialized": False},
+            "grouped_branches": [],
+        }
 
     @staticmethod
     def projection(state: dict[str, Any]) -> dict[str, Any]:
+        """Keep the original groups API projection byte-for-byte compatible in shape."""
         return {
             "revision": state["revision"],
             "groups": [dict(group) for group in state["groups"]],
             "assignments": dict(state["assignments"]),
+        }
+
+    @staticmethod
+    def settings_projection(state: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "revision": state["revision"],
+            "server_managed": state["settings"]["server_managed"],
+            "initialized": state["settings"]["initialized"],
+            "grouped_branches": list(state["grouped_branches"]),
         }
 
     @contextmanager
@@ -94,36 +112,44 @@ class Groups:
     @classmethod
     def _validate_state(cls, value: Any) -> dict[str, Any]:
         try:
-            if not isinstance(value, dict) or set(value) != {
-                "version",
-                "revision",
-                "groups",
-                "assignments",
-                "receipts",
-            }:
+            if not isinstance(value, dict) or type(value.get("version")) is not int:
                 raise ValueError
-            if (
-                not isinstance(value["version"], int)
-                or isinstance(value["version"], bool)
-                or value["version"] != 1
-                or not cls._revision(value["revision"])
-            ):
-                raise ValueError
-            if not isinstance(value["groups"], list) or len(value["groups"]) > MAX_GROUPS:
-                raise ValueError
-            groups: list[dict[str, str]] = []
-            ids: set[str] = set()
-            for group in value["groups"]:
-                if not isinstance(group, dict) or set(group) != {"id", "name"}:
+            version = value["version"]
+            common = {"version", "revision", "groups", "assignments", "receipts"}
+            if version == 1:
+                if set(value) != common:
                     raise ValueError
-                group_id = cls._uuid(group["id"], "group id")
-                name = cls._name(group["name"])
-                if group_id in ids or any(
-                    item["name"].casefold() == name.casefold() for item in groups
+                # A legacy owner already used server-side groups. Migration is
+                # deliberately in-memory until the next successful mutation.
+                settings = {"server_managed": True, "initialized": False}
+                grouped_branches: list[str] = []
+            elif version == 2:
+                if set(value) != common | {"settings", "grouped_branches"}:
+                    raise ValueError
+                raw_settings = value["settings"]
+                if (
+                    not isinstance(raw_settings, dict)
+                    or set(raw_settings) != {"server_managed", "initialized"}
+                    or type(raw_settings["server_managed"]) is not bool
+                    or type(raw_settings["initialized"]) is not bool
                 ):
                     raise ValueError
-                ids.add(group_id)
-                groups.append({"id": group_id, "name": name})
+                settings = dict(raw_settings)
+                if (
+                    not isinstance(value["grouped_branches"], list)
+                    or len(value["grouped_branches"]) > MAX_ASSIGNMENTS
+                ):
+                    raise ValueError
+                grouped_branches = [
+                    cls._uuid(item, "grouped branch id") for item in value["grouped_branches"]
+                ]
+                if len(set(grouped_branches)) != len(grouped_branches):
+                    raise ValueError
+            else:
+                raise ValueError
+            if not cls._revision(value["revision"]):
+                raise ValueError
+            groups, ids = cls._validate_groups(value["groups"])
             if (
                 not isinstance(value["assignments"], dict)
                 or len(value["assignments"]) > MAX_ASSIGNMENTS
@@ -150,12 +176,15 @@ class Groups:
                     or any(char not in "0123456789abcdef" for char in receipt["payload_hash"])
                     or not isinstance(operation, dict)
                     or set(operation) != {"action", "group_id"}
-                    or operation["action"] not in {"create", "assign", "rename", "delete"}
+                    or operation["action"]
+                    not in {"create", "assign", "rename", "delete", "configure", "branches"}
                 ):
                     raise ValueError
                 operation_group = operation["group_id"]
                 if operation_group is not None:
                     operation_group = cls._uuid(operation_group, "group id")
+                if operation["action"] in {"configure", "branches"} and operation_group is not None:
+                    raise ValueError
                 request_id = cls._uuid(receipt["request_id"], "request id")
                 if request_id in receipt_ids:
                     raise ValueError
@@ -168,14 +197,35 @@ class Groups:
                     }
                 )
             return {
-                "version": 1,
+                "version": 2,
                 "revision": value["revision"],
                 "groups": groups,
                 "assignments": assignments,
                 "receipts": clean_receipts,
+                "settings": settings,
+                "grouped_branches": grouped_branches,
             }
         except (GroupingError, KeyError, TypeError, ValueError) as exc:
             raise GroupingCorrupt("Saved groups could not be read") from exc
+
+    @classmethod
+    def _validate_groups(cls, value: Any) -> tuple[list[dict[str, str]], set[str]]:
+        if not isinstance(value, list) or len(value) > MAX_GROUPS:
+            raise GroupingError(f"At most {MAX_GROUPS} groups are allowed")
+        groups: list[dict[str, str]] = []
+        ids: set[str] = set()
+        names: set[str] = set()
+        for group in value:
+            if not isinstance(group, dict) or set(group) != {"id", "name"}:
+                raise GroupingError("seed groups must contain only id and name")
+            group_id = cls._uuid(group["id"], "group id")
+            name = cls._name(group["name"])
+            if group_id in ids or name.casefold() in names:
+                raise GroupingError("Group ids and names must be unique")
+            ids.add(group_id)
+            names.add(name.casefold())
+            groups.append({"id": group_id, "name": name})
+        return groups, ids
 
     def _read(self) -> dict[str, Any]:
         try:
@@ -312,30 +362,48 @@ class Groups:
             if candidates:
                 winner = min(candidates, key=lambda node: (rank[node], node))
                 settled.update({node: current[winner] for node in component})
-        changed = settled != state["assignments"]
+        branches = [item for item in state["grouped_branches"] if item in ids]
+        changed = settled != state["assignments"] or branches != state["grouped_branches"]
         state["assignments"] = settled
+        state["grouped_branches"] = branches
         return changed
 
     def get(self) -> dict[str, Any]:
         with self._lock():
             return self.projection(self._read())
 
-    def refresh(
+    def settings(self) -> dict[str, Any]:
+        with self._lock():
+            return self.settings_projection(self._read())
+
+    def refresh_with_settings(
         self, agents: list[Agent], *, records_valid: bool = True
-    ) -> tuple[dict[str, Any], str | None]:
+    ) -> tuple[dict[str, Any], dict[str, Any], str | None]:
         try:
             with self._lock():
                 state = self._read()
                 if records_valid and self._reconcile(state, agents):
                     state["revision"] += 1
                     self._write(state)
-                return self.projection(state), None
+                return self.projection(state), self.settings_projection(state), None
         except GroupingError as exc:
             fallback = self._last_good or self.empty()
-            return self.projection(fallback), str(exc)
+            return self.projection(fallback), self.settings_projection(fallback), str(exc)
         except GroupingCorrupt:
             fallback = self._last_good or self.empty()
-            return self.projection(fallback), "Saved groups could not be read"
+            return (
+                self.projection(fallback),
+                self.settings_projection(fallback),
+                "Saved groups could not be read",
+            )
+
+    def refresh(
+        self, agents: list[Agent], *, records_valid: bool = True
+    ) -> tuple[dict[str, Any], str | None]:
+        groups, _settings, error = self.refresh_with_settings(
+            agents, records_valid=records_valid
+        )
+        return groups, error
 
     @staticmethod
     def _hash(body: dict[str, Any]) -> str:
@@ -346,6 +414,135 @@ class Groups:
         except (TypeError, UnicodeError, ValueError) as exc:
             raise GroupingError("Grouping request must contain valid JSON values") from exc
         return hashlib.sha256(encoded).hexdigest()
+
+    @classmethod
+    def _seed_state(
+        cls, seed: Any, agents: list[Agent]
+    ) -> tuple[list[dict[str, str]], dict[str, str], list[str]]:
+        if not isinstance(seed, dict) or set(seed) != {
+            "groups",
+            "assignments",
+            "grouped_branches",
+        }:
+            raise GroupingError(
+                "seed must contain groups, assignments, and grouped_branches"
+            )
+        groups, group_ids = cls._validate_groups(seed["groups"])
+        raw_assignments = seed["assignments"]
+        if not isinstance(raw_assignments, dict) or len(raw_assignments) > MAX_ASSIGNMENTS:
+            raise GroupingError("seed assignments must be an object within the assignment limit")
+        assignments = {
+            cls._uuid(agent_id, "agent id"): cls._uuid(group_id, "group id")
+            for agent_id, group_id in raw_assignments.items()
+        }
+        known = {str(agent.id) for agent in agents}
+        if any(agent_id not in known for agent_id in assignments):
+            raise GroupingError("seed assignments must reference agents from this Swarm")
+        if any(group_id not in group_ids for group_id in assignments.values()):
+            raise GroupingError("seed assignments must reference seed groups")
+
+        families, _rank = cls._families(agents)
+        normalized: dict[str, str] = {}
+        visited: set[str] = set()
+        for agent_id in sorted(known):
+            family = families[agent_id]
+            if agent_id in visited:
+                continue
+            visited |= family
+            selected = {assignments[item] for item in family if item in assignments}
+            if len(selected) > 1:
+                raise GroupingError("A seeded agent family cannot be assigned to multiple groups")
+            if selected:
+                group_id = next(iter(selected))
+                normalized.update({item: group_id for item in family})
+        branches = cls._branch_ids(seed["grouped_branches"], known)
+        return groups, normalized, branches
+
+    @classmethod
+    def _branch_ids(cls, value: Any, known: set[str]) -> list[str]:
+        if not isinstance(value, list) or len(value) > MAX_ASSIGNMENTS:
+            raise GroupingError("grouped_branches must be a list within the assignment limit")
+        branches = [cls._uuid(item, "grouped branch id") for item in value]
+        if len(set(branches)) != len(branches) or any(item not in known for item in branches):
+            raise GroupingError(
+                "grouped_branches must contain distinct agents from this Swarm"
+            )
+        return branches
+
+    def apply_settings(
+        self, body: Any, agents: list[Agent], *, records_valid: bool = True
+    ) -> dict[str, Any]:
+        if not isinstance(body, dict):
+            raise GroupingError("Request body must be an object")
+        action = body.get("action")
+        if action == "configure":
+            required, optional = {"action", "revision", "request_id", "server_managed"}, {"seed"}
+        elif action == "branches":
+            required, optional = {
+                "action",
+                "revision",
+                "request_id",
+                "grouped_branches",
+            }, set()
+        else:
+            raise GroupingError("Unknown grouping settings action")
+        if not required <= set(body) or set(body) - required - optional:
+            raise GroupingError(f"Invalid fields for {action}")
+        if not self._revision(body.get("revision")):
+            raise GroupingError("revision must be a nonnegative integer")
+        if action == "configure" and type(body.get("server_managed")) is not bool:
+            raise GroupingError("server_managed must be a boolean")
+        request_id = self._uuid(body.get("request_id"), "request_id")
+        payload_hash = self._hash(body)
+        with self._lock():
+            state = self._read()
+            for receipt in state["receipts"]:
+                if receipt["request_id"] == request_id:
+                    if receipt["payload_hash"] != payload_hash:
+                        raise GroupingConflict(
+                            "request_id was already used for a different operation"
+                        )
+                    return self.settings_projection(state)
+            if not records_valid:
+                raise GroupingConflict(
+                    "Agent records could not be read; grouping settings were not changed"
+                )
+            if body["revision"] != state["revision"]:
+                raise GroupingConflict("Group revision changed; refresh and retry")
+
+            known = {str(agent.id) for agent in agents}
+            operation = {"action": action, "group_id": None}
+            if action == "configure":
+                enabled = body["server_managed"]
+                seed_present = "seed" in body
+                if seed_present and (not enabled or state["settings"]["initialized"]):
+                    raise GroupingConflict(
+                        "seed is accepted only on the first explicit server-managed enable"
+                    )
+                if seed_present:
+                    groups, assignments, branches = self._seed_state(body["seed"], agents)
+                    state["groups"] = groups
+                    state["assignments"] = assignments
+                    state["grouped_branches"] = branches
+                state["settings"]["server_managed"] = enabled
+                if enabled:
+                    state["settings"]["initialized"] = True
+            else:
+                if not state["settings"]["server_managed"]:
+                    raise GroupingConflict(
+                        "grouped branches can be changed only in server-managed mode"
+                    )
+                state["grouped_branches"] = self._branch_ids(
+                    body["grouped_branches"], known
+                )
+
+            state["revision"] += 1
+            state["receipts"] = (
+                state["receipts"]
+                + [{"request_id": request_id, "payload_hash": payload_hash, "operation": operation}]
+            )[-MAX_RECEIPTS:]
+            self._write(state)
+            return self.settings_projection(state)
 
     def apply(
         self, body: Any, agents: list[Agent], *, records_valid: bool = True
@@ -379,6 +576,10 @@ class Groups:
                     return self.projection(state) | {"operation": receipt["operation"]}
             if not records_valid:
                 raise GroupingConflict("Agent records could not be read; groups were not changed")
+            if not state["settings"]["server_managed"]:
+                raise GroupingConflict(
+                    "Group changes require server-managed grouping; enable server-managed grouping"
+                )
             if body["revision"] != state["revision"]:
                 raise GroupingConflict("Group revision changed; refresh and retry")
 

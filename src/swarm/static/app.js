@@ -16,7 +16,8 @@ let forgettingAgent = false, metaCompactingId = null, toolInputCompactingId = nu
 const toolOutputRepairRequests = new Map();
 const terminals = new Map();
 const groupedBranches = new Set();
-let selectedAgentGroup = null, agentGroupsController = null;
+let selectedAgentGroup = null, agentGroupsController = null, groupingModeController = null;
+let browserGroups = null, browserGroupingProjection = null, browserGroupingError = null, browserGroupingOperation = 0, groupingBranchBusy = false, groupingBranchOperation = 0;
 const openedAgentGroups = new Set(), agentGroupTabs = new Map();
 const cardViews = new SwarmCardViews.CardViews();
 let toastTimer;
@@ -89,7 +90,7 @@ function rememberUIViewState() {
   try {
     const value = {
       terminalTabs: {ids: [...terminals.keys()], active: activeTab},
-      groupedBranches: [...groupedBranches],
+      groupedBranches: serverManagedBranches() ? readUIViewState().groupedBranches : [...groupedBranches],
       agentGroupView: {selected: selectedAgentGroup, opened: [...openedAgentGroups]},
     };
     localStorage.setItem(uiViewStateStorageKey(), JSON.stringify(value));
@@ -106,7 +107,12 @@ function applyState(data) {
   const groupingAvailable = SwarmAgentGroups.validProjection(data.agent_groups) && !data.federation_offline;
   if (!groupingAvailable) data={...data,agent_groups:state.agent_groups || {revision:0,groups:[],assignments:{}},agent_groups_error:data.agent_groups_error || 'Grouping is unavailable until this Swarm provides a current group state.'};
   else if (!savedView && state.agent_groups && data.agent_groups.revision < state.agent_groups.revision) data={...data,agent_groups:state.agent_groups};
+  const previousServerMode=state.grouping_settings?.server_managed;
+  if(data.grouping_settings!=null && !SwarmGroupingMode.validSettings(data.grouping_settings)) data={...data,grouping_settings:state.grouping_settings || data.grouping_settings,grouping_settings_error:'Current grouping mode is invalid; edits are disabled.'};
+  else if(data.grouping_settings==null && state.grouping_settings && !savedView) data={...data,grouping_settings:state.grouping_settings,grouping_settings_error:'Current grouping mode is unavailable; edits are disabled.'};
+  if (!savedView && data.grouping_settings && state.grouping_settings && data.grouping_settings.revision < state.grouping_settings.revision) data={...data,grouping_settings:state.grouping_settings};
   state = data;
+  syncGroupingStorage(savedView,previousServerMode);
   if (savedView) {
     selectedAgentGroup = savedView.agentGroupView.selected;
     openedAgentGroups.clear();
@@ -239,7 +245,7 @@ function switchSwarm(nodeId) {
   for (const id of [...terminals.keys()]) closeTerminal(id, false);
   for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
   if (stateSocket) { stateSocket.onclose = null; stateSocket.close(); stateSocket = null; }
-  stateGeneration += 1; reconnectDelay = 1000; uiViewStateRestored = false; activeSwarm = nodeId; groupedBranches.clear(); selectedAgentGroup = null; openedAgentGroups.clear();
+  stateGeneration += 1; groupingBranchOperation+=1;browserGroupingOperation+=1;groupingBranchBusy=false;browserGroupingProjection=null;browserGroupingError=null; reconnectDelay = 1000; uiViewStateRestored = false; activeSwarm = nodeId; groupedBranches.clear(); selectedAgentGroup = null; openedAgentGroups.clear();
   for (const tab of agentGroupTabs.values()) tab.wrapper.remove(); agentGroupTabs.clear();
   try { localStorage.setItem('swarm.active', activeSwarm); } catch { /* storage may be disabled */ }
   state = {agents: [], errors: {}, health: {}, home: ''}; dashboardControls.status.reset(); $('#search').value = '';
@@ -616,8 +622,99 @@ function renderCard(a) {
   agentGroupsController?.decorateCard(card, a);
   return card;
 }
+const browserGroupingKey = () => `swarm.browser-groups.${activeSwarm}.${encodeURIComponent(state.home || '')}`;
+function serverManagedGrouping() { return state.grouping_settings?.server_managed !== false; }
+function serverManagedBranches() { return state.grouping_settings?.server_managed === true && state.grouping_settings?.initialized === true; }
+function groupingRecordsValid() { return !Object.keys(state.errors||{}).some(key=>key.endsWith('.md')); }
+function groupingReadOnlyError() { return state.federation_offline ? 'Swarm is offline. Grouping changes are disabled.' : state.agent_groups_error || state.grouping_settings_error || browserGroupingError; }
+function syncGroupingStorage(savedView,previousMode) {
+  browserGroupingError=null;
+  const operation=++browserGroupingOperation;
+  if (serverManagedGrouping()) {
+    browserGroupingProjection=null;
+    if (serverManagedBranches() && SwarmGroupingMode.validSettings(state.grouping_settings)) {
+      groupedBranches.clear();for(const id of state.grouping_settings.grouped_branches)groupedBranches.add(id);
+    }
+  } else {
+    browserGroups ||= new SwarmGroupingMode.BrowserGroups();
+    const key=browserGroupingKey(),source=activeSwarm,generation=stateGeneration,seed=state.agent_groups,agents=state.agents;
+    const options={recordsValid:groupingRecordsValid()};
+    try {browserGroupingProjection=browserGroups.readSnapshot(key,seed,agents,options);}
+    catch(error) {browserGroupingError=error.message;}
+    let locksAvailable=true;
+    try {browserGroups.locks();} catch(error) {locksAvailable=false;browserGroupingError=error.message;}
+    if(locksAvailable)void (async()=>{
+      try {
+        await browserGroups.initializeLocked(key,seed,agents,options);
+        const loaded=await browserGroups.loadLocked(key,seed,agents,options);
+        if(operation!==browserGroupingOperation||source!==activeSwarm||generation!==stateGeneration||key!==browserGroupingKey()||serverManagedGrouping())return;
+        if(browserGroupingProjection && loaded.revision<browserGroupingProjection.revision)return;
+        browserGroupingProjection=loaded;browserGroupingError=null;render();
+      } catch(error) {
+        if(operation!==browserGroupingOperation||source!==activeSwarm||generation!==stateGeneration||key!==browserGroupingKey()||serverManagedGrouping())return;
+        browserGroupingError=error.message;render();
+      }
+    })();
+    if (!savedView && previousMode!==false) {
+      groupedBranches.clear();for(const id of readUIViewState().groupedBranches)groupedBranches.add(id);
+    }
+  }
+  groupingModeController?.setState(state.grouping_settings, state.federation_offline ? 'Owning Swarm is offline.' : state.grouping_settings_error);
+}
+async function mutateAgentGrouping(path,method,body) {
+  if (serverManagedGrouping()) return api(path,method,body);
+  if(groupingReadOnlyError())throw Object.assign(Error(groupingReadOnlyError()),{status:409});
+  try {return await browserGroups.applyLocked(browserGroupingKey(),body,state.agents,agentGroupProjection(),{recordsValid:groupingRecordsValid()});}
+  catch(error){error.status ||= 400;throw error;}
+}
+
+async function primeBrowserGroupingSnapshot(source,generation) {
+  if(source!==activeSwarm||generation!==stateGeneration)throw Error('Browser grouping source is no longer current');
+  if(serverManagedGrouping()) {
+    if(state.grouping_settings?.initialized)throw Error('This server was already initialized.');
+    const current=agentGroupProjection();
+    return {seed:{groups:current.groups,assignments:Object.fromEntries(Object.entries(SwarmAgentGroups.effectiveAssignments(state.agents,current)).filter(([,group])=>group)),grouped_branches:[...groupedBranches].filter(id=>agentById(id))},revision:current.revision};
+  }
+  browserGroups ||= new SwarmGroupingMode.BrowserGroups();
+  const key=browserGroupingKey(),seed=state.agent_groups,agents=state.agents,options={recordsValid:groupingRecordsValid()};
+  let current;
+  try {current=await browserGroups.loadLocked(key,seed,agents,options);}
+  catch {current=browserGroups.readSnapshot(key,seed,agents,options);}
+  if(source!==activeSwarm||generation!==stateGeneration||key!==browserGroupingKey()||serverManagedGrouping())throw Error('Browser grouping source is no longer current');
+  browserGroupingProjection=current;
+  return {seed:{groups:current.groups,assignments:current.assignments,grouped_branches:[...groupedBranches].filter(id=>agentById(id))},revision:current.revision};
+}
+async function changeBranchGrouping(id,grouped) {
+  if(!serverManagedBranches()){rememberUIViewState();return;}
+  const previous=state.grouping_settings?.grouped_branches || [],source=activeSwarm,generation=stateGeneration;
+  if(groupingBranchBusy || groupingReadOnlyError() || !SwarmGroupingMode.validSettings(state.grouping_settings)){
+    groupedBranches.clear();for(const value of previous)groupedBranches.add(value);render();
+    toast('Wait for a current, available grouping state before editing branches.',true);return;
+  }
+  const operation=++groupingBranchOperation;groupingBranchBusy=true;
+  const endpoint=source==='local'?'/api/grouping-settings':`/api/federation/${encodeURIComponent(source)}/proxy/api/grouping-settings`;
+  let requestId,timer;
+  try {
+    requestId=SwarmAgentMessages.requestId();
+    const request=localApi(endpoint,'POST',{action:'branches',revision:state.grouping_settings.revision,request_id:requestId,grouped_branches:[...groupedBranches]});
+    const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Grouping update timed out.')),20000);});
+    const settings=await Promise.race([request,timeout]);
+    if(source!==activeSwarm||generation!==stateGeneration||operation!==groupingBranchOperation)return;
+    if(!SwarmGroupingMode.validSettings(settings))throw Error('Invalid grouping settings response.');
+    if(settings.revision>=(state.grouping_settings?.revision||0)){
+      state.grouping_settings=settings;state.agent_groups.revision=Math.max(state.agent_groups.revision,settings.revision);
+      groupedBranches.clear();for(const value of settings.grouped_branches)groupedBranches.add(value);
+      groupingModeController?.setState(settings);render();
+    }
+  } catch(error){
+    if(source!==activeSwarm||generation!==stateGeneration||operation!==groupingBranchOperation)return;
+    groupedBranches.clear();for(const value of state.grouping_settings?.grouped_branches || previous)groupedBranches.add(value);render();
+    toast(error.status===409?'Grouping changed on the server. Refreshed before your next edit.':`Grouping update not confirmed. Do not retry blindly. Request ID ${requestId||'unavailable'}. ${error.message}`,true);
+    void refresh();
+  } finally {clearTimeout(timer);if(operation===groupingBranchOperation)groupingBranchBusy=false;}
+}
 const agentGroupTabId = id => `agent-group:${id}`;
-function agentGroupProjection() { return state.agent_groups || {revision:0, groups:[], assignments:{}}; }
+function agentGroupProjection() { return !serverManagedGrouping() && browserGroupingProjection ? browserGroupingProjection : state.agent_groups || {revision:0, groups:[], assignments:{}}; }
 function agentGroupFor(id) { return SwarmAgentGroups.effectiveAssignments(state.agents, agentGroupProjection())[id] || null; }
 function isAgentGroupTab(id) { return typeof id === 'string' && id.startsWith('agent-group:') && (agentGroupProjection().groups.some(group => agentGroupTabId(group.id) === id) || (!!state.agent_groups_error && openedAgentGroups.has(id.slice('agent-group:'.length)))); }
 function openAgentGroup(id, persist=true) {
@@ -669,11 +766,12 @@ function renderAgentFolders(matching) {
   container.hidden=!container.childNodes.length;
 }
 function render() {
+  groupingModeController?.setState(state.grouping_settings,state.federation_offline?'Owning Swarm is offline.':state.grouping_settings_error);
   $('#home-path').textContent = state.home ? `${state.home}/agents` : '~/.swarm/agents';
   $('#agent-count').textContent = state.agents.length;
   const health = $('#health'); health.replaceChildren();
   for (const name of ['tmux', 'pi']) health.append(node('span', `health-pill${state.health[name] ? '' : ' bad'}`, `${state.health[name] ? '●' : '○'} ${name}`));
-  agentGroupsController?.setState(state.agents, agentGroupProjection(), state.agent_groups_error);
+  agentGroupsController?.setState(state.agents, agentGroupProjection(), groupingReadOnlyError());
   const assignments = SwarmAgentGroups.effectiveAssignments(state.agents,agentGroupProjection());
   const groups=agentGroupProjection().groups;
   if(selectedAgentGroup && !groups.some(group=>group.id===selectedAgentGroup) && !state.agent_groups_error) selectedAgentGroup=null;
@@ -685,8 +783,8 @@ function render() {
   $('#dashboard-title').classList.toggle('sr-only',!groupName);
   $('#agent-group-back').hidden=!selectedAgentGroup;
   $('#agent-group-rename').hidden=!selectedAgentGroup;$('#agent-group-delete').hidden=!selectedAgentGroup;
-  $('#agent-group-rename').disabled=!!state.agent_groups_error;$('#agent-group-delete').disabled=!!state.agent_groups_error;
-  $('#agent-groups-error').textContent=state.agent_groups_error || '';$('#agent-groups-error').hidden=!state.agent_groups_error;
+  $('#agent-group-rename').disabled=!!groupingReadOnlyError();$('#agent-group-delete').disabled=!!groupingReadOnlyError();
+  $('#agent-groups-error').textContent=groupingReadOnlyError() || '';$('#agent-groups-error').hidden=!groupingReadOnlyError();
   const query = $('#search').value.trim().toLowerCase();
   const visible = scopedAgents.filter(a => dashboardControls.status.matches(a.status) && [a.name, a.goal, a.activity, a.folder, a.branch].join(' ').toLowerCase().includes(query));
   const active = document.activeElement;
@@ -703,7 +801,7 @@ function render() {
     onGroupChange: (id, grouped) => {
       if (grouped) groupedBranches.add(id);
       else groupedBranches.delete(id);
-      rememberUIViewState();
+      void changeBranchGrouping(id,grouped);
     },
   }));
   chart.hidden = !forest.shownCount;
@@ -1362,7 +1460,7 @@ function clearUnauthorizedWorkspace(nodeId) {
   for (const dialog of document.querySelectorAll('dialog[open]')) if (dialog.id !== 'auth-dialog') dialog.close();
   if (stateSocket) { stateSocket.onclose = null; stateSocket.close(); stateSocket = null; }
   if (nodeId === 'local' && presenceSocket) { presenceSocket.onclose = null; presenceSocket.close(); presenceSocket = null; }
-  stateGeneration += 1; uiViewStateRestored = false; groupedBranches.clear(); state = {agents: [], errors: {}, health: {}, home: ''};
+  stateGeneration += 1; groupingBranchOperation+=1;browserGroupingOperation+=1;groupingBranchBusy=false;browserGroupingProjection=null;browserGroupingError=null; uiViewStateRestored = false; groupedBranches.clear(); state = {agents: [], errors: {}, health: {}, home: ''};
   dashboardControls.status.reset(); $('#search').value = ''; activate('dashboard', false); render();
   $('#connection').textContent = 'Sign in required'; $('#connection').className = 'connection offline';
 }
@@ -1373,22 +1471,48 @@ notificationsInbox = new SwarmNotifications.NotificationsInbox({
 updateNotificationSources(false);
 notificationsInbox.start();
 agentGroupsController = new SwarmAgentGroups.AgentGroupsController({
-  api, currentSwarm:()=>activeSwarm,currentGeneration:()=>stateGeneration,toast:message=>toast(message,true),
+  api:mutateAgentGrouping, currentSwarm:()=>activeSwarm,currentGeneration:()=>stateGeneration,toast:message=>toast(message,true),
   onOpenGroup:id=>openAgentGroup(id),
   onChanged:async(projection,options)=>{
     if(options?.refresh){await refresh();return;}
-    if(projection && projection.revision >= (state.agent_groups?.revision||0)){state.agent_groups=projection;state.agent_groups_error=null;agentGroupsController.clearSelection();render();rememberUIViewState();}
+    if(projection && projection.revision >= (agentGroupProjection()?.revision||0)){
+      if(serverManagedGrouping()){state.agent_groups=projection;if(state.grouping_settings)state.grouping_settings.revision=projection.revision;}
+      else {browserGroupingOperation+=1;browserGroupingProjection=projection;}
+      state.agent_groups_error=null;agentGroupsController.clearSelection();render();rememberUIViewState();
+    }
   },
 });
 $('#agent-group-back').addEventListener('click',()=>openAgentGroup(null));
 $('#agent-group-rename').addEventListener('click',()=>agentGroupsController.renameGroup(selectedAgentGroup));
 $('#agent-group-delete').addEventListener('click',()=>agentGroupsController.deleteGroup(selectedAgentGroup));
+groupingModeController = new SwarmGroupingMode.GroupingModeController({
+  api:localApi,currentSwarm:()=>activeSwarm,currentGeneration:()=>stateGeneration,
+  ownerName:source=>source==='local'?'Local Swarm':federationNodes.get(source)?.name||source,
+  projection:()=>agentGroupProjection(),branches:()=>[...groupedBranches].filter(id=>agentById(id)),primeSnapshot:primeBrowserGroupingSnapshot,onError:message=>toast(message,true),
+  onChanged:async(settings,metadata)=>{
+    if(metadata.source!==activeSwarm||metadata.generation!==stateGeneration)return;
+    if(metadata.refreshBrowser){
+      browserGroupingOperation+=1;
+      try {await primeBrowserGroupingSnapshot(metadata.source,metadata.generation);browserGroupingError=null;render();}
+      catch(error){browserGroupingError=error.message;render();}
+      return;
+    }
+    await refresh();
+  },
+});
 const agentBroadcast = new SwarmAgentBroadcast.BroadcastController({
   api: localApi,
   currentSwarm: () => activeSwarm,
   currentGeneration: () => stateGeneration,
   sources: notificationSources,
   onChange: () => { void refresh(); },
+});
+globalThis.addEventListener?.('storage',event=>{
+  if(!uiViewStateRestored || serverManagedGrouping())return;
+  if(event.key===browserGroupingKey() || event.key===null){syncGroupingStorage(null,false);render();}
+  else if(event.key===uiViewStateStorageKey()){
+    groupedBranches.clear();for(const id of readUIViewState().groupedBranches)if(agentById(id))groupedBranches.add(id);render();
+  }
 });
 globalThis.addEventListener?.('swarm-auth-unauthorized', event => clearUnauthorizedWorkspace(event.detail?.node || 'local'));
 globalThis.addEventListener?.('swarm-auth-retry', () => { notificationsInbox.clear(); updateNotificationSources(); loadFederation(); refresh(); connectState(); });

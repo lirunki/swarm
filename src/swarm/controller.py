@@ -420,6 +420,14 @@ class Controller:
             self.refresh()
             return result
 
+    def apply_group_settings(self, body: object) -> dict:
+        """Apply owner grouping policy against the same locked registry view."""
+        with self.lock:
+            agents, record_errors = self.store.scan_with_errors()
+            result = self.groups.apply_settings(body, agents, records_valid=not record_errors)
+            self.refresh()
+            return result
+
     def refresh(self) -> bool:
         with self.lock:
             agents, record_errors = self.store.scan_with_errors()
@@ -459,8 +467,10 @@ class Controller:
             except (OSError, ValueError):
                 notifications = {"count": 0, "revision": None}
                 errors["notifications.json"] = "Notifications could not be read"
-            agent_groups, agent_groups_error = self.groups.refresh(
-                agents, records_valid=not record_errors
+            agent_groups, grouping_settings, agent_groups_error = (
+                self.groups.refresh_with_settings(
+                    agents, records_valid=not record_errors
+                )
             )
             if agent_groups_error:
                 errors["groups.json"] = agent_groups_error
@@ -469,7 +479,9 @@ class Controller:
                 "notifications": notifications,
                 "agents": entries,
                 "agent_groups": agent_groups,
+                "grouping_settings": grouping_settings,
                 "agent_groups_error": agent_groups_error,
+                "grouping_settings_error": agent_groups_error,
                 "errors": errors,
                 "home": str(self.store.home),
                 "health": self.processes.health(),
