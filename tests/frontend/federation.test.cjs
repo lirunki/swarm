@@ -118,3 +118,37 @@ test('Swarm picker follows the logo without a redundant visible label', () => {
   assert.match(group, /id="swarm-switcher"[^>]*><select id="swarm-selector" aria-label="Active Swarm"/);
   assert.doesNotMatch(group, /<span>Swarm<\/span>/);
 });
+
+
+test('only the selected folder is attached directly after Dashboard without closing hidden terminals', () => {
+  class Element {
+    constructor(){this.children=[];this.parentNode=null;this.dataset={};this.hidden=false;this.attributes={};this.classList={toggle(){}};}
+    append(...items){for(const item of items){item.remove();item.parentNode=this;this.children.push(item);}}
+    remove(){if(this.parentNode){const items=this.parentNode.children;items.splice(items.indexOf(this),1);this.parentNode=null;}}
+    insertBefore(item,before){if(item===before)return;item.remove();const index=before?this.children.indexOf(before):this.children.length;assert.ok(index>=0);this.children.splice(index,0,item);item.parentNode=this;}
+    get nextSibling(){if(!this.parentNode)return null;return this.parentNode.children[this.parentNode.children.indexOf(this)+1]||null;}
+    setAttribute(name,value){this.attributes[name]=value;}
+  }
+  const tabs=new Element(),dashboard=new Element(),a=new Element(),b=new Element(),rootTerminal=new Element(),aTerminal=new Element(),bTerminal=new Element();
+  tabs.append(dashboard,rootTerminal,a,aTerminal,b,bTerminal);
+  const entries=new Map([['a',{wrapper:a,tab:new Element()}],['b',{wrapper:b,tab:new Element()}]]);
+  const context=vm.createContext({selectedAgentGroup:'a',openedAgentGroups:new Set(['a','b']),agentGroupTabs:entries,
+    activeTab:'agent-group:a',state:{agents:[{id:'root'},{id:'a-agent'},{id:'b-agent'}]},
+    agentGroupProjection:()=>({groups:[{id:'a',name:'A'},{id:'b',name:'B'}]}),
+    agentGroupTabId:id=>'agent-group:'+id,
+    SwarmAgentGroups:{effectiveAssignments:()=>({'a-agent':'a','b-agent':'b'})},
+    terminals:new Map([['root',{group:rootTerminal}],['a-agent',{group:aTerminal}],['b-agent',{group:bTerminal}]]),
+    $:selector=>selector==='#tabs'?tabs:dashboard,
+  });
+  const code=source.slice(source.indexOf('function syncAgentGroupTabs()'),source.indexOf('function renderAgentFolders('));
+  vm.runInContext(code,context);context.syncAgentGroupTabs();
+  assert.equal(dashboard.nextSibling,a);assert.equal(b.parentNode,null);
+  assert.equal(rootTerminal.hidden,true);assert.equal(aTerminal.hidden,false);assert.equal(bTerminal.hidden,true);
+  context.selectedAgentGroup='b';context.activeTab='agent-group:b';context.syncAgentGroupTabs();
+  assert.equal(dashboard.nextSibling,b);assert.equal(a.parentNode,null);assert.equal(aTerminal.hidden,true);assert.equal(bTerminal.hidden,false);
+  context.selectedAgentGroup=null;context.activeTab='dashboard';context.syncAgentGroupTabs();
+  assert.equal(a.parentNode,null);assert.equal(b.parentNode,null);assert.equal(rootTerminal.hidden,false);
+  assert.equal(context.terminals.size,3);assert.equal(entries.size,2);
+  context.selectedAgentGroup='a';context.syncAgentGroupTabs();
+  assert.equal(dashboard.nextSibling,a);assert.equal(b.parentNode,null);assert.equal(aTerminal.parentNode,tabs);
+});

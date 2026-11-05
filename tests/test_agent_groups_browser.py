@@ -312,10 +312,42 @@ def card(page, index):
     return page.locator(f'.agent-card[data-agent-id="{AGENT_IDS[index]}"]')
 
 
+def visible_workspace_tabs(page):
+    """Describe visible direct tab-strip children in their DOM order."""
+    return page.locator("#tabs > :not([hidden])").evaluate_all(
+        """elements => elements.map(element => {
+            if (element.id === 'dashboard-tab') return 'dashboard';
+            if (element.classList.contains('agent-group-tab')) {
+                return `group:${element.dataset.groupId}`;
+            }
+            const terminal = [...terminals].find(([, value]) => value.group === element);
+            return terminal ? `terminal:${terminal[0]}` : 'unknown';
+        })"""
+    )
+
+
 def open_group_menu(page):
     page.locator("#group-selection-open").click()
     playwright.expect(page.locator("#group-context-menu")).to_be_visible()
     playwright.expect(page.locator("#grouping-submenu")).to_be_visible()
+
+
+def expect_group_name(page, name):
+    """Assert the visible group name without including the heading's caret."""
+    playwright.expect(page.locator("#agent-group-name")).to_have_text(name, use_inner_text=True)
+    playwright.expect(page.locator("#agent-group-name-button")).to_be_visible()
+
+
+def open_group_name_menu(page):
+    button = page.locator("#agent-group-name-button")
+    playwright.expect(button).to_be_enabled()
+    button.click()
+    playwright.expect(page.locator("#agent-group-name-menu")).to_be_visible()
+
+
+def click_group_name_action(page, action):
+    open_group_name_menu(page)
+    page.locator(f"#agent-group-{action}").click()
 
 
 @pytest.mark.parametrize("width", [390, 1280])
@@ -401,9 +433,9 @@ def test_family_selection_context_assignment_folders_and_safe_names(static_url, 
         page.locator("#grouping-submenu").get_by_role(
             "menuitem", name=unsafe_name, exact=True
         ).click()
-        playwright.expect(page.get_by_role("heading", name="Created team")).to_be_visible()
+        expect_group_name(page, "Created team")
         playwright.expect(page.locator(".agent-card")).to_have_count(1)
-        page.locator("#agent-group-back").click()
+        page.locator("#dashboard-tab").click()
         playwright.expect(
             page.get_by_role("button", name=f"Open group {unsafe_name}: 4 agents")
         ).to_be_visible()
@@ -418,6 +450,207 @@ def test_family_selection_context_assignment_folders_and_safe_names(static_url, 
         playwright.expect(page.locator("#group-context-menu")).to_be_visible()
         playwright.expect(page.locator("#grouping-submenu-button")).to_be_focused()
         assert page.evaluate("document.body.scrollWidth <= window.innerWidth")
+        assert not server.invalid_requests
+        assert not server.other_mutations
+        assert not errors
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_only_active_folder_tab_is_visible_and_root_terminal_restores(
+    static_url,  # noqa: F811
+    width,  # noqa: F811
+):
+    projection = {
+        "revision": 2,
+        "groups": [
+            {"id": GROUP_A, "name": "Folder A"},
+            {"id": GROUP_B, "name": "Folder B"},
+        ],
+        "assignments": {AGENT_IDS[0]: GROUP_A, AGENT_IDS[3]: GROUP_B},
+    }
+    server = GroupServer(browser_state(projection))
+    with open_page(width, server, touch=width == 390) as (page, errors):
+        page.goto(static_url)
+
+        # Keep a root terminal and one terminal in each folder alive while moving
+        # between folder dashboards.
+        card(page, 4).locator(".card-terminal").click()
+        page.locator("#dashboard-tab").click()
+        page.get_by_role("button", name="Open group Folder A: 3 agents").click()
+        card(page, 0).locator(".card-terminal").click()
+        page.locator(f'.agent-group-tab[data-group-id="{GROUP_A}"] .tab').click()
+        page.locator("#dashboard-tab").click()
+        page.get_by_role("button", name="Open group Folder B: 1 agents").click()
+        card(page, 3).locator(".card-terminal").click()
+        page.locator(f'.agent-group-tab[data-group-id="{GROUP_B}"] .tab').click()
+
+        assert page.evaluate("[...terminals.keys()]") == [
+            AGENT_IDS[4],
+            AGENT_IDS[0],
+            AGENT_IDS[3],
+        ]
+        playwright.expect(page.locator("#tabs > .agent-group-tab")).to_have_count(1)
+        assert visible_workspace_tabs(page) == [
+            "dashboard",
+            f"group:{GROUP_B}",
+            f"terminal:{AGENT_IDS[3]}",
+        ]
+        assert page.locator(f'.agent-group-tab[data-group-id="{GROUP_A}"]').count() == 0
+        assert page.evaluate("document.body.scrollWidth <= window.innerWidth")
+
+        # Folder navigation remains bolder and brighter than runtime terminal tabs.
+        folder_visuals = page.evaluate(
+            r"""() => {
+                const style = selector => getComputedStyle(document.querySelector(selector));
+                const rgb = value => (value.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+                const light = value => rgb(value).reduce((sum, part) => sum + part, 0);
+                return {
+                    dashboardWeight: style('#dashboard-tab').fontWeight,
+                    folderWeight: style('.agent-group-tab > .tab').fontWeight,
+                    folderLight: light(style('.agent-group-tab').backgroundColor),
+                    terminalLight: light(style('.tab-group:not(.agent-group-tab)').backgroundColor),
+                };
+            }"""
+        )
+        assert folder_visuals["dashboardWeight"] == "700"
+        assert folder_visuals["folderWeight"] == "700"
+        assert folder_visuals["folderLight"] > folder_visuals["terminalLight"]
+        page.locator('.tab-group:not(.agent-group-tab) .tab[aria-label^="Agent 3"]').click()
+        selected_terminal_visuals = page.evaluate(
+            r"""() => {
+                const light = selector => [...getComputedStyle(document.querySelector(selector)).backgroundColor.matchAll(/[\d.]+/g)].slice(0, 3).reduce((sum, match) => sum + Number(match[0]), 0);
+                return {dashboard: light('#dashboard-tab'), terminal: light('.tab-group:not(.agent-group-tab)')};
+            }"""
+        )
+        assert selected_terminal_visuals["dashboard"] > selected_terminal_visuals["terminal"]
+        assert (
+            page.locator("#dashboard-tab").evaluate("node => getComputedStyle(node).fontWeight")
+            == "700"
+        )
+        page.locator(f'.agent-group-tab[data-group-id="{GROUP_B}"] .tab').click()
+
+        # An inactive folder is reached from the root Dashboard and its folder tile,
+        # never through a retained inactive folder tab.
+        page.locator("#dashboard-tab").click()
+        playwright.expect(page.locator("#tabs > .agent-group-tab")).to_have_count(0)
+        assert visible_workspace_tabs(page) == [
+            "dashboard",
+            f"terminal:{AGENT_IDS[4]}",
+        ]
+        page.locator('.tab-group:not(.agent-group-tab) .tab[aria-label^="Agent 4"]').click()
+        playwright.expect(page.locator(".terminal-pane:not([hidden])")).to_have_count(1)
+        assert page.evaluate("activeTab") == AGENT_IDS[4]
+        page.locator("#dashboard-tab").click()
+        page.get_by_role("button", name="Open group Folder A: 3 agents").click()
+        assert visible_workspace_tabs(page) == [
+            "dashboard",
+            f"group:{GROUP_A}",
+            f"terminal:{AGENT_IDS[0]}",
+        ]
+        assert page.locator(f'.agent-group-tab[data-group-id="{GROUP_B}"]').count() == 0
+
+        # Closing the selected folder returns to root and removes every folder tab
+        # from the DOM without disposing any terminal session.
+        page.locator(f'.agent-group-tab[data-group-id="{GROUP_A}"] .tab-close').click()
+        playwright.expect(page.locator("#dashboard")).to_be_visible()
+        playwright.expect(page.locator("#tabs > .agent-group-tab")).to_have_count(0)
+        assert visible_workspace_tabs(page) == [
+            "dashboard",
+            f"terminal:{AGENT_IDS[4]}",
+        ]
+        assert page.evaluate("[...terminals.keys()]") == [
+            AGENT_IDS[4],
+            AGENT_IDS[0],
+            AGENT_IDS[3],
+        ]
+        assert page.locator(".terminal-pane").count() == 3
+        assert page.evaluate("[...terminals.values()].every(value => value.pane.isConnected)")
+        assert not server.posts
+        assert not server.other_mutations
+        assert not errors
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_group_name_menu_keyboard_state_dismissal_and_safe_prompts(
+    static_url,  # noqa: F811
+    width,  # noqa: F811
+):
+    projection = {
+        "revision": 2,
+        "groups": [
+            {"id": GROUP_A, "name": "Menu A"},
+            {"id": GROUP_B, "name": "Menu B"},
+        ],
+        "assignments": {AGENT_IDS[0]: GROUP_A, AGENT_IDS[3]: GROUP_B},
+    }
+    server = GroupServer(browser_state(projection))
+    with open_page(width, server, touch=width == 390) as (page, errors):
+        page.goto(static_url)
+        name_button = page.locator("#agent-group-name-button")
+        name_menu = page.locator("#agent-group-name-menu")
+        rename = page.locator("#agent-group-rename")
+        delete = page.locator("#agent-group-delete")
+
+        # Root has no visible group actions, and the removed back control is absent.
+        playwright.expect(name_button).to_be_hidden()
+        playwright.expect(name_menu).to_be_hidden()
+        playwright.expect(rename).to_be_hidden()
+        playwright.expect(delete).to_be_hidden()
+        playwright.expect(page.locator("#agent-group-back")).to_have_count(0)
+
+        page.get_by_role("button", name="Open group Menu A: 3 agents").click()
+        expect_group_name(page, "Menu A")
+
+        name_button.focus()
+        page.keyboard.press("ArrowDown")
+        playwright.expect(name_menu).to_be_visible()
+        playwright.expect(rename).to_be_focused()
+        page.keyboard.press("ArrowDown")
+        playwright.expect(delete).to_be_focused()
+        page.keyboard.press("ArrowDown")
+        playwright.expect(rename).to_be_focused()
+        page.keyboard.press("ArrowUp")
+        playwright.expect(delete).to_be_focused()
+        page.keyboard.press("Home")
+        playwright.expect(rename).to_be_focused()
+        page.keyboard.press("End")
+        playwright.expect(delete).to_be_focused()
+        page.keyboard.press("Escape")
+        playwright.expect(name_menu).to_be_hidden()
+        playwright.expect(name_button).to_be_focused()
+
+        # Poll repainting in the same Swarm/group context preserves an open menu.
+        open_group_name_menu(page)
+        page.evaluate("value => applyState(value)", server.state_value())
+        playwright.expect(name_menu).to_be_visible()
+        page.mouse.click(width - 2, 898)
+        playwright.expect(name_menu).to_be_hidden()
+
+        # A group context change closes it. Dashboard is the only route back to root.
+        open_group_name_menu(page)
+        page.evaluate("id => openAgentGroup(id)", GROUP_B)
+        expect_group_name(page, "Menu B")
+        playwright.expect(name_menu).to_be_hidden()
+        page.locator("#dashboard-tab").click()
+        playwright.expect(name_button).to_be_hidden()
+        playwright.expect(name_menu).to_be_hidden()
+
+        # Cancelled deletion preserves the group and performs no mutation.
+        page.get_by_role("button", name="Open group Menu B: 1 agents").click()
+        page.once("dialog", lambda dialog: dialog.dismiss())
+        click_group_name_action(page, "delete")
+        expect_group_name(page, "Menu B")
+        assert not server.posts
+
+        # Prompt text is rendered literally after a real rename mutation.
+        unsafe = 'Literal <img src=x onerror="window.menuUnsafe=true"> XSS'
+        page.once("dialog", lambda dialog: dialog.accept(unsafe))
+        click_group_name_action(page, "rename")
+        expect_group_name(page, unsafe)
+        assert not page.locator("#agent-group-heading img, #agent-group-heading script").count()
+        assert not page.evaluate("window.menuUnsafe === true")
+        assert server.posts[-1]["action"] == "rename"
+        assert server.posts[-1]["name"] == unsafe
         assert not server.invalid_requests
         assert not server.other_mutations
         assert not errors
@@ -440,19 +673,31 @@ def test_group_tabs_terminals_notifications_dynamic_children_rename_and_delete(s
         page.get_by_role("button", name="Open group Family group: 3 agents").click()
         card(page, 0).locator(".card-terminal").click()
         page.locator(".agent-group-tab .tab", has_text="Family group").click()
-        page.locator("#agent-group-back").click()
+        page.locator("#dashboard-tab").click()
         page.get_by_role("button", name="Open group Solo group: 1 agents").click()
         card(page, 3).locator(".card-terminal").click()
         page.locator(".agent-group-tab .tab", has_text="Solo group").click()
 
         assert page.evaluate("[...terminals.keys()]") == [AGENT_IDS[0], AGENT_IDS[3]]
-        playwright.expect(page.locator(".agent-group-tab")).to_have_count(2)
+        playwright.expect(page.locator(".agent-group-tab")).to_have_count(1)
+        assert visible_workspace_tabs(page) == [
+            "dashboard",
+            f"group:{GROUP_B}",
+            f"terminal:{AGENT_IDS[3]}",
+        ]
         playwright.expect(
             page.locator(".tab-group:not(.agent-group-tab):not([hidden])")
         ).to_have_count(1)
         assert card(page, 3).count() == 1 and card(page, 0).count() == 0
 
-        page.locator(".agent-group-tab .tab", has_text="Family group").click()
+        page.locator("#dashboard-tab").click()
+        playwright.expect(page.locator("#tabs > .agent-group-tab")).to_have_count(0)
+        page.get_by_role("button", name="Open group Family group: 3 agents").click()
+        assert visible_workspace_tabs(page) == [
+            "dashboard",
+            f"group:{GROUP_A}",
+            f"terminal:{AGENT_IDS[0]}",
+        ]
         playwright.expect(
             page.locator(".tab-group:not(.agent-group-tab):not([hidden])")
         ).to_have_count(1)
@@ -467,6 +712,7 @@ def test_group_tabs_terminals_notifications_dynamic_children_rename_and_delete(s
 
         page.locator("#dashboard-tab").click()
         playwright.expect(page.locator("#dashboard")).to_be_visible()
+        playwright.expect(page.locator("#tabs > .agent-group-tab")).to_have_count(0)
         playwright.expect(
             page.locator(".tab-group:not(.agent-group-tab):not([hidden])")
         ).to_have_count(0)
@@ -478,7 +724,7 @@ def test_group_tabs_terminals_notifications_dynamic_children_rename_and_delete(s
             "([swarmId,agentId]) => window.revealNotificationAgent({swarmId,agentId})",
             ["local", AGENT_IDS[1]],
         )
-        playwright.expect(page.get_by_role("heading", name="Family group")).to_be_visible()
+        expect_group_name(page, "Family group")
         playwright.expect(card(page, 1)).to_have_class(re.compile(r"notification-reveal"))
         assert card(page, 1).locator(".goal").is_visible()
         assert page.evaluate("terminals.size") == 2
@@ -493,11 +739,11 @@ def test_group_tabs_terminals_notifications_dynamic_children_rename_and_delete(s
         assert server.projection["assignments"] == projection["assignments"]
 
         page.once("dialog", lambda dialog: dialog.accept("Renamed family"))
-        page.locator("#agent-group-rename").click()
-        playwright.expect(page.get_by_role("heading", name="Renamed family")).to_be_visible()
+        click_group_name_action(page, "rename")
+        expect_group_name(page, "Renamed family")
         page.once("dialog", lambda dialog: dialog.accept())
-        page.locator("#agent-group-delete").click()
-        playwright.expect(page.locator("#agent-group-back")).to_be_hidden()
+        click_group_name_action(page, "delete")
+        playwright.expect(page.locator("#agent-group-name-menu")).to_be_hidden()
         playwright.expect(card(page, 0)).to_be_visible()
         playwright.expect(card(page, 5)).to_be_visible()
         assert page.locator(".agent-group-tab", has_text="Renamed family").count() == 0
@@ -520,11 +766,13 @@ def test_group_views_and_terminal_tabs_survive_reload(static_url):  # noqa: F811
         page.get_by_role("button", name="Open group Persist A: 3 agents").click()
         card(page, 0).locator(".card-terminal").click()
         page.locator(".agent-group-tab .tab", has_text="Persist A").click()
-        page.locator("#agent-group-back").click()
+        page.locator("#dashboard-tab").click()
         page.get_by_role("button", name="Open group Persist B: 1 agents").click()
         card(page, 3).locator(".card-terminal").click()
         page.locator(".agent-group-tab .tab", has_text="Persist B").click()
-        page.locator(".agent-group-tab .tab", has_text="Persist A").click()
+        page.locator("#dashboard-tab").click()
+        playwright.expect(page.locator("#tabs > .agent-group-tab")).to_have_count(0)
+        page.get_by_role("button", name="Open group Persist A: 3 agents").click()
 
         saved = page.evaluate("JSON.parse(localStorage.getItem('swarm.ui-view-state.local'))")
         assert saved["terminalTabs"]["ids"] == [AGENT_IDS[0], AGENT_IDS[3]]
@@ -532,8 +780,16 @@ def test_group_views_and_terminal_tabs_survive_reload(static_url):  # noqa: F811
         assert set(saved["agentGroupView"]["opened"]) == {GROUP_A, GROUP_B}
 
         page.reload()
-        playwright.expect(page.get_by_role("heading", name="Persist A")).to_be_visible()
-        playwright.expect(page.locator(".agent-group-tab")).to_have_count(2)
+        expect_group_name(page, "Persist A")
+        playwright.expect(page.locator(".agent-group-tab")).to_have_count(1)
+        playwright.expect(
+            page.locator(f'#dashboard-tab + .agent-group-tab[data-group-id="{GROUP_A}"]')
+        ).to_have_count(1)
+        assert visible_workspace_tabs(page) == [
+            "dashboard",
+            f"group:{GROUP_A}",
+            f"terminal:{AGENT_IDS[0]}",
+        ]
         assert page.evaluate("[...terminals.keys()]") == [AGENT_IDS[0], AGENT_IDS[3]]
         assert page.evaluate("selectedAgentGroup") == GROUP_A
         assert page.evaluate("activeTab") == f"agent-group:{GROUP_A}"
@@ -604,11 +860,12 @@ def test_external_family_move_keeps_terminal_and_group_dashboards_safe(static_ur
 
         # Keep both dashboards open, with A selected and its live root terminal open.
         page.get_by_role("button", name="Open group Group B: 1 agents").click()
-        page.locator("#agent-group-back").click()
+        page.locator("#dashboard-tab").click()
         page.get_by_role("button", name="Open group Group A: 3 agents").click()
         card(page, 0).locator(".card-terminal").click()
         page.locator(f'.agent-group-tab[data-group-id="{GROUP_A}"] .tab').click()
-        playwright.expect(page.locator(".agent-group-tab")).to_have_count(2)
+        playwright.expect(page.locator(".agent-group-tab")).to_have_count(1)
+        assert set(page.evaluate("[...openedAgentGroups]")) == {GROUP_A, GROUP_B}
 
         # Another process moves the complete active family to B.
         external = copy.deepcopy(projection)
@@ -620,16 +877,23 @@ def test_external_family_move_keeps_terminal_and_group_dashboards_safe(static_ur
         # A is now empty, but its dashboard and connected terminal are retained.
         assert page.evaluate("selectedAgentGroup") == GROUP_A
         assert page.evaluate("activeTab") == f"agent-group:{GROUP_A}"
-        playwright.expect(page.get_by_role("heading", name="Group A")).to_be_visible()
-        playwright.expect(page.locator(".agent-group-tab")).to_have_count(2)
+        expect_group_name(page, "Group A")
+        playwright.expect(page.locator(".agent-group-tab")).to_have_count(1)
         assert page.evaluate("id => terminals.has(id)", AGENT_IDS[0])
         playwright.expect(page.locator(".terminal-pane:not([hidden])")).to_have_count(0)
 
-        page.locator(f'.agent-group-tab[data-group-id="{GROUP_B}"] .tab').click()
-        playwright.expect(page.get_by_role("heading", name="Group B")).to_be_visible()
+        page.locator("#dashboard-tab").click()
+        playwright.expect(page.locator("#tabs > .agent-group-tab")).to_have_count(0)
+        page.get_by_role("button", name="Open group Group B: 4 agents").click()
+        expect_group_name(page, "Group B")
         terminal_tab = page.locator(".tab-group:not(.agent-group-tab):not([hidden])")
         playwright.expect(terminal_tab).to_have_count(1)
-        playwright.expect(page.locator(".agent-group-tab")).to_have_count(2)
+        playwright.expect(page.locator(".agent-group-tab")).to_have_count(1)
+        assert visible_workspace_tabs(page) == [
+            "dashboard",
+            f"group:{GROUP_B}",
+            f"terminal:{AGENT_IDS[0]}",
+        ]
         assert page.evaluate("[...terminals.keys()]") == [AGENT_IDS[0]]
         terminal_tab.locator(".tab").click()
         playwright.expect(page.locator(".terminal-pane:not([hidden])")).to_have_count(1)
@@ -656,6 +920,8 @@ def test_group_backend_error_disables_mutations_without_losing_terminal(static_u
         playwright.expect(page.locator("#agent-groups-error")).to_contain_text(
             "Saved groups are corrupt"
         )
+        playwright.expect(page.locator("#agent-group-name-button")).to_be_disabled()
+        playwright.expect(page.locator("#agent-group-name-menu")).to_be_hidden()
         playwright.expect(page.locator("#agent-group-rename")).to_be_disabled()
         playwright.expect(page.locator("#agent-group-delete")).to_be_disabled()
 
@@ -663,8 +929,14 @@ def test_group_backend_error_disables_mutations_without_losing_terminal(static_u
         playwright.expect(page.locator("#group-selection-open")).to_be_disabled()
         card(page, 0).click(button="right")
         playwright.expect(page.locator("#group-context-menu")).to_be_hidden()
-        page.locator("#agent-group-rename").click(force=True)
-        page.locator("#agent-group-delete").click(force=True)
+        # Dispatch native button clicks without asking Playwright to force hidden
+        # controls; disabled menu items must not run their handlers.
+        page.evaluate(
+            """() => {
+                document.querySelector('#agent-group-rename').click();
+                document.querySelector('#agent-group-delete').click();
+            }"""
+        )
 
         assert page.evaluate("id => terminals.has(id)", AGENT_IDS[0])
         assert page.locator(".terminal-pane").count() == 1
@@ -702,7 +974,7 @@ def test_stopped_root_notification_group_persists_reload(
             ["local", AGENT_IDS[target]],
         )
 
-        playwright.expect(page.get_by_role("heading", name=group_name)).to_be_visible()
+        expect_group_name(page, group_name)
         playwright.expect(card(page, target).locator(".goal")).to_be_visible()
         assert page.evaluate("selectedAgentGroup") == group_id
         saved = page.evaluate("JSON.parse(localStorage.getItem('swarm.ui-view-state.local'))")
@@ -710,7 +982,7 @@ def test_stopped_root_notification_group_persists_reload(
         assert group_id in saved["agentGroupView"]["opened"]
 
         page.reload()
-        playwright.expect(page.get_by_role("heading", name=group_name)).to_be_visible()
+        expect_group_name(page, group_name)
         assert page.evaluate("selectedAgentGroup") == group_id
         assert page.evaluate("activeTab") == f"agent-group:{group_id}"
         playwright.expect(card(page, target)).to_be_visible()
@@ -755,16 +1027,18 @@ def test_per_swarm_group_views_terminals_and_revisions_are_isolated(static_url):
             }
         )
         page.evaluate("value => applyState(value)", stale)
-        playwright.expect(page.get_by_role("heading", name="Remote-only group")).to_be_visible()
+        expect_group_name(page, "Remote-only group")
         assert page.evaluate("state.agent_groups.revision") == 20
 
+        open_group_name_menu(page)
         page.locator("#swarm-selector").select_option("local")
-        playwright.expect(page.get_by_role("heading", name="Local-only group")).to_be_visible()
+        playwright.expect(page.locator("#agent-group-name-menu")).to_be_hidden()
+        expect_group_name(page, "Local-only group")
         assert page.evaluate("[...terminals.keys()]") == [AGENT_IDS[0]]
         assert page.evaluate("selectedAgentGroup") == GROUP_A
 
         page.locator("#swarm-selector").select_option(FederationGroupServer.REMOTE)
-        playwright.expect(page.get_by_role("heading", name="Remote-only group")).to_be_visible()
+        expect_group_name(page, "Remote-only group")
         assert page.evaluate("[...terminals.keys()]") == [AGENT_IDS[0]]
         assert page.evaluate("selectedAgentGroup") == GROUP_B
         assert (
@@ -774,7 +1048,7 @@ def test_per_swarm_group_views_terminals_and_revisions_are_isolated(static_url):
             == GROUP_A
         )
         page.reload()
-        playwright.expect(page.get_by_role("heading", name="Remote-only group")).to_be_visible()
+        expect_group_name(page, "Remote-only group")
         assert page.evaluate("[...terminals.keys()]") == [AGENT_IDS[0]]
 
         local_saved, remote_saved = page.evaluate(
@@ -800,7 +1074,8 @@ def test_per_swarm_group_views_terminals_and_revisions_are_isolated(static_url):
 
 @pytest.mark.parametrize("offline", [False, True])
 def test_missing_or_offline_group_projection_preserves_view_and_disables_mutations(
-    static_url, offline  # noqa: F811
+    static_url,  # noqa: F811
+    offline,  # noqa: F811
 ):
     projection = {
         "revision": 4,
@@ -819,18 +1094,18 @@ def test_missing_or_offline_group_projection_preserves_view_and_disables_mutatio
         if offline:
             missing["federation_offline"] = True
         page.evaluate("value=>applyState(value)", missing)
-        playwright.expect(
-            page.get_by_role("heading", name="Retained group", exact=True)
-        ).to_be_visible()
+        expect_group_name(page, "Retained group")
         playwright.expect(page.locator("#agent-groups-error")).to_contain_text(
             "Swarm is offline" if offline else "Grouping is unavailable"
         )
+        playwright.expect(page.locator("#agent-group-name-button")).to_be_disabled()
         playwright.expect(page.locator("#agent-group-rename")).to_be_disabled()
         card(page, 0).get_by_role("checkbox", name="Select family of Agent 0").check()
         playwright.expect(page.locator("#group-selection-open")).to_be_disabled()
         assert page.evaluate('localStorage.getItem("swarm.ui-view-state.local")') == before
         assert page.evaluate("id=>terminals.has(id)", AGENT_IDS[0])
         page.evaluate("value=>applyState(value)", server.state_value())
+        playwright.expect(page.locator("#agent-group-name-button")).to_be_enabled()
         playwright.expect(page.locator("#agent-group-rename")).to_be_enabled()
         assert not server.posts and not errors
 
@@ -846,9 +1121,7 @@ def test_external_active_terminal_move_persists_the_visible_dashboard_on_reload(
         page.goto(static_url)
         page.get_by_role("button", name="Open group A: 3 agents").click()
         card(page, 0).locator(".card-terminal").click()
-        server.projection["assignments"] = {
-            AGENT_IDS[index]: GROUP_B for index in (0, 1, 2)
-        }
+        server.projection["assignments"] = {AGENT_IDS[index]: GROUP_B for index in (0, 1, 2)}
         server.projection["revision"] = 2
         page.evaluate("value=>applyState(value)", server.state_value())
         playwright.expect(page.locator("#dashboard")).to_be_visible()
@@ -856,7 +1129,7 @@ def test_external_active_terminal_move_persists_the_visible_dashboard_on_reload(
         assert saved["terminalTabs"]["active"] == "agent-group:" + GROUP_A
         assert page.evaluate("id=>terminals.has(id)", AGENT_IDS[0])
         page.reload()
-        playwright.expect(page.get_by_role("heading", name="A", exact=True)).to_be_visible()
+        expect_group_name(page, "A")
         playwright.expect(page.locator("#terminals")).to_be_hidden()
         assert page.evaluate("id=>terminals.has(id)", AGENT_IDS[0])
         assert not errors

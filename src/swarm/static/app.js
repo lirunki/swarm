@@ -743,11 +743,14 @@ function syncAgentGroupTabs() {
     entry.wrapper.classList.toggle('active',activeTab===agentGroupTabId(id));
     entry.tab.setAttribute('aria-current',activeTab===agentGroupTabId(id)?'page':'false');
   }
-  // Selected folder sits directly before its terminal suffix; other open folders remain navigable.
-  if(selectedAgentGroup && agentGroupTabs.has(selectedAgentGroup)) $('#tabs').append(agentGroupTabs.get(selectedAgentGroup).wrapper);
+  // Only the selected folder belongs in the tab strip; retained terminals stay alive.
+  for (const [id,entry] of agentGroupTabs) if(id!==selectedAgentGroup) entry.wrapper.remove();
+  if(selectedAgentGroup && agentGroupTabs.has(selectedAgentGroup)) {
+    const dashboard=$('#dashboard-tab');
+    $('#tabs').insertBefore(agentGroupTabs.get(selectedAgentGroup).wrapper,dashboard.nextSibling);
+  }
   const assignments=SwarmAgentGroups.effectiveAssignments(state.agents,agentGroupProjection());
   for(const [id,t] of terminals) {t.group.hidden=(assignments[id]||null)!==selectedAgentGroup;$('#tabs').append(t.group);}
-  for (const [id,entry] of agentGroupTabs) if(id!==selectedAgentGroup) $('#tabs').append(entry.wrapper);
 }
 function renderAgentFolders(matching) {
   const container=$('#agent-group-folders');container.replaceChildren();
@@ -779,11 +782,7 @@ function render() {
   const scopedAgents=state.agents.filter(agent=>(assignments[agent.id]||null)===selectedAgentGroup);
   dashboardControls.update(scopedAgents);
   const groupName=groups.find(group=>group.id===selectedAgentGroup)?.name || (selectedAgentGroup && state.agent_groups_error ? 'Group unavailable' : null);
-  $('#dashboard-title').textContent=groupName || 'Agent dashboard';
-  $('#dashboard-title').classList.toggle('sr-only',!groupName);
-  $('#agent-group-back').hidden=!selectedAgentGroup;
-  $('#agent-group-rename').hidden=!selectedAgentGroup;$('#agent-group-delete').hidden=!selectedAgentGroup;
-  $('#agent-group-rename').disabled=!!groupingReadOnlyError();$('#agent-group-delete').disabled=!!groupingReadOnlyError();
+  groupNameMenu.update({id:selectedAgentGroup,name:groupName,disabled:!!groupingReadOnlyError(),context:`${activeSwarm}:${stateGeneration}`});
   $('#agent-groups-error').textContent=groupingReadOnlyError() || '';$('#agent-groups-error').hidden=!groupingReadOnlyError();
   const query = $('#search').value.trim().toLowerCase();
   const visible = scopedAgents.filter(a => dashboardControls.status.matches(a.status) && [a.name, a.goal, a.activity, a.folder, a.branch].join(' ').toLowerCase().includes(query));
@@ -836,6 +835,7 @@ function activate(id, persist = true) {
   else if(isAgentGroupTab(id)) {selectedAgentGroup=id.slice('agent-group:'.length);openedAgentGroups.add(selectedAgentGroup);}
   else {selectedAgentGroup=null;}
   activeTab = id && (terminals.has(id) || isAgentGroupTab(id)) ? id : 'dashboard';
+  groupNameMenu.dropdown.close();
   const dashboardVisible=activeTab==='dashboard'||isAgentGroupTab(activeTab);
   $('#dashboard').hidden = !dashboardVisible; $('#terminals').hidden = dashboardVisible;
   $('#dashboard-tab').classList.toggle('active', activeTab === 'dashboard');
@@ -1432,6 +1432,9 @@ const agentFilesDialog = new SwarmAgentFiles.AgentFilesDialog({
 });
 const agentMessagesController = new SwarmAgentMessages.MessagesController({api: localApi, onChange: refresh});
 const dashboardControls = new SwarmDashboardControls.DashboardControls({onStatusChange: render});
+const groupNameMenu = new SwarmDashboardControls.GroupNameMenu({
+  onRename:id=>agentGroupsController?.renameGroup(id),onDelete:id=>agentGroupsController?.deleteGroup(id),
+});
 const relaySettingsDialog = new SwarmRelaySettings.RelaySettingsDialog({
   api: localApi,
   onChange: async value => {
@@ -1482,9 +1485,6 @@ agentGroupsController = new SwarmAgentGroups.AgentGroupsController({
     }
   },
 });
-$('#agent-group-back').addEventListener('click',()=>openAgentGroup(null));
-$('#agent-group-rename').addEventListener('click',()=>agentGroupsController.renameGroup(selectedAgentGroup));
-$('#agent-group-delete').addEventListener('click',()=>agentGroupsController.deleteGroup(selectedAgentGroup));
 groupingModeController = new SwarmGroupingMode.GroupingModeController({
   api:localApi,currentSwarm:()=>activeSwarm,currentGeneration:()=>stateGeneration,
   ownerName:source=>source==='local'?'Local Swarm':federationNodes.get(source)?.name||source,

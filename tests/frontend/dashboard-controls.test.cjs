@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {STATES, Dropdown, StatusFilter, DashboardControls} = require('../../src/swarm/static/dashboard-controls.js');
+const {STATES, Dropdown, StatusFilter, GroupNameMenu, DashboardControls} = require('../../src/swarm/static/dashboard-controls.js');
 
 class Element {
   constructor(document) { this.ownerDocument = document; this.events = new Map(); this.attributes = new Map(); this.children = []; this.dataset = {}; }
@@ -124,4 +124,60 @@ test('adoption is a create-footer alternative, search is in the state menu, coll
   const app=fs.readFileSync(path.join(__dirname,'../../src/swarm/static/app.js'),'utf8');
   assert.ok(!app.includes('collapse-all'));
   assert.ok(app.includes("dashboardControls.status.dropdown.open(); $('#search').focus();"));
+});
+
+
+function groupMenuFixture() {
+  const t=fixture();
+  const ids=['agent-group-heading','agent-group-name-button','agent-group-name-menu','agent-group-name','dashboard-title','dashboard-root-title','agent-group-rename','agent-group-delete'];
+  for(const id of ids)t.values['#'+id]=new Element(t.doc);
+  t.values['#dashboard-title'].classList={toggle(name,value){this[name]=value;}};
+  t.values['#agent-group-name-menu'].append(t.values['#agent-group-rename'],t.values['#agent-group-delete']);
+  t.values['#agent-group-heading'].append(t.values['#agent-group-name-button'],t.values['#agent-group-name-menu']);
+  const calls=[];
+  const menu=new GroupNameMenu({query:t.query,onRename:id=>calls.push(['rename',id]),onDelete:id=>calls.push(['delete',id])});
+  return {...t,menu,calls};
+}
+
+test('group heading exposes guarded actions; polling preserves menu and context changes close it', () => {
+  const t=groupMenuFixture();
+  t.menu.update({id:'group-a',name:'A <script>',context:'local:1'});
+  assert.equal(t.values['#agent-group-name'].textContent,'A <script>');
+  assert.equal(t.values['#agent-group-name-button'].hidden,false);
+  assert.equal(t.values['#dashboard-root-title'].hidden,true);
+  t.menu.dropdown.open();
+  t.menu.update({id:'group-a',name:'Renamed A',context:'local:1'});
+  assert.equal(t.menu.dropdown.active,true);
+  t.values['#agent-group-rename'].events.get('click')();
+  assert.deepEqual(t.calls,[['rename','group-a']]);assert.equal(t.menu.dropdown.active,false);
+  assert.equal(t.doc.activeElement,t.values['#agent-group-name-button']);
+  t.menu.dropdown.open();t.menu.update({id:'group-b',name:'B',context:'local:1'});
+  assert.equal(t.menu.dropdown.active,false);
+  t.menu.dropdown.open();t.menu.update({id:'group-b',name:'B',context:'remote:2'});
+  assert.equal(t.menu.dropdown.active,false);
+  t.menu.update({id:null,name:null,context:'remote:2'});
+  assert.equal(t.values['#agent-group-name-button'].hidden,true);
+  assert.equal(t.values['#dashboard-root-title'].hidden,false);
+});
+
+test('group heading error state disables actions without accepting synthetic clicks', () => {
+  const t=groupMenuFixture();t.menu.update({id:'group-a',name:'A',context:'local:1'});t.menu.dropdown.open();
+  t.menu.update({id:'group-a',name:'A',disabled:true,context:'local:1'});
+  assert.equal(t.menu.dropdown.active,false);
+  for(const id of ['agent-group-name-button','agent-group-rename','agent-group-delete'])assert.equal(t.values['#'+id].disabled,true);
+  t.values['#agent-group-delete'].events.get('click')();assert.deepEqual(t.calls,[]);
+  t.menu.update({id:'group-a',name:'A',context:'local:1'});
+  t.values['#agent-group-delete'].events.get('click')();assert.deepEqual(t.calls,[['delete','group-a']]);
+});
+
+test('folder/dashboard tabs are bold and brighter without styling terminal tab labels', () => {
+  const fs=require('node:fs'),path=require('node:path');
+  const html=fs.readFileSync(path.join(__dirname,'../../src/swarm/static/index.html'),'utf8');
+  const css=fs.readFileSync(path.join(__dirname,'../../src/swarm/static/app.css'),'utf8');
+  assert.ok(!html.includes('agent-group-back'));
+  assert.match(html,/id="agent-group-name-button"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"/);
+  assert.match(html,/id="agent-group-name-menu"[^>]*role="menu"/);
+  assert.match(css,/#dashboard-tab,\.agent-group-tab\{background:#242f40\}/);
+  assert.match(css,/#dashboard-tab,\.agent-group-tab>\.tab\{font-weight:700/);
+  assert.match(css,/#dashboard-tab\.active,\.agent-group-tab\.active\{background:#30445e\}/);
 });

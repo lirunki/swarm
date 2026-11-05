@@ -78,6 +78,31 @@
     }
   }
 
+  class GroupNameMenu {
+    constructor({query = selector => document.querySelector(selector), onRename, onDelete}) {
+      Object.assign(this, {query, onRename, onDelete});
+      this.button = query('#agent-group-name-button');
+      this.dropdown = new Dropdown({container: query('#agent-group-heading'), button: this.button, panel: query('#agent-group-name-menu')});
+      for (const [selector, action] of [['#agent-group-rename', onRename], ['#agent-group-delete', onDelete]]) {
+        query(selector).addEventListener('click', () => {
+          if (!this.id || this.disabled) return;
+          const id = this.id; this.dropdown.close(true); action(id);
+        });
+      }
+    }
+    update({id, name, disabled = false, context}) {
+      if (id !== this.id || context !== this.context || disabled) this.dropdown.close();
+      this.id = id; this.context = context; this.disabled = disabled;
+      this.query('#dashboard-title').classList.toggle('sr-only', !id);
+      this.query('#dashboard-root-title').hidden = !!id;
+      this.button.hidden = !id; this.button.disabled = disabled;
+      this.query('#agent-group-name').textContent = name || '';
+      this.button.title = id ? `Group actions for ${name}` : '';
+      this.query('#agent-group-rename').disabled = disabled;
+      this.query('#agent-group-delete').disabled = disabled;
+    }
+  }
+
   class DashboardControls {
     constructor({query = selector => document.querySelector(selector), onStatusChange}) {
       this.status = new StatusFilter({query, onChange: onStatusChange});
@@ -87,7 +112,7 @@
     update(agents) { this.status.update(agents); }
   }
 
-  const api = {STATES, LABELS, Dropdown, StatusFilter, DashboardControls};
+  const api = {STATES, LABELS, Dropdown, StatusFilter, GroupNameMenu, DashboardControls};
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.SwarmDashboardControls = api;
 })(globalThis);

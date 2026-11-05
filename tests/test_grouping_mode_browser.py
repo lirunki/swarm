@@ -20,6 +20,8 @@ from test_agent_groups_browser import (
     GroupServer,
     browser_state,
     card,
+    click_group_name_action,
+    expect_group_name,
     open_group_menu,
 )
 from test_dashboard_browser import no_auth_mock, static_url  # noqa: F401
@@ -208,6 +210,7 @@ class FederationModeServer:
         if path.startswith(prefix):
             original = request.url
             scoped = path[len(prefix) :]
+
             # ModeServer intentionally keys only on URL path; provide a tiny
             # request/route adapter so every remote groups/settings call is
             # exercised through the captured proxy prefix.
@@ -234,9 +237,9 @@ def open_pages(width, server, *, count=1, init_scripts=(), shared_context=False)
         try:
             browser = runner.chromium.launch(headless=True)
         except playwright.Error as exc:
-            if "Executable doesn't exist" in str(exc) or "error while loading shared libraries" in str(
+            if "Executable doesn't exist" in str(
                 exc
-            ):
+            ) or "error while loading shared libraries" in str(exc):
                 pytest.skip(f"Optional Chromium runtime unavailable: {exc}")
             raise
         contexts, pages, errors = [], [], []
@@ -336,7 +339,9 @@ def test_browser_local_prime_copies_groups_families_and_branches(static_url, wid
         assert "No agents or terminal sessions are stopped, woken or deleted" in prime_text
         page.locator("#grouping-prime-current").click()
 
-        playwright.expect(page.get_by_role("button", name=f"Open group {unsafe}: 3 agents")).to_be_visible()
+        playwright.expect(
+            page.get_by_role("button", name=f"Open group {unsafe}: 3 agents")
+        ).to_be_visible()
         post = server.settings_posts[-1]
         assert post["action"] == "configure" and post["server_managed"] is True
         UUID(post["request_id"])
@@ -376,8 +381,8 @@ def test_same_context_storage_sync_and_prime_revalidates_latest_full_snapshot(
         # dashboard folder instead of retaining its startup projection.
         first.get_by_role("button", name="Open group Original local: 1 agents").click()
         first.once("dialog", lambda dialog: dialog.accept("Latest shared local"))
-        first.locator("#agent-group-rename").click()
-        playwright.expect(first.get_by_role("heading", name="Latest shared local")).to_be_visible()
+        click_group_name_action(first, "rename")
+        expect_group_name(first, "Latest shared local")
         playwright.expect(
             second.get_by_role("button", name="Open group Latest shared local: 1 agents")
         ).to_be_visible()
@@ -397,8 +402,8 @@ def test_same_context_storage_sync_and_prime_revalidates_latest_full_snapshot(
         # status rather than replacing canonical state with the old snapshot.
         second.get_by_role("button", name="Open group Latest shared local: 1 agents").click()
         second.once("dialog", lambda dialog: dialog.accept("Changed during prime"))
-        second.locator("#agent-group-rename").click()
-        playwright.expect(second.get_by_role("heading", name="Changed during prime")).to_be_visible()
+        click_group_name_action(second, "rename")
+        expect_group_name(second, "Changed during prime")
         first.locator("#grouping-prime-current").click()
         playwright.expect(first.locator("#grouping-prime-dialog")).to_be_hidden()
         playwright.expect(first.locator("#toast")).to_contain_text(
@@ -416,9 +421,7 @@ def test_same_context_storage_sync_and_prime_revalidates_latest_full_snapshot(
         playwright.expect(first.locator("#grouping-mode-status")).to_contain_text(
             "Server-managed grouping is on"
         )
-        playwright.expect(
-            first.get_by_role("heading", name="Changed during prime")
-        ).to_be_visible()
+        expect_group_name(first, "Changed during prime")
         assert len(server.settings_posts) == 1
         post = server.settings_posts[0]
         assert post["seed"] == {
@@ -526,23 +529,17 @@ def test_group_conflict_refresh_keeps_concurrent_branch_winner(static_url):  # n
 
     with open_pages(1280, server) as ([page], [errors]):
         page.goto(static_url)
-        page.get_by_role(
-            "button", name="Open group Winning canonical group: 3 agents"
-        ).click()
+        page.get_by_role("button", name="Open group Winning canonical group: 3 agents").click()
         server.fail_group_request = win_branch_race
         page.once("dialog", lambda dialog: dialog.accept("Losing browser rename"))
-        page.locator("#agent-group-rename").click()
+        click_group_name_action(page, "rename")
 
-        playwright.expect(page.locator("#toast")).to_contain_text(
-            "Group revision changed"
-        )
+        playwright.expect(page.locator("#toast")).to_contain_text("Group revision changed")
         page.wait_for_function(
             "id => groupedBranches.has(id) && state.agent_groups.revision === 6",
             arg=AGENT_IDS[0],
         )
-        playwright.expect(
-            page.get_by_role("heading", name="Winning canonical group")
-        ).to_be_visible()
+        expect_group_name(page, "Winning canonical group")
         assert server.posts[-1]["revision"] == 5
         assert server.projection == canonical | {"revision": 6}
         assert server.settings["revision"] == 6
@@ -594,9 +591,7 @@ def test_first_enable_cancel_and_concurrent_state_then_keep_are_lossless(static_
         ).to_be_visible()
         assert len(server.settings_posts) == 1
         assert "seed" not in server.settings_posts[0]
-        assert server.projection["groups"] == [
-            {"id": GROUP_B, "name": "Concurrent canonical"}
-        ]
+        assert server.projection["groups"] == [{"id": GROUP_B, "name": "Concurrent canonical"}]
         assert server.settings["initialized"] is True
         assert not server.other_mutations and not errors
 
@@ -626,9 +621,9 @@ def test_disable_local_edits_and_reenable_preserve_canonical_server_state(static
         # Rename and branch collapse now stay browser-local and do not touch
         # either server endpoint or the canonical projection.
         page.once("dialog", lambda dialog: dialog.accept("My browser name"))
-        page.locator("#agent-group-rename").click()
+        click_group_name_action(page, "rename")
         page.locator(f'.org-branch-toggle[data-agent-id="{AGENT_IDS[0]}"]').click()
-        playwright.expect(page.get_by_role("heading", name="My browser name")).to_be_visible()
+        expect_group_name(page, "My browser name")
         assert not server.posts
         assert len(server.settings_posts) == 1
         assert server.projection["groups"][0]["name"] == "Canonical team"
@@ -646,7 +641,7 @@ def test_disable_local_edits_and_reenable_preserve_canonical_server_state(static
             "Server-managed grouping is on"
         )
         page.get_by_role("button", name="Close notifications").click()
-        playwright.expect(page.get_by_role("heading", name="Canonical team")).to_be_visible()
+        expect_group_name(page, "Canonical team")
         assert len(server.settings_posts) == 2
         assert "seed" not in server.settings_posts[-1]
         assert server.settings["initialized"] is True
@@ -658,7 +653,8 @@ def test_disable_local_edits_and_reenable_preserve_canonical_server_state(static
 
 @pytest.mark.parametrize("storage_case", ["corrupt", "blocked"])
 def test_bad_browser_storage_can_escape_to_server_but_offline_still_disables_mode(
-    static_url, storage_case  # noqa: F811
+    static_url,  # noqa: F811
+    storage_case,  # noqa: F811
 ):
     canonical = {
         "revision": 3,
@@ -763,9 +759,7 @@ def test_legacy_server_managed_uninitialized_primes_canonical_and_local_branch_u
         assert server.settings["initialized"] is True
         assert server.settings["grouped_branches"] == [AGENT_IDS[0]]
         assert server.projection["groups"] == canonical["groups"]
-        assert server.projection["assignments"] == {
-            agent_id: GROUP_A for agent_id in AGENT_IDS[:3]
-        }
+        assert server.projection["assignments"] == {agent_id: GROUP_A for agent_id in AGENT_IDS[:3]}
         assert not server.posts and not server.other_mutations and not errors
 
 
@@ -784,14 +778,10 @@ def test_malformed_settings_lock_edits_but_missing_legacy_settings_allow_groups(
     with open_pages(1280, malformed) as ([page], [errors]):
         page.goto(static_url)
         open_mode_panel(page)
-        playwright.expect(page.locator("#grouping-mode-status")).to_contain_text(
-            "invalid"
-        )
+        playwright.expect(page.locator("#grouping-mode-status")).to_contain_text("invalid")
         playwright.expect(page.locator("#grouping-server-managed")).to_be_disabled()
         page.get_by_role("button", name="Close notifications").click()
-        card(page, 0).get_by_role(
-            "checkbox", name="Select family of Agent 0"
-        ).check()
+        card(page, 0).get_by_role("checkbox", name="Select family of Agent 0").check()
         playwright.expect(page.locator("#group-selection-open")).to_be_disabled()
         assert not malformed.posts and not malformed.other_mutations and not errors
 
@@ -842,20 +832,14 @@ def test_delayed_browser_load_cannot_overwrite_newer_local_mutation(static_url):
         page.evaluate("value => applyState(value)", server.state_value())
         page.wait_for_function("window.delayedBrowserLoadStarted")
 
-        page.get_by_role(
-            "button", name="Open group Before local mutation: 1 agents"
-        ).click()
+        page.get_by_role("button", name="Open group Before local mutation: 1 agents").click()
         page.once("dialog", lambda dialog: dialog.accept("Newer local mutation"))
-        page.locator("#agent-group-rename").click()
-        playwright.expect(
-            page.get_by_role("heading", name="Newer local mutation")
-        ).to_be_visible()
+        click_group_name_action(page, "rename")
+        expect_group_name(page, "Newer local mutation")
         page.evaluate("window.releaseDelayedBrowserLoad()")
         page.wait_for_timeout(100)
 
-        playwright.expect(
-            page.get_by_role("heading", name="Newer local mutation")
-        ).to_be_visible()
+        expect_group_name(page, "Newer local mutation")
         saved = page.evaluate("key => JSON.parse(localStorage.getItem(key))", LOCAL_KEY)
         assert saved["revision"] == 5
         assert saved["groups"] == [{"id": GROUP_A, "name": "Newer local mutation"}]
@@ -877,9 +861,7 @@ def test_missing_settings_is_legacy_server_mode_and_cannot_toggle(static_url):  
             page.get_by_role("button", name="Open group Legacy canonical: 1 agents")
         ).to_be_visible()
         open_mode_panel(page)
-        playwright.expect(page.locator("#grouping-mode-status")).to_contain_text(
-            "not supported"
-        )
+        playwright.expect(page.locator("#grouping-mode-status")).to_contain_text("not supported")
         playwright.expect(page.locator("#grouping-server-managed")).to_be_disabled()
         assert page.evaluate("serverManagedGrouping()") is True
         assert not server.settings_posts and not server.posts and not errors

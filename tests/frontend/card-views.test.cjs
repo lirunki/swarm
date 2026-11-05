@@ -215,7 +215,7 @@ test('ready setup state permits Wake even when Pi later failed to stay alive', (
 test('dashboard omits the Mission Control label and keeps card assets versioned', () => {
   const html = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/index.html'), 'utf8');
   assert.doesNotMatch(html, /MISSION CONTROL/);
-  assert.match(html, /<h1 id="dashboard-title" class="sr-only">Agent dashboard<\/h1>/);
+  assert.match(html, /<h1 id="dashboard-title" class="sr-only"><span id="dashboard-root-title">Agent dashboard<\/span>/);
   const version = html.match(/app\.js\?v=([^"']+)/)[1];
   assert.ok(html.includes(`/static/app.css?v=${version}`));
   const css = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.css'), 'utf8');
@@ -757,7 +757,7 @@ test('tab activation marks only the selected title current, including pinned Das
   const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
   const elements = new Map(['#dashboard', '#terminals', '#dashboard-tab'].map(key => [key, new Element('div')]));
   const terminals = new Map(['a', 'b'].map(id => [id, {pane: new Element('div'), tab: new Element('button'), group: new Element('span')}]));
-  const context = vm.createContext({selectedAgentGroup:null,openedAgentGroups:new Set(),agentGroupFor:()=>null,isAgentGroupTab:()=>false,syncAgentGroupTabs(){},render(){},activeTab: 'dashboard', terminals, $: key => elements.get(key), initTerminal() {}, requestAnimationFrame: callback => callback(), rememberUIViewState() {}});
+  const context = vm.createContext({groupNameMenu:{dropdown:{close(){}}},selectedAgentGroup:null,openedAgentGroups:new Set(),agentGroupFor:()=>null,isAgentGroupTab:()=>false,syncAgentGroupTabs(){},render(){},activeTab: 'dashboard', terminals, $: key => elements.get(key), initTerminal() {}, requestAnimationFrame: callback => callback(), rememberUIViewState() {}});
   vm.runInContext(source.slice(source.indexOf('function activate('), source.indexOf('function openTerminal(')), context);
   context.activate('b');
   assert.equal(elements.get('#dashboard-tab').getAttribute('aria-current'), 'false');

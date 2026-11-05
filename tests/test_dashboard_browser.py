@@ -418,7 +418,7 @@ def test_compact_status_adoption_and_help_controls(static_url, width):
             assert not page.locator("#summary").count()
             if width >= 1000:
                 title = page.locator("#dashboard-title")
-                playwright.expect(title).to_have_text("Agent dashboard")
+                playwright.expect(page.locator("#dashboard-root-title")).to_have_text("Agent dashboard")
                 playwright.expect(title).to_have_class("sr-only")
                 title_box = title.bounding_box()
                 assert title_box["width"] <= 1 and title_box["height"] <= 1
@@ -706,7 +706,7 @@ def test_dashboard_reference_layout(static_url, tmp_path):
             assert boxes[12]["y"] > boxes[10]["y"] + 128
             assert abs(boxes[10]["x"] - boxes[12]["x"]) < 1
             title = page.locator("#dashboard-title")
-            playwright.expect(title).to_have_text("Agent dashboard")
+            playwright.expect(page.locator("#dashboard-root-title")).to_have_text("Agent dashboard")
             playwright.expect(title).to_have_class("sr-only")
             title_box = title.bounding_box()
             assert title_box["width"] <= 1 and title_box["height"] <= 1

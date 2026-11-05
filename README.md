@@ -666,8 +666,11 @@ support keep their existing behavior and show the mode switch as unavailable.
    whole family membership. Empty named groups remain available.
 5. Click a folder to open its **sub-dashboard tab beside Dashboard**. Only that
    group's hierarchy and terminal tabs are shown; its terminal tabs follow the
-   selected sub-dashboard. Other opened group-dashboard tabs remain navigable.
-   Click Dashboard to return to ungrouped agents/tabs and the folder overview.
+   selected sub-dashboard. **Only the active folder tab appears**, immediately
+   to the right of Dashboard; inactive folder tabs are not added to the tab strip.
+   Click Dashboard to return to ungrouped agents/tabs and the folder overview,
+   then open another folder to switch groups. Its hidden terminal sessions remain
+   retained, and returning to a folder reveals its terminal tabs again.
 
 **Changing group view never closes a terminal or stops, wakes, or sends input to
 an agent.** Existing terminal objects/connections remain retained while their tabs
@@ -676,7 +679,13 @@ agent's group; the navigation is persisted consistently. Closing a group dashboa
 returns to the root view if needed, without disposing its terminals. Closing an
 individual terminal still disposes only its attachment, not the agent process.
 
-Inside a group, **Rename group** updates the name in the selected storage mode. **Delete group** requires
+Dashboard and the active folder tab use **bold text and a brighter background** to
+distinguish navigation from tmux tabs. Use Dashboard in the tab strip to return to
+the folder overview; there is no duplicate back button in the sub-dashboard.
+
+Inside a group, click its **name ▾** to open **Rename group** / **Delete group**.
+The name menu supports keyboard navigation, Escape and outside dismissal.
+Rename updates the name in the selected storage mode. Delete requires
 confirmation and returns its families to Default group; it never deletes agents,
 worktrees, sessions, or terminal attachments. Newly registered children inherit
 their existing family's group. When previously separate families merge, the group
