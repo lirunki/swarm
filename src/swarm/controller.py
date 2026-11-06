@@ -109,6 +109,7 @@ class Controller:
             "alive": False,
             "file_count": 0,
             "files_version": None,
+            "file_search": [],
             "files_error": None,
         }
         entries = [a for a in self.state.get("agents", []) if a["id"] != str(agent.id)]
@@ -439,6 +440,7 @@ class Controller:
                     files = {
                         "file_count": 0,
                         "files_version": None,
+                        "file_search": [],
                         "files_error": "File references could not be read",
                     }
                     errors[f"files/{agent.id}.json"] = files["files_error"]

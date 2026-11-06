@@ -7,26 +7,27 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=folder-tab-menu-1">
+  <link rel="stylesheet" href="/static/app.css?v=full-card-search-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=folder-tab-menu-1"></script>
-  <script defer src="/static/org-chart.js?v=folder-tab-menu-1"></script>
-  <script defer src="/static/relay-settings.js?v=folder-tab-menu-1"></script>
-  <script defer src="/static/terminal-touch.js?v=folder-tab-menu-1"></script>
-  <script defer src="/static/terminal-copy.js?v=folder-tab-menu-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=folder-tab-menu-1"></script>
-  <script defer src="/static/terminal-keys.js?v=folder-tab-menu-1"></script>
-  <script defer src="/static/agent-files.js?v=folder-tab-menu-1"></script>
-  <script defer src="/static/agent-messages.js?v=folder-tab-menu-1"></script>
-  <script defer src="/static/agent-broadcast.js?v=folder-tab-menu-1"></script>
-  <script defer src="/static/auth.js?v=folder-tab-menu-1"></script>
-  <script defer src="/static/fleet-control.js?v=folder-tab-menu-1"></script>
-  <script defer src="/static/system-notifications.js?v=folder-tab-menu-1"></script>
-  <script defer src="/static/notifications.js?v=folder-tab-menu-1"></script>
-  <script defer src="/static/agent-groups.js?v=folder-tab-menu-1"></script>
-  <script defer src="/static/grouping-mode.js?v=folder-tab-menu-1"></script>
-  <script defer src="/static/app.js?v=folder-tab-menu-1"></script>
+  <script defer src="/static/card-views.js?v=full-card-search-1"></script>
+  <script defer src="/static/org-chart.js?v=full-card-search-1"></script>
+  <script defer src="/static/relay-settings.js?v=full-card-search-1"></script>
+  <script defer src="/static/terminal-touch.js?v=full-card-search-1"></script>
+  <script defer src="/static/terminal-copy.js?v=full-card-search-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=full-card-search-1"></script>
+  <script defer src="/static/terminal-keys.js?v=full-card-search-1"></script>
+  <script defer src="/static/agent-files.js?v=full-card-search-1"></script>
+  <script defer src="/static/agent-messages.js?v=full-card-search-1"></script>
+  <script defer src="/static/agent-broadcast.js?v=full-card-search-1"></script>
+  <script defer src="/static/auth.js?v=full-card-search-1"></script>
+  <script defer src="/static/fleet-control.js?v=full-card-search-1"></script>
+  <script defer src="/static/system-notifications.js?v=full-card-search-1"></script>
+  <script defer src="/static/notifications.js?v=full-card-search-1"></script>
+  <script defer src="/static/agent-groups.js?v=full-card-search-1"></script>
+  <script defer src="/static/grouping-mode.js?v=full-card-search-1"></script>
+  <script defer src="/static/agent-search.js?v=full-card-search-1"></script>
+  <script defer src="/static/app.js?v=full-card-search-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -48,7 +49,7 @@
       <div id="status-filter" class="status-filter compact-dropdown">
         <button id="status-filter-button" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="status-filter-menu"><i id="status-filter-dot" class="status-dot all"></i><span id="status-filter-label">All states</span><span id="status-filter-search" aria-hidden="true" hidden>⌕</span><span id="status-filter-count" class="count">0</span><span aria-hidden="true">▾</span></button>
         <div id="status-filter-menu" class="dropdown-panel status-filter-menu" role="dialog" aria-label="Agent states" hidden>
-          <label class="search-label status-search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search agents, goals, branches…" aria-label="Search agents"></label>
+          <label class="search-label status-search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search cards, products, files, details…" aria-label="Search agents"></label>
           <p class="dropdown-caption">Show agent states</p>
           <label class="status-option"><input type="checkbox" data-status="all" checked><i class="status-dot all"></i><span>All</span><span class="status-count all" data-status-count="all">0</span></label>
           <label class="status-option"><input type="checkbox" data-status="running" checked><i class="status-dot running"></i><span class="running">Running</span><span class="status-count running" data-status-count="running">0</span></label>
@@ -187,7 +188,7 @@
   <dialog id="help-dialog" aria-labelledby="help-title">
     <header class="dialog-head"><div><div class="eyebrow">QUICK GUIDE</div><h2 id="help-title">Swarm help</h2></div><button type="button" class="icon-button" data-close aria-label="Close help">×</button></header>
     <div class="help-content">
-      <section><h3>Dashboard</h3><p>Each tile is an independent agent. Expand it for goal, activities, checkpoint and controls. Open the state dropdown to search by text and show several states together; All checks or clears every state. Counts update live. Press / to open the menu and focus search. Search filters names, goals, activities and folders. Dimmed ancestors remain to explain parent → child relationships. When an agent has several visible sub-agents, use the small − / + control at their branch join to group or show the whole child branch. That grouping is part of browser-local UI view state and is remembered independently for each Swarm backend.</p></section>
+      <section><h3>Dashboard</h3><p>Each tile is an independent agent. Expand it for goal, activities, checkpoint and controls. Open the state dropdown to search by text and show several states together; All checks or clears every state. Counts update live. Press / to open the menu and focus search. Search covers full card metadata: names, goals, activity titles, checkpoint/details, products and registered file labels/names—even while the card is compact. It does not read file contents or terminal history. Dimmed ancestors remain to explain parent → child relationships. When an agent has several visible sub-agents, use the small − / + control at their branch join to group or show the whole child branch. That grouping is part of browser-local UI view state and is remembered independently for each Swarm backend.</p></section>
       <section><h3>Agent groups</h3><p>Select cards using their checkbox or Ctrl/⌘-click. Parents, children and siblings move as one family, including hidden descendants. Right-click → Grouping (or the selection toolbar) offers Default group, New group and saved groups. Shift+F10 opens the menu from a focused card.</p><p>Blue folder tiles show each group's agent count. Only the active folder appears as a tab immediately after Dashboard, followed by its terminal tabs. Use Dashboard and its folder tiles to switch groups; Dashboard shows ungrouped agents. Hidden terminal tabs stay alive. Dashboard/folder tabs are bold and brighter than tmux tabs. Click the group name ▾ for Rename/Delete; return through the Dashboard tab. These actions change grouping only, never agent processes. The grouping-storage switch in Notifications chooses owner-server or browser-local folders, membership and branch grouping. First enable asks whether to prime from this browser. Viewing A through B saves server grouping on A. Active views and terminal tabs stay browser-local.</p></section>
       <section><h3>Agent states</h3><dl><dt class="running">Running</dt><dd>Working toward its goal.</dd><dt class="waiting">Waiting</dt><dd>Needs human input.</dd><dt class="dormant">Dormant</dt><dd>Waiting for an event or timer.</dd><dt class="idle">Idle</dt><dd>Turn complete, goal not yet complete.</dd><dt class="done">Done</dt><dd>Goal accomplished. Process liveness is shown separately.</dd></dl></section>
       <section><h3>Notifications and broadcast</h3><p>The bell beside the Swarm logo combines unread notifications from every connected Swarm and groups each agent's messages together. Agents must notify you whenever they need your action or complete your request. Open agent clears every notification in that agent's group, selects its source Swarm, and opens an existing live terminal tab or reveals and highlights its card. Discard clears only that agent's notification group without navigating away. Clear all flushes every available notification across connected Swarms. Enable OS alerts asks the browser for permission and then displays only newly arriving bell items through the operating system, including Android notifications. Browser notifications require localhost or HTTPS. This preference is local to the browser; the dashboard must remain open to receive events because Swarm does not use a remote push service.</p><p>The dialog also contains Master control, Settings and Restart active Swarm. Type a message and use Select &amp; broadcast to choose managed agents by checkbox, Swarm, process state or search. Only shown checked agents receive it. Broadcast queues durable messages without waking agents; inspect request IDs for uncertain results instead of retrying blindly.</p></section>

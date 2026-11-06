@@ -130,9 +130,20 @@ class AgentFiles:
         self.cache.pop(str(agent_id), None)
 
     def summary(self, agent_id: str | UUID) -> dict:
-        # No original-file stats/payload reads in the dashboard polling path.
+        # Project only bounded index metadata; never inspect original files while polling.
         index = self.read(agent_id)
-        return {"file_count": len(index.files), "files_version": index.revision}
+        return {
+            "file_count": len(index.files),
+            "files_version": index.revision,
+            "file_search": [
+                {
+                    "label": ref.label,
+                    "filename": ref.filename,
+                    "media_type": ref.media_type,
+                }
+                for ref in index.files
+            ],
+        }
 
     @staticmethod
     def info(ref: FileReference, check: bool = False) -> dict:

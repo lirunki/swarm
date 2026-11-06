@@ -752,13 +752,13 @@ function syncAgentGroupTabs() {
   const assignments=SwarmAgentGroups.effectiveAssignments(state.agents,agentGroupProjection());
   for(const [id,t] of terminals) {t.group.hidden=(assignments[id]||null)!==selectedAgentGroup;$('#tabs').append(t.group);}
 }
-function renderAgentFolders(matching) {
+function renderAgentFolders(matching, includeEmpty = true) {
   const container=$('#agent-group-folders');container.replaceChildren();
   if(selectedAgentGroup){container.hidden=true;return;}
   const assignments=SwarmAgentGroups.effectiveAssignments(state.agents,agentGroupProjection());
   for(const group of agentGroupProjection().groups){
     const members=state.agents.filter(agent=>assignments[agent.id]===group.id);
-    if(matching && members.length && !members.some(agent=>matching.has(agent.id))) continue;
+    if(matching && !members.some(agent=>matching.has(agent.id)) && (members.length || !includeEmpty)) continue;
     const folder=node('article','agent-group-folder');folder.dataset.groupId=group.id;
     const open=button('','agent-group-folder-open',()=>openAgentGroup(group.id));
     const icon=node('span','agent-group-folder-icon','▰');icon.setAttribute('aria-hidden','true');
@@ -785,14 +785,17 @@ function render() {
   groupNameMenu.update({id:selectedAgentGroup,name:groupName,disabled:!!groupingReadOnlyError(),context:`${activeSwarm}:${stateGeneration}`});
   $('#agent-groups-error').textContent=groupingReadOnlyError() || '';$('#agent-groups-error').hidden=!groupingReadOnlyError();
   const query = $('#search').value.trim().toLowerCase();
-  const visible = scopedAgents.filter(a => dashboardControls.status.matches(a.status) && [a.name, a.goal, a.activity, a.folder, a.branch].join(' ').toLowerCase().includes(query));
+  const names=new Map(state.agents.map(agent=>[agent.id,agent.name]));
+  const groupNames=new Map(groups.map(group=>[group.id,group.name]));
+  const needle=SwarmAgentSearch.normalize(query);
+  const matchesCard = new Set(state.agents.filter(agent=>dashboardControls.status.matches(agent.status) && (!needle || SwarmAgentSearch.cardText(agent,{parentName:names.get(agent.parent_id),groupName:groupNames.get(assignments[agent.id])}).includes(needle))).map(agent=>agent.id));
+  const visible = scopedAgents.filter(agent=>matchesCard.has(agent.id));
   const active = document.activeElement;
   const controlClass = active?.classList.contains('card-toggle') ? 'card-toggle' : active?.classList.contains('card-terminal') ? 'card-terminal' : active?.classList.contains('group-family-select') ? 'group-family-select' : null;
   const focusedControl = active?.classList.contains('org-branch-toggle')
     ? {id: active.getAttribute('data-agent-id'), selector: '.org-branch-toggle'}
     : controlClass ? {id: active.closest('.agent-card')?.dataset.agentId, selector: `.${controlClass}`} : active?.classList.contains('agent-card') ? {id:active.dataset.agentId,selector:'.agent-card'} : null;
-  const matching=state.agents.filter(a=>dashboardControls.status.matches(a.status)&&[a.name,a.goal,a.activity,a.folder,a.branch].join(' ').toLowerCase().includes(query));
-  renderAgentFolders(new Set(matching.map(a=>a.id)));
+  renderAgentFolders(matchesCard, !needle && dashboardControls.status.all);
   const forest = SwarmOrgChart.buildForest(scopedAgents, new Set(visible.map(a => a.id)));
   const chart = $('#agents'), scrollLeft = chart.scrollLeft;
   chart.replaceChildren(SwarmOrgChart.renderForest(forest.roots, renderCard, document, {

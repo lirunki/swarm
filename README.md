@@ -481,7 +481,13 @@ conservatively blocks while any native Pi has an unknown working folder.
 - The dashboard uses a slim **Mission Control** toolbar: the state multiselect
   sits under the label on the left and **+ New agent** on the right. Text search
   lives inside the state dropdown; `/` opens it and focuses search. A small search
-  marker indicates a text filter remains active after the menu closes. There is
+  marker indicates a text filter remains active after the menu closes. Search
+  covers the full card metadata even when compact: product labels/filenames/URLs,
+  registered file labels/basenames/types, activity titles, checkpoint/details,
+  repository/worktree/session information and parent/group names. It does not
+  open file contents, scan terminal history, or change card expansion preferences.
+  File search needs the updated backend's bounded metadata projection; no original
+  registered-file path is added to dashboard state. There is
   no global Collapse all button; cards keep their independent expand controls.
   The large hero and redundant fleet headings are omitted so tiles start below
   the controls. Workspace, relay/settings and terminal navigation stay available.

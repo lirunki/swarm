@@ -1,11 +1,13 @@
 import json
 import os
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
 from swarm.cli import main
+from swarm.files import FileRequest
 from swarm.models import Agent
 from swarm.server import create_app
 
@@ -55,8 +57,14 @@ def test_registration_only_stores_reference_and_latest_product_is_unchanged(libr
         assert result.json()["files"][0]["available"]
         state = client.get("/api/state").json()["agents"][0]
         assert state["file_count"] == 1 and state["files_version"] == 1
+        assert state["file_search"] == [
+            {"label": "A chart", "filename": "result.png", "media_type": "image/png"}
+        ]
         assert state["product"] == product
-        assert str(original) not in json.dumps(state)
+        serialized_state = json.dumps(state)
+        assert str(original) not in serialized_state
+        assert "fake image bytes" not in serialized_state
+        assert set(state["file_search"][0]) == {"label", "filename", "media_type"}
         stored = list(app.state.controller.files.root.iterdir())
         assert len(stored) == 1 and stored[0].suffix == ".json"
         assert json.loads(stored[0].read_text())["files"][0]["path"] == str(original)
@@ -64,6 +72,84 @@ def test_registration_only_stores_reference_and_latest_product_is_unchanged(libr
         if os.name != "nt":
             assert stored[0].stat().st_mode & 0o777 == 0o600
         assert original.read_bytes() == PNG
+
+
+def test_summary_uses_only_index_metadata_after_source_changes(library, monkeypatch):
+    app, agent, folder = library
+    source = folder / "summary-source.txt"
+    source.write_text("payload that must not reach dashboard state")
+    app.state.controller.files.add(
+        agent.id, FileRequest(path=str(source), label="Searchable report")
+    )
+    expected = {
+        "file_count": 1,
+        "files_version": 1,
+        "file_search": [
+            {
+                "label": "Searchable report",
+                "filename": "summary-source.txt",
+                "media_type": "text/plain",
+            }
+        ],
+    }
+    moved = folder / "source-moved-away.txt"
+    source.rename(moved)
+
+    real_stat = Path.stat
+    real_open = Path.open
+    real_resolve = Path.resolve
+
+    def reject_source_stat(path, *args, **kwargs):
+        if path == source:
+            pytest.fail("dashboard summary must not stat the registered source")
+        return real_stat(path, *args, **kwargs)
+
+    def reject_source_open(path, *args, **kwargs):
+        if path == source:
+            pytest.fail("dashboard summary must not open the registered source")
+        return real_open(path, *args, **kwargs)
+
+    def reject_source_resolve(path, *args, **kwargs):
+        if path == source:
+            pytest.fail("dashboard summary must not resolve the registered source")
+        return real_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", reject_source_stat)
+    monkeypatch.setattr(Path, "open", reject_source_open)
+    monkeypatch.setattr(Path, "resolve", reject_source_resolve)
+
+    assert app.state.controller.files.summary(agent.id) == expected
+    moved.unlink()
+    assert app.state.controller.files.summary(agent.id) == expected
+    app.state.controller.refresh()
+    state = next(
+        entry for entry in app.state.controller.state["agents"] if entry["id"] == str(agent.id)
+    )
+    assert {key: state[key] for key in expected} == expected
+    assert str(source) not in json.dumps(state)
+    assert "payload that must not reach dashboard state" not in json.dumps(state)
+
+
+def test_queued_state_clears_stale_file_search(library):
+    app, agent, _ = library
+    controller = app.state.controller
+    controller.state = {
+        "agents": [
+            {
+                "id": str(agent.id),
+                "file_search": [
+                    {"label": "stale", "filename": "stale.txt", "media_type": "text/plain"}
+                ],
+            }
+        ]
+    }
+
+    controller.queued_state(agent)
+
+    entry = controller.state["agents"][0]
+    assert entry["file_count"] == 0
+    assert entry["files_version"] is None
+    assert entry["file_search"] == []
 
 
 def test_current_original_is_fetched_and_missing_files_stay_in_library(library):
@@ -134,11 +220,16 @@ def test_duplicate_paths_update_metadata_and_removal_never_deletes_original(libr
         ).json()["file"]
         assert first["id"] == second["id"] and second["label"] == "New label"
         assert len(client.get(endpoint(agent)).json()["files"]) == 1
+        state = client.get("/api/state").json()["agents"][0]
+        assert state["file_search"] == [
+            {"label": "New label", "filename": "référence.txt", "media_type": "text/plain"}
+        ]
         assert client.delete(endpoint(agent) + f"/{first['id']}").status_code == 200
         assert source.read_text() == "keep this"
         assert client.get(endpoint(agent)).json()["files"] == []
         assert client.get(endpoint(agent) + f"/{first['id']}/content").status_code == 404
-        assert client.get("/api/state").json()["agents"][0]["file_count"] == 0
+        state = client.get("/api/state").json()["agents"][0]
+        assert state["file_count"] == 0 and state["file_search"] == []
 
 
 def test_original_replacement_symlinks_devices_and_size_caps_are_safe(library, monkeypatch):
@@ -224,6 +315,7 @@ def test_caps_and_corrupt_index_do_not_lose_originals_or_other_agent_state(libra
         app.state.controller.files.cache.clear()
         state = client.get("/api/state").json()
         assert state["agents"][0]["files_error"] and state["errors"]
+        assert state["agents"][0]["file_search"] == []
         assert first.read_bytes() == b"one" and second.read_bytes() == b"two"
 
 

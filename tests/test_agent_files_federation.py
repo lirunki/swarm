@@ -71,8 +71,17 @@ def test_remote_reference_reads_current_bytes_in_chunks_only_on_open(tmp_path):
             assert headers["cache-control"] == "no-store"
             assert "r%C3%A9sultat.png" in headers["content-disposition"]
             status, _, state = get(f"{base_a}/api/federation/beta/proxy/api/state")
-            assert status == 200 and json.loads(state)["agents"][0]["file_count"] == 1
-            assert str(source).encode() not in state
+            remote_agent = json.loads(state)["agents"][0]
+            assert status == 200 and remote_agent["file_count"] == 1
+            assert remote_agent["file_search"] == [
+                {
+                    "label": "résultat.png",
+                    "filename": "résultat.png",
+                    "media_type": "image/png",
+                }
+            ]
+            assert set(remote_agent["file_search"][0]) == {"label", "filename", "media_type"}
+            assert str(source).encode() not in state and changed not in state
             source.unlink()
             status, _, data = get(prefix)
             assert not json.loads(data)["files"][0]["available"]
