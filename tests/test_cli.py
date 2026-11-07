@@ -1,11 +1,41 @@
 import json
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
 from swarm.cli import main, parser, run_report
 from swarm.models import Agent
 from swarm.store import Store
+
+
+def test_archive_history_cli_generates_request_and_uses_client(tmp_path, monkeypatch, capsys):
+    captured = {}
+
+    class Client:
+        def __init__(self, api_url, *, token_file):
+            captured.update(api_url=api_url, token_file=token_file)
+
+        def archive_history(self, agent_id, *, percent, request_id):
+            captured.update(agent_id=agent_id, percent=percent, request_id=request_id)
+            return {"archive_id": "done", "percent_requested": percent}
+
+    monkeypatch.setattr("swarm.cli.AgentClient", Client)
+    main(
+        [
+            "--home",
+            str(tmp_path / "home"),
+            "--api-url",
+            "http://127.0.0.1:9999",
+            "archive-history",
+            "agent-id",
+            "--percent",
+            "63",
+        ]
+    )
+    assert captured["api_url"] == "http://127.0.0.1:9999"
+    assert captured["agent_id"] == "agent-id" and captured["percent"] == 63
+    assert str(UUID(captured["request_id"])) == captured["request_id"]
+    assert json.loads(capsys.readouterr().out)["percent_requested"] == 63
 
 
 def test_reporting_captures_pi_metadata_and_keeps_pid(tmp_path, monkeypatch):

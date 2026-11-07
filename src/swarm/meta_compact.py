@@ -49,7 +49,12 @@ class MetaCompactRequest(BaseModel):
 def busy(agent: Agent) -> bool:
     return any(
         isinstance(job := getattr(agent, key, None), dict) and job.get("status") == "running"
-        for key in ("meta_compaction", "tool_input_compaction", "tool_output_repair")
+        for key in (
+            "meta_compaction",
+            "tool_input_compaction",
+            "tool_output_repair",
+            "context_archive",
+        )
     )
 
 
@@ -154,7 +159,13 @@ def context_entries(records: list[dict]) -> tuple[dict, list[dict], list[dict], 
             boundary = next((i for i, e in enumerate(branch[:pos]) if e["id"] == first), None)
             if boundary is None:
                 raise ValueError("invalid compaction boundary")
-            kept = branch[boundary:pos]
+            # Pi restores the folded system checkpoint separately and excludes system
+            # messages from the retained conversational entries around a compaction.
+            kept = [
+                entry
+                for entry in branch[boundary:pos]
+                if entry.get("message", {}).get("role") != "system"
+            ]
         selected = [compact, *kept, *branch[pos + 1 :]]
     return header, branch, selected, model
 
@@ -404,6 +415,10 @@ class MetaCompactor:
         require_not_busy(agent)
         if getattr(agent, "restart_job_id", None):
             raise RuntimeError("Agent restart is in progress; compaction is unavailable")
+        if getattr(agent, "stop_pending", False) or getattr(agent, "orchestration_stop", None):
+            raise RuntimeError("Agent stop is in progress; compaction is unavailable")
+        if agent.spawn_state not in {None, "ready", "completed"}:
+            raise RuntimeError("Agent setup or launch is in progress; compaction is unavailable")
         if not agent.managed or agent.backend != "pi" or not agent.session_file:
             raise ValueError("Meta-compact requires a managed Pi agent with a saved session")
         if self.controller.processes.alive(agent):
@@ -413,15 +428,23 @@ class MetaCompactor:
             read_source(path)
         elif path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_SOURCE_BYTES:
             raise ValueError("Session must be a regular non-symlink file at most 128 MiB")
-        for other in self.store.scan():
-            if (
-                other.id != agent.id
-                and other.session_file
-                and (
-                    Path(other.session_file).resolve() == path.resolve()
-                    or (agent.session_id and other.session_id == agent.session_id)
-                )
-            ):
+        agents, record_errors = self.store.scan_with_errors()
+        if record_errors:
+            raise RuntimeError("Unreadable agent records prevent session ownership verification")
+        for other in agents:
+            if other.id == agent.id:
+                continue
+            same_session = bool(agent.session_id and other.session_id == agent.session_id)
+            same_path = False
+            if other.session_file:
+                other_path = Path(other.session_file).expanduser().absolute()
+                try:
+                    same_path = other_path.resolve() == path.resolve() or (
+                        other_path.is_file() and path.is_file() and other_path.samefile(path)
+                    )
+                except OSError:
+                    same_path = other_path.resolve() == path.resolve()
+            if same_session or same_path:
                 raise RuntimeError("Session is shared by another agent; cannot replace it safely")
         self.check_external(agent)
         return path

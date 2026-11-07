@@ -15,6 +15,7 @@ import webbrowser
 from pathlib import Path, PureWindowsPath
 
 from .agent_client import AgentClient
+from .history_archive import retrieve_history
 from .importers.grok import GrokImportRequest, GrokSessions
 from .models import Status
 from .paths import local_path
@@ -155,6 +156,26 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("list", help="list agent records as JSON")
     commands.add_parser("p", help="alias for list (all agent records as JSON)")
     commands.add_parser("doctor", help="check runtime prerequisites")
+    archive_history = commands.add_parser(
+        "archive-history", help="archive old saved model context without an LLM"
+    )
+    archive_history.add_argument("id", help="agent ID")
+    archive_history.add_argument(
+        "--percent", type=int, default=50, help="old context percentage to archive (1–95)"
+    )
+    archive_history.add_argument(
+        "--request-id", help="UUID idempotency key; generated locally when omitted"
+    )
+    history_archive = commands.add_parser(
+        "history-archive", help="read a bounded page from a private history archive"
+    )
+    history_archive.add_argument("id", help="owning agent ID")
+    history_archive.add_argument("archive_id", help="history archive UUID")
+    history_archive.add_argument("--offset", type=int, default=0, help="UTF-8 byte offset")
+    history_archive.add_argument(
+        "--limit", type=int, default=8000, help="maximum UTF-8 bytes (1–1048576)"
+    )
+    history_archive.add_argument("--format", choices=["text", "jsonl"], default="text")
     output = commands.add_parser(
         "tool-output", help="read a page of archived tool output; never rerun the command"
     )
@@ -572,6 +593,15 @@ def main(argv: list[str] | None = None) -> None:
                 **_tls_options(args, relay=True),
             )
             return
+        if args.command == "archive-history":
+            if not 1 <= args.percent <= 95:
+                raise ValueError("--percent must be from 1 through 95")
+            request_id = _request_id(args.request_id)
+            result = AgentClient(
+                args.api_url, token_file=local_path(args.home) / "api-auth" / "client.token"
+            ).archive_history(args.id, percent=args.percent, request_id=request_id)
+            print(json.dumps(result, indent=2))
+            return
         if args.command == "product":
             if not args.id:
                 raise ValueError("--id or SWARM_AGENT_ID is required to advertise a product")
@@ -722,6 +752,20 @@ def main(argv: list[str] | None = None) -> None:
                 print(json.dumps(record, indent=2))
         elif args.command == "notify":
             print(json.dumps(run_notify(store, args), indent=2))
+        elif args.command == "history-archive":
+            print(
+                json.dumps(
+                    retrieve_history(
+                        store,
+                        args.id,
+                        args.archive_id,
+                        args.offset,
+                        args.limit,
+                        args.format,
+                    ),
+                    indent=2,
+                )
+            )
         elif args.command == "tool-output":
             print(
                 json.dumps(

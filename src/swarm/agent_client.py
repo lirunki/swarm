@@ -105,6 +105,12 @@ class AgentClient:
                 "The command outcome may be unknown. Inspect the mailbox/agent state before "
                 f"retrying; if retrying the same command, reuse request ID {request_id}."
             )
+        if operation.startswith("archive history "):
+            request_id = operation.removeprefix("archive history ")
+            return (
+                "The archive outcome may be unknown. Inspect the agent state before retrying; "
+                f"reuse request ID {request_id} for the same archive operation."
+            )
         if operation == "message":
             return "The outcome may be unknown; inspect child status before resending the message."
         if operation == "wait":
@@ -228,6 +234,15 @@ class AgentClient:
             body={"text": text, "sender_id": sender_id, "request_id": request_id},
             expected=202,
             operation=f"command {request_id}",
+        )
+
+    def archive_history(self, agent_id: str, *, percent: int, request_id: str) -> dict[str, Any]:
+        """Archive old saved context once; uncertain retries must reuse request_id."""
+        return self.request(
+            "POST",
+            f"/api/agents/{quote(agent_id, safe='')}/archive-history",
+            body={"percent": percent, "request_id": request_id},
+            operation=f"archive history {request_id}",
         )
 
     def product(self, agent_id: str, payload: dict[str, Any] | None) -> dict[str, Any]:

@@ -310,7 +310,7 @@ class ToolOutputRepair:
             raise RuntimeError("Agent session identity/path changed during output repair")
         if any(
             isinstance(job := getattr(current, key, None), dict) and job.get("status") == "running"
-            for key in ("meta_compaction", "tool_input_compaction")
+            for key in ("meta_compaction", "tool_input_compaction", "context_archive")
         ):
             raise RuntimeError("Another session maintenance operation is active")
         agents = self.store.scan()

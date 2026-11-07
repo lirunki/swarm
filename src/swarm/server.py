@@ -14,11 +14,20 @@ from collections import deque
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote, urlsplit
 from uuid import UUID
 
 from anyio import CancelScope
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -32,6 +41,13 @@ from .discovery import browse_folders, discover_models
 from .federation import MAX_RPC_REQUEST, FederationConfig
 from .files import FileRequest, FileUnavailable
 from .grouping import GroupingConflict, GroupingCorrupt, GroupingError
+from .history_archive import (
+    MAX_PAGE_BYTES,
+    ArchiveConflictError,
+    HistoryArchiver,
+    HistoryArchiveRequest,
+    retrieve_history,
+)
 from .importers.grok import GrokImportRequest, GrokSessions
 from .messaging import MessageRequest
 from .meta_compact import MetaCompactor, MetaCompactRequest, require_not_busy
@@ -155,6 +171,7 @@ def create_app(
     meta_compactor = MetaCompactor(controller, pi)
     tool_input_compactor = ToolInputCompactor(meta_compactor)
     output_repair = ToolOutputRepair(meta_compactor)
+    history_archiver = HistoryArchiver(meta_compactor)
     sessions = Sessions(store, session_roots)
     grok = GrokSessions(store, grok_session_roots)
     listeners: set[asyncio.Queue] = set()
@@ -196,6 +213,7 @@ def create_app(
             await asyncio.to_thread(tool_input_compactor.recover)
             await asyncio.to_thread(output_repair.recover)
             await asyncio.to_thread(meta_compactor.recover)
+            await asyncio.to_thread(history_archiver.recover)
             if recover:
                 await asyncio.to_thread(controller.recover)
             else:
@@ -220,6 +238,7 @@ def create_app(
     app.state.meta_compactor = meta_compactor
     app.state.tool_input_compactor = tool_input_compactor
     app.state.output_repair = output_repair
+    app.state.history_archiver = history_archiver
     app.state.sessions = sessions
     app.state.grok_sessions = grok
     app.state.federation = federation
@@ -317,6 +336,10 @@ def create_app(
     async def grouping_conflict(request, exc):
         return JSONResponse({"detail": str(exc)}, status_code=409)
 
+    @app.exception_handler(ArchiveConflictError)
+    async def archive_conflict(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
     @app.exception_handler(GroupingCorrupt)
     async def grouping_corrupt(request, exc):
         return JSONResponse({"detail": "Saved groups could not be read"}, status_code=409)
@@ -363,7 +386,9 @@ def create_app(
 
     @app.get("/")
     def index():
-        return FileResponse(STATIC / "index.html")
+        # Revalidate the shell on every visit so new actions/module versions cannot
+        # disappear behind a cached older Edit dialog. Versioned assets stay cacheable.
+        return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store"})
 
     @app.get("/api/state")
     def state():
@@ -809,6 +834,31 @@ def create_app(
         result = await asyncio.to_thread(orchestration.wait, str(parent_id), str(child_id))
         await broadcast()
         return result
+
+    @app.post("/api/agents/{agent_id}/archive-history")
+    async def archive_history(agent_id: UUID, request: HistoryArchiveRequest):
+        result = await asyncio.to_thread(history_archiver.archive, str(agent_id), request)
+        await asyncio.to_thread(controller.refresh)
+        await broadcast()
+        return result
+
+    @app.get("/api/agents/{agent_id}/history-archives/{archive_id}")
+    async def history_archive_page(
+        agent_id: UUID,
+        archive_id: UUID,
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=8000, ge=1, le=MAX_PAGE_BYTES),
+        format: Literal["text", "jsonl"] = "text",
+    ):
+        return await asyncio.to_thread(
+            retrieve_history,
+            store,
+            str(agent_id),
+            archive_id,
+            offset,
+            limit,
+            format,
+        )
 
     @app.post("/api/agents/{agent_id}/meta-compact", status_code=202)
     async def meta_compact(agent_id: UUID, request: MetaCompactRequest):

@@ -12,6 +12,8 @@ from swarm.importers.pi_history import PiHistory
 from swarm.meta_compact import (
     MetaCompactRequest,
     PiSummarizer,
+    busy,
+    context_entries,
     digest,
     project_session,
     split_transcript,
@@ -142,6 +144,32 @@ def test_projection_honors_branches_compaction_context_edits(tmp_path):
         assert absent not in text
 
 
+def test_compaction_projection_filters_retained_system_messages_like_pi(tmp_path):
+    history = sample(tmp_path)
+    history.add(
+        "message",
+        message={"role": "system", "content": "RETAINED SYSTEM", "timestamp": 1},
+    )
+    system_id = history.parent
+    history.user("kept user")
+    history.add(
+        "compaction",
+        summary="checkpoint",
+        firstKeptEntryId=system_id,
+        tokensBefore=10,
+        systemMessage={"role": "system", "content": "folded system", "timestamp": 2},
+    )
+    compact_id = history.parent
+    history.user("new user")
+    records = [json.loads(line) for line in history.encode().splitlines()]
+
+    _, branch, selected, _ = context_entries(records)
+    assert any(entry.get("id") == system_id for entry in branch)
+    assert selected[0]["id"] == compact_id
+    assert all(entry.get("id") != system_id for entry in selected)
+    assert any(entry.get("message", {}).get("content") == "kept user" for entry in selected)
+
+
 def test_projection_rejects_broken_chain(tmp_path):
     history = sample(tmp_path)
     history.entries[-1]["parentId"] = "missing"
@@ -263,6 +291,64 @@ def test_concurrent_changes_fail_closed(app_agent, monkeypatch, change):
         job = wait_job(app, agent)
         assert job["status"] == "failed", job
         assert path.read_bytes() == original + (b"\n" if change == "source" else b"")
+
+
+def test_context_archive_lease_guards_all_agent_mutations(app_agent):
+    app, agent, _ = app_agent
+    lease = {"id": uuid4().hex, "status": "running"}
+    with TestClient(app) as client:
+        app.state.controller.store.update(agent.id, {"context_archive": lease})
+        assert busy(app.state.controller.store.get(agent.id))
+        for suffix in (
+            "wake",
+            "stop",
+            "meta-compact",
+            "repair-tool-outputs",
+            "compact-tool-inputs",
+        ):
+            response = client.post(f"/api/agents/{agent.id}/{suffix}", json={})
+            assert response.status_code == 409, (suffix, response.text)
+        assert (
+            client.patch(f"/api/agents/{agent.id}", json={"auto_resume": True}).status_code == 409
+        )
+        assert client.delete(f"/api/agents/{agent.id}").status_code == 409
+
+
+def test_meta_guard_rejects_stop_setup_shared_and_unreadable_ownership(app_agent):
+    app, agent, path = app_agent
+    store = app.state.controller.store
+    compactor = app.state.meta_compactor
+
+    for fields, match in (
+        ({"stop_pending": True}, "stop"),
+        ({"stop_pending": False, "orchestration_stop": {"id": "x"}}, "stop"),
+        ({"orchestration_stop": None, "spawn_state": "provisioning"}, "setup|launch"),
+    ):
+        store.update(agent.id, fields)
+        with pytest.raises(RuntimeError, match=match):
+            compactor.eligible(store.get(agent.id))
+    store.update(agent.id, {"spawn_state": "ready"})
+
+    other = store.create(
+        Agent(
+            name="Shared",
+            goal="G",
+            folder=agent.folder,
+            managed=True,
+            auto_resume=False,
+            session_id=agent.session_id,
+            session_file=str(path.with_name("alias.jsonl")),
+        )
+    )
+    Path(other.session_file).write_bytes(path.read_bytes())
+    with pytest.raises(RuntimeError, match="shared"):
+        compactor.eligible(store.get(agent.id))
+    store.remove(other.id)
+
+    corrupt = store.agents_dir / f"{uuid4()}.md"
+    corrupt.write_text("---\n[\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="Unreadable agent records"):
+        compactor.eligible(store.get(agent.id))
 
 
 def test_busy_job_guards_mutations_and_survives_dialog_close(app_agent):

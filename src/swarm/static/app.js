@@ -16,7 +16,7 @@ let forgettingAgent = false, metaCompactingId = null, toolInputCompactingId = nu
 const toolOutputRepairRequests = new Map();
 const terminals = new Map();
 const groupedBranches = new Set();
-let selectedAgentGroup = null, agentGroupsController = null, groupingModeController = null;
+let selectedAgentGroup = null, agentGroupsController = null, groupingModeController = null, historyArchiveController = null;
 let browserGroups = null, browserGroupingProjection = null, browserGroupingError = null, browserGroupingOperation = 0, groupingBranchBusy = false, groupingBranchOperation = 0;
 const openedAgentGroups = new Set(), agentGroupTabs = new Map();
 const cardViews = new SwarmCardViews.CardViews();
@@ -326,8 +326,10 @@ const toolOutputRepairInFlight = a => {
   const request = a && requests?.get(a.id);
   return !!request && request.generation === stateGeneration && request.swarm === activeSwarm;
 };
-const compactionRunning = a => metaCompactionRunning(a) || toolInputCompactionRunning(a) || toolOutputRepairRunning(a);
-const compactionRequestInFlight = a => !!a && (metaCompactingId === a.id || toolInputCompactingId === a.id || toolOutputRepairInFlight(a));
+const historyArchiveRunning = a => a?.context_archive?.status === 'running';
+const historyArchiveInFlight = a => typeof historyArchiveController !== 'undefined' && !!historyArchiveController?.inFlight(a);
+const compactionRunning = a => metaCompactionRunning(a) || toolInputCompactionRunning(a) || toolOutputRepairRunning(a) || historyArchiveRunning(a);
+const compactionRequestInFlight = a => !!a && (historyArchiveInFlight(a) || metaCompactingId === a.id || toolInputCompactingId === a.id || toolOutputRepairInFlight(a));
 const compactionBlocked = a => compactionRunning(a) || compactionRequestInFlight(a);
 const persistedManagedPi = a => !!a && a.managed === true && a.backend === 'pi' && !!a.session_file;
 const outputRepairStopping = a => !!a && (!!a.stop_pending || !!a.orchestration_stop);
@@ -1008,11 +1010,13 @@ function updateEditAvailability() {
   const running = metaCompactionRunning(a), toolRunning = toolInputCompactionRunning(a), outputRunning = toolOutputRepairRunning(a);
   const starting = metaCompactingId === editId, toolStarting = toolInputCompactingId === editId, outputStarting = toolOutputRepairInFlight(a);
   const restarting = restartInProgress(a);
-  const blocked = running || toolRunning || outputRunning || starting || toolStarting || outputStarting || restarting;
+  const historyRunning=historyArchiveRunning(a),historyStarting=historyArchiveInFlight(a);
+  const blocked = running || toolRunning || outputRunning || starting || toolStarting || outputStarting || historyRunning || historyStarting || restarting;
   const eligible = !!a && a.managed === true && a.backend === 'pi' && !!a.session_file && !a.alive && !outputRepairStopping(a) && !incompleteSetup(a);
   let availability = 'Available while this managed Pi agent is stopped.';
   if (!a) availability = 'This agent is no longer registered.';
   else if (restarting) availability = 'Fleet restart is active. Editing and compaction are disabled.';
+  else if (historyRunning || historyStarting) availability = 'Archiving older context. It will remain stopped when complete.';
   else if (running) availability = 'Compacting the saved session. It will remain stopped when complete.';
   else if (toolRunning || toolStarting) availability = 'Tool input compaction is running. It will remain stopped when complete.';
   else if (outputRunning || outputStarting) availability = 'Oversized tool-output repair is running. It will remain stopped when complete.';
@@ -1039,6 +1043,7 @@ function updateEditAvailability() {
   let toolAvailability = 'Available while this managed Pi agent is stopped.';
   if (!a) toolAvailability = 'This agent is no longer registered.';
   else if (restarting) toolAvailability = 'Fleet restart is active. Editing and compaction are disabled.';
+  else if(historyRunning || historyStarting)toolAvailability='Older-context archival is running. Wait for it to finish.';
   else if (running || starting) toolAvailability = 'Meta-compaction is running. Wait for it to finish.';
   else if (outputRunning || outputStarting) toolAvailability = 'Oversized tool-output repair is running. Wait for it to finish.';
   else if (toolRunning || toolStarting) toolAvailability = 'Updating the saved tool-input session. It will remain stopped when complete.';
@@ -1065,6 +1070,7 @@ function updateEditAvailability() {
     $('#tool-input-compact-directory-row').hidden = !toolJob.directory; $('#tool-input-compact-directory').textContent = toolJob.directory || '';
     $('#tool-input-revert-backup-row').hidden = !toolJob.compacted_backup; $('#tool-input-revert-backup').textContent = toolJob.compacted_backup || '';
   }
+  historyArchiveController?.update(a);
   const outputReason = outputRepairUnavailableReason(a);
   $('#tool-output-repair-availability').textContent = outputReason || 'Available while this managed Pi agent is stopped.';
   $('#repair-tool-outputs').disabled = !!outputReason;
@@ -1084,7 +1090,7 @@ function updateEditAvailability() {
 }
 async function startMetaCompaction() {
   const id = editId, a = agentById(id), form = $('#edit-form');
-  if (!a || metaCompactingId || toolInputCompactingId || compactionRunning(a) || (typeof toolOutputRepairRequests !== 'undefined' && toolOutputRepairInFlight(a)) || !a.managed || a.backend !== 'pi' || !a.session_file || a.alive) { updateEditAvailability(); return; }
+  if (!a || metaCompactingId || toolInputCompactingId || historyArchiveInFlight(a) || compactionRunning(a) || (typeof toolOutputRepairRequests !== 'undefined' && toolOutputRepairInFlight(a)) || !a.managed || a.backend !== 'pi' || !a.session_file || a.alive) { updateEditAvailability(); return; }
   const overlapInput = form.elements.overlap_tokens, chunkInput = form.elements.chunk_count;
   if (!overlapInput.reportValidity() || !chunkInput.reportValidity()) return;
   const overlapTokens = Number(overlapInput.value), chunkCount = Number(chunkInput.value), model = form.elements.meta_model.value.trim();
@@ -1104,7 +1110,7 @@ async function startMetaCompaction() {
 }
 async function compactToolInputs() {
   const id = editId, a = agentById(id), form = $('#edit-form');
-  if (!a || metaCompactingId || toolInputCompactingId || compactionRunning(a) || (typeof toolOutputRepairRequests !== 'undefined' && toolOutputRepairInFlight(a)) || !a.managed || a.backend !== 'pi' || !a.session_file || a.alive) { updateEditAvailability(); return; }
+  if (!a || metaCompactingId || toolInputCompactingId || historyArchiveInFlight(a) || compactionRunning(a) || (typeof toolOutputRepairRequests !== 'undefined' && toolOutputRepairInFlight(a)) || !a.managed || a.backend !== 'pi' || !a.session_file || a.alive) { updateEditAvailability(); return; }
   if (!confirm(`Compact completed tool inputs for ${a.name}?\n\nNo model calls are made. Long completed tool inputs are replaced by 100-character previews and toolrun IDs. Tool output contents are preserved. Completed tool exchanges become inert history and cannot execute as tool calls.\n\nThe full original session is archived, and the active branch is retained. This agent stays stopped until you explicitly Wake it.\n\nSession:\n${a.session_file}`)) return;
   $('.form-error', form).textContent = ''; toolInputCompactingId = id; updateEditAvailability();
   try {
@@ -1118,7 +1124,7 @@ async function compactToolInputs() {
 }
 async function revertToolInputs() {
   const id = editId, a = agentById(id), form = $('#edit-form');
-  if (!a || metaCompactingId || toolInputCompactingId || compactionRunning(a) || (typeof toolOutputRepairRequests !== 'undefined' && toolOutputRepairInFlight(a)) || !canRevertToolInputs(a) || !a.managed || a.backend !== 'pi' || !a.session_file || a.alive) { updateEditAvailability(); return; }
+  if (!a || metaCompactingId || toolInputCompactingId || historyArchiveInFlight(a) || compactionRunning(a) || (typeof toolOutputRepairRequests !== 'undefined' && toolOutputRepairInFlight(a)) || !canRevertToolInputs(a) || !a.managed || a.backend !== 'pi' || !a.session_file || a.alive) { updateEditAvailability(); return; }
   const allowHistoryLoss = $('#revert-allow-history-loss').checked;
   const historyWarning = allowHistoryLoss
     ? 'WARNING: You enabled history loss. Newer history and other changes will be discarded from the active session and retained only in the backup.'
@@ -1502,6 +1508,12 @@ groupingModeController = new SwarmGroupingMode.GroupingModeController({
     }
     await refresh();
   },
+});
+historyArchiveController = new SwarmHistoryArchive.HistoryArchiveController({
+  api:localApi,currentSwarm:()=>activeSwarm,currentGeneration:()=>stateGeneration,agent:()=>agentById(editId),toast,
+  additionalReason:agent=>agent && (metaCompactingId===agent.id || toolInputCompactingId===agent.id || toolOutputRepairInFlight(agent)) ? 'Another session maintenance request is in flight. Wait for its persisted outcome.' : '',
+  onBusyChange:()=>render(),
+  onChanged:async(report)=>{const agent=state.agents.find(agent=>agent.session_file===report.source&&(!agent.session_id||agent.session_id===report.session_id));if(agent)agent.context_archive=report;render();await refresh();},
 });
 const agentBroadcast = new SwarmAgentBroadcast.BroadcastController({
   api: localApi,

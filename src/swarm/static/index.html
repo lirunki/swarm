@@ -7,27 +7,28 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=full-card-search-1">
+  <link rel="stylesheet" href="/static/app.css?v=history-archive-visible-2">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=full-card-search-1"></script>
-  <script defer src="/static/org-chart.js?v=full-card-search-1"></script>
-  <script defer src="/static/relay-settings.js?v=full-card-search-1"></script>
-  <script defer src="/static/terminal-touch.js?v=full-card-search-1"></script>
-  <script defer src="/static/terminal-copy.js?v=full-card-search-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=full-card-search-1"></script>
-  <script defer src="/static/terminal-keys.js?v=full-card-search-1"></script>
-  <script defer src="/static/agent-files.js?v=full-card-search-1"></script>
-  <script defer src="/static/agent-messages.js?v=full-card-search-1"></script>
-  <script defer src="/static/agent-broadcast.js?v=full-card-search-1"></script>
-  <script defer src="/static/auth.js?v=full-card-search-1"></script>
-  <script defer src="/static/fleet-control.js?v=full-card-search-1"></script>
-  <script defer src="/static/system-notifications.js?v=full-card-search-1"></script>
-  <script defer src="/static/notifications.js?v=full-card-search-1"></script>
-  <script defer src="/static/agent-groups.js?v=full-card-search-1"></script>
-  <script defer src="/static/grouping-mode.js?v=full-card-search-1"></script>
-  <script defer src="/static/agent-search.js?v=full-card-search-1"></script>
-  <script defer src="/static/app.js?v=full-card-search-1"></script>
+  <script defer src="/static/card-views.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/org-chart.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/relay-settings.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/terminal-touch.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/terminal-copy.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/dashboard-controls.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/terminal-keys.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/agent-files.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/agent-messages.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/agent-broadcast.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/auth.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/fleet-control.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/system-notifications.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/notifications.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/agent-groups.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/grouping-mode.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/agent-search.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/history-archive.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/app.js?v=history-archive-visible-2"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -342,6 +343,19 @@
           <p id="tool-input-compact-archive-row" hidden>Original archive: <code id="tool-input-compact-archive"></code></p>
           <p id="tool-input-compact-directory-row" hidden>Result directory: <code id="tool-input-compact-directory"></code></p>
           <p id="tool-input-revert-backup-row" hidden>Session backup before revert: <code id="tool-input-revert-backup"></code></p>
+        </div>
+      </section>
+      <section class="history-archive-section" aria-labelledby="history-archive-heading">
+        <div class="meta-compact-head"><div><h3 id="history-archive-heading">Archive older context <span class="hint">No LLM</span></h3><p id="history-archive-availability" class="hint"></p></div><button id="archive-history" type="button">Archive older context…</button></div>
+        <p class="hint">Move the oldest chosen share of active model context to a private file and replace it with one history-reference entry. No summarization or model calls. Raw history stays intact; the newest user turn and tool-call/result batches remain together.</p>
+        <label>Older context to archive (%)<input id="history-archive-percent" name="history_percent" type="number" value="50" min="1" max="95" step="1"></label>
+        <p class="hint">Measured by serialized model-content bytes, not exact tokens. The cut moves to a safe turn boundary; the actual percentage may differ. The agent stays stopped with automatic recovery disabled until you explicitly Wake/re-enable it.</p>
+        <div id="history-archive-status" class="meta-compact-status" aria-live="polite" hidden>
+          <p><strong id="history-archive-state"></strong></p>
+          <p id="history-archive-result" hidden></p>
+          <p id="history-archive-error" class="meta-compact-error" hidden></p>
+          <p id="history-archive-file-row" hidden>Older history: <code id="history-archive-file"></code></p>
+          <p id="history-archive-original-row" hidden>Exact original session: <code id="history-archive-original"></code></p>
         </div>
       </section>
       <section class="tool-output-repair-section" aria-labelledby="tool-output-repair-heading">

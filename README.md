@@ -1568,6 +1568,107 @@ This prevents **new** giant tool text; it does not rewrite existing oversized
 history. Use the separate Edit repair below for the old Copilot error. It is not
 reasoning suppression or whole-conversation compaction.
 
+## Archive an older percentage of model context
+
+For deterministic context reduction without summarization, stop a managed Pi agent
+and open **Edit → Archive older context**. Choose an integer **1–95%** (default 50),
+then confirm. Alternatively:
+
+```bash
+swarm archive-history AGENT_ID --percent 50
+# Deliberate retry of the exact same request after checking its persisted outcome:
+swarm archive-history AGENT_ID --percent 50 --request-id ORIGINAL_UUID
+```
+
+The percentage is measured from **serialized active model-content UTF-8 bytes**,
+not exact provider tokens, raw session file size, entry count, or tool metadata.
+Swarm chooses the closest safe older-prefix boundary, so the actual share can be
+smaller or larger than requested. The result reports requested/actual percentages,
+archived/kept bytes and entry counts. It always keeps the newest user-message span
+and whole recorded tool-call/result batches together. Final provider outcomes
+(`stop`, `toolUse`, `length`, `error`, `aborted`) are preserved as historical facts;
+a batch is eligible only when all its results are present and unambiguous. An
+archived failed/aborted attempt is not marked successful or rerun. Pending/deferred,
+unknown or missing assistant outcomes, incomplete tool batches, and sessions with
+no useful safe prefix are refused rather than guessed. An archive reference that would not reduce context is also refused.
+
+**No LLM calls or generated summaries.** Swarm appends a native Pi compaction entry
+whose entire summary is one bounded notice: **read this file for older history**,
+including its exact path, archive ID and retrieval instructions. Pi's current system
+prompt/tool checkpoint and the effective edits on retained messages are preserved.
+Existing session bytes, tree branches, usage metadata and original messages remain
+unchanged; this reduces model-visible context, not physical raw-history size.
+Navigating before the checkpoint can expose the older context again. Subsequent
+normal Pi compaction may summarize the notice, so retain the archive files.
+
+Archives are colocated with the actual session, not Swarm's global temp storage:
+
+```text
+<session-directory>/
+  <session>.jsonl
+  context-archives/
+    <session-id-hash>/
+      <archive-id>/
+        original.jsonl       # byte-exact full source
+        history.jsonl        # exact effective older entries, structured
+        history.txt          # readable older history; images referenced in JSONL
+        replacement.jsonl    # validated source plus appended checkpoint
+        manifest.json        # session/path ownership, lengths and checksums
+        job.json
+      requests/              # bounded request-ID receipts; archives are never pruned
+```
+
+POSIX archive directories/files are private (0700/0600). Native Windows inherits
+ACLs, so select a private session location. Archives can contain old prompts, tool
+output, images, reasoning, or secrets already in history: they are **not** published
+as products or Files-library items. `history.jsonl` retains structured image data
+and escaped code units; readable `history.txt` replaces lone surrogates and labels
+images instead of dumping encoded image data.
+
+Retrieve only needed pages with the model tool **`swarm_read_history`**:
+
+```text
+archive_id: <32-character archive ID>
+format: text                  # or jsonl
+offset: 0                    # byte offset
+limit: 8000                  # maximum 64000
+```
+
+The authenticated API or local CLI is also available:
+
+```bash
+swarm history-archive AGENT_ID ARCHIVE_ID --offset 0 --limit 8000 --format text
+```
+
+Follow **`next_offset`** for UTF-8-safe paging and stop when `eof` is true. Checksums
+are verified once per unchanged file identity; reads use bounded no-follow
+file descriptors with stability checks. Arbitrary paths, other-session archives,
+non-private archive files and tampered manifests/history are rejected. Do not load
+all pages into context or rerun old commands merely to recover their output.
+
+Like other offline maintenance, this requires a stopped, persisted managed Pi
+session that is not shared, stopping, provisioning, restarting, or undergoing
+another maintenance action. Stop external Pi processes using that workspace too.
+Swarm verifies ownership, source identity and hash again before commit, and uses a
+cooperative source descriptor lock; an uncooperative external writer is not an
+atomic compare-and-swap guarantee. Do not edit/reopen the session during maintenance.
+Archives and directory entries are synced before replacement. A failure retains
+archives and reports the outcome; recovery only recognizes a verified committed
+replacement or valid append-only continuation. Retried request IDs are bound to
+percentage, agent/session/path/source and retained across newer archive operations;
+changed requests cannot reuse an ID. There are 256 recent request receipts, a
+128 MiB source/per-file bound, and a 512 MiB combined-artifact bound.
+
+The agent remains **stopped with automatic recovery disabled**. Timers and other
+recorded intent remain, but Wake/re-enable is explicit. There is no automatic undo
+that could discard newer work: keep `original.jsonl` and the current session before
+any deliberate restoration. Restoring the original also restores its context size.
+
+Deploy the updated controller for this backend action, then refresh the dashboard.
+Existing mailbox-capable Pi sessions need `/reload` to load `swarm_read_history`;
+new launches load it automatically. Setup makes no production session changes or
+controller restarts on its own.
+
 ## Fix oversized tool-output fields
 
 An error such as:
