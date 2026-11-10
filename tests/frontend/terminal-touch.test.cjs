@@ -90,6 +90,7 @@ test('actual terminal input pipeline forwards generated mouse reports and cleans
   }
   const sent = [], t = {screen: {}, pane: {hidden: false}, ws: {readyState: 1, send: raw => sent.push(JSON.parse(raw))}};
   const context = vm.createContext({Terminal, FitAddon: {FitAddon: class {fit() {}}}, WebSocket: {OPEN: 1}, ResizeObserver: class {observe() {}}, attachTerminal() {},
+    wheelPreferences:{value:1},SwarmTerminalWheel:{TerminalWheelMultiplier:class {transform(data){return data;} dispose(){}}},
     SwarmTerminalCopy: {TerminalCopy: class {constructor() { this.active = false; }}},
     SwarmTerminalKeys: {TerminalKeys: class {transform(data) { return data; }}},
     SwarmTerminalTouch: {TerminalTouchScroll: class {constructor(options) { settings = options; }}, supportsScroll: () => true, scrollTerminal: () => inputHandler('\u001b[<64;10;5M')}});

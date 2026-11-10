@@ -52,9 +52,15 @@ function settings(changes = {}) {
 function controllerFixture(options = {}) {
   const ids = ['grouping-mode-owner', 'grouping-server-managed', 'grouping-mode-status', 'grouping-mode-change',
     'grouping-prime-dialog', 'grouping-prime-owner', 'grouping-prime-summary', 'grouping-prime-current',
-    'grouping-prime-server', 'grouping-prime-cancel', 'grouping-prime-title', 'notifications-dialog'];
+    'grouping-prime-server', 'grouping-prime-cancel', 'grouping-prime-title', 'notifications-dialog', 'settings-dialog',
+    'relay-settings-section'];
   const nodes = Object.fromEntries(ids.map(id => [`#${id}`, new Element()]));
   nodes['#notifications-dialog'].open = true;
+  const relaySection = nodes['#relay-settings-section']; let relayOpen = false;
+  Object.defineProperty(relaySection, 'open', {configurable: true, get: () => relayOpen, set: value => {
+    const changed = relayOpen !== !!value; relayOpen = !!value;
+    if (changed) queueMicrotask(() => relaySection.dispatch('toggle'));
+  }});
   let source = 'local', generation = 1, current = settings();
   const calls = [], changed = [], errors = [], confirms = [];
   const api = async (path, method, body) => {
@@ -256,22 +262,81 @@ test('panel paints unsupported/error safely and preserves a dirty choice across 
 });
 
 test('first enable freezes current UI seed and offers keep, seed, and cancel', async () => {
-  const keep = controllerFixture(); keep.nodes['#grouping-server-managed'].checked = true;
+  const keep = controllerFixture(); keep.nodes['#grouping-server-managed'].checked = true; keep.nodes['#settings-dialog'].open = true;
   const pendingKeep = keep.controller.changeMode(); await tick();
-  assert.equal(keep.nodes['#notifications-dialog'].open, false); assert.equal(keep.nodes['#grouping-prime-dialog'].open, true);
+  assert.equal(keep.nodes['#notifications-dialog'].open, false); assert.equal(keep.nodes['#settings-dialog'].open, false);
+  assert.equal(keep.nodes['#grouping-prime-dialog'].open, true);
   assert.match(keep.nodes['#grouping-prime-title'].textContent, /Start server-managed grouping/);
   assert.match(keep.nodes['#grouping-prime-summary'].textContent, /agent assignment/);
   assert.match(keep.nodes['#grouping-prime-current'].textContent, /replace owning server/i);
-  keep.nodes['#grouping-prime-server'].click(); assert.equal(await pendingKeep, true);
+  keep.nodes['#grouping-prime-dialog'].dispatch('close');
+  assert.equal(keep.nodes['#grouping-prime-dialog'].open, true, 'a delayed close event cannot cancel a newer open prompt');
+  keep.nodes['#grouping-prime-server'].click(); assert.equal(keep.nodes['#settings-dialog'].open, true, 'choice returns to Settings');
+  assert.equal(await pendingKeep, true);
   const keepPost = keep.calls.find(call => call.method === 'POST'); assert.equal(keepPost.body.seed, undefined);
 
   const prime = controllerFixture(); prime.nodes['#grouping-server-managed'].checked = true;
   const pendingPrime = prime.controller.changeMode(); await tick(); prime.nodes['#grouping-prime-current'].click(); await pendingPrime;
   assert.deepEqual(prime.calls.find(call => call.method === 'POST').body.seed, {groups: seed().groups, assignments: seed().assignments, grouped_branches: [ROOT]});
 
-  const cancel = controllerFixture(); cancel.nodes['#grouping-server-managed'].checked = true;
+  const cancel = controllerFixture(); cancel.nodes['#grouping-server-managed'].checked = true; cancel.nodes['#settings-dialog'].open = true;
   const pendingCancel = cancel.controller.changeMode(); await tick(); cancel.nodes['#grouping-prime-dialog'].dispatch('cancel');
+  assert.equal(cancel.nodes['#settings-dialog'].open, true, 'Escape returns to the current Settings dialog');
   assert.equal(await pendingCancel, false); assert.equal(cancel.calls.some(call => call.method === 'POST'), false);
+});
+
+test('priming collapses relay details before closing Settings and restoration leaves polling stopped', async () => {
+  const t = controllerFixture(); const relay = t.nodes['#relay-settings-section'];
+  let relayGets = 0, key = 'draft secret';
+  relay.addEventListener('toggle', () => { if (relay.open) relayGets += 1; else key = ''; });
+  relay.open = true; await tick(); relayGets = 0;
+  t.nodes['#settings-dialog'].open = true;
+  const originalClose = t.nodes['#settings-dialog'].close.bind(t.nodes['#settings-dialog']);
+  t.nodes['#settings-dialog'].close = () => { assert.equal(relay.open, false, 'relay collapses before Settings closes'); originalClose(); };
+  t.nodes['#grouping-server-managed'].checked = true;
+
+  const pending = t.controller.changeMode(); await tick();
+  assert.equal(relay.open, false); assert.equal(key, '');
+  t.nodes['#grouping-prime-server'].click();
+  assert.equal(await pending, true); await tick();
+  assert.equal(t.nodes['#settings-dialog'].open, true); assert.equal(relayGets, 0, 'restoring Settings does not restart relay polling');
+
+  relay.open = true; await tick();
+  assert.equal(relayGets, 1, 'polling can restart only after the user expands relay details');
+});
+
+test('closing an initially open Settings during preflight or async seed capture cancels without POST', async () => {
+  let resolveGet;
+  const get = new Promise(resolve => { resolveGet = resolve; });
+  const duringGet = controllerFixture({api: async () => get});
+  duringGet.nodes['#settings-dialog'].open = true; duringGet.nodes['#grouping-server-managed'].checked = true;
+  const getPending = duringGet.controller.changeMode(); await tick();
+  duringGet.nodes['#settings-dialog'].close(); resolveGet(settings());
+  assert.equal(await getPending, false); assert.equal(duringGet.controller.busy, false);
+  assert.equal(duringGet.nodes['#grouping-prime-dialog'].open, false);
+  assert.equal(duringGet.calls.some(call => call.method === 'POST'), false);
+
+  let resolveSeed;
+  const seedPending = new Promise(resolve => { resolveSeed = resolve; });
+  const duringSeed = controllerFixture({primeSnapshot: async () => seedPending});
+  duringSeed.nodes['#settings-dialog'].open = true; duringSeed.nodes['#grouping-server-managed'].checked = true;
+  const pending = duringSeed.controller.changeMode(); await tick();
+  duringSeed.nodes['#settings-dialog'].close();
+  resolveSeed({seed: {groups: seed().groups, assignments: seed().assignments, grouped_branches: [ROOT]}});
+  assert.equal(await pending, false); assert.equal(duringSeed.controller.busy, false);
+  assert.equal(duringSeed.nodes['#grouping-prime-dialog'].open, false);
+  assert.equal(duringSeed.calls.some(call => call.method === 'POST'), false);
+});
+
+test('failure to restore Settings resolves the prompt as cancel and clears busy state', async () => {
+  const t = controllerFixture(); t.nodes['#settings-dialog'].open = true;
+  t.nodes['#settings-dialog'].showModal = () => { throw Error('modal restore failed'); };
+  t.nodes['#grouping-server-managed'].checked = true;
+  const pending = t.controller.changeMode(); await tick();
+  t.nodes['#grouping-prime-current'].click();
+  assert.equal(await pending, false); assert.equal(t.controller.busy, false);
+  assert.equal(t.calls.some(call => call.method === 'POST'), false);
+  assert.match(t.errors[0], /Cannot restore Settings.*modal restore failed/i);
 });
 
 test('blocked browser snapshot disables seed but still allows keeping server grouping', async () => {
@@ -328,12 +393,13 @@ test('fresh revision conflict refreshes and refuses overwrite before prompting',
 });
 
 test('authoritative change closes a live prompt without leaving busy state or posting', async () => {
-  const t = controllerFixture(); t.nodes['#grouping-server-managed'].checked = true;
+  const t = controllerFixture(); t.nodes['#grouping-server-managed'].checked = true; t.nodes['#settings-dialog'].open = true;
   const pending = t.controller.changeMode(); await tick();
   assert.equal(t.nodes['#grouping-prime-dialog'].open, true);
   t.controller.setState(settings({revision: 4}));
   assert.equal(await pending, false);
   assert.equal(t.nodes['#grouping-prime-dialog'].open, false);
+  assert.equal(t.nodes['#settings-dialog'].open, false, 'authoritative invalidation does not reopen stale Settings');
   assert.equal(t.controller.busy, false);
   assert.match(t.nodes['#grouping-mode-status'].textContent, /changed while the dialog was open/i);
   assert.equal(t.calls.some(call => call.method === 'POST'), false);
@@ -341,11 +407,13 @@ test('authoritative change closes a live prompt without leaving busy state or po
 
 test('remote owner uses an explicit captured proxy path and stale prompt cannot post or alter new scope', async () => {
   const t = controllerFixture(); t.source('alpha/beta'); t.generation(2); t.controller.setState(settings());
+  t.nodes['#settings-dialog'].open = true;
   t.nodes['#grouping-server-managed'].checked = true; const pending = t.controller.changeMode(); await tick();
   assert.equal(t.calls[0].path, '/api/federation/alpha%2Fbeta/proxy/api/grouping-settings');
   assert.match(t.nodes['#grouping-prime-owner'].textContent, /Remote alpha\/beta/);
   t.source('other'); t.generation(3); t.controller.setState(settings());
   assert.equal(await pending, false); assert.equal(t.nodes['#grouping-prime-dialog'].open, false);
+  assert.equal(t.nodes['#settings-dialog'].open, false, 'scope changes do not reopen the previous scope Settings');
   assert.equal(t.calls.some(call => call.method === 'POST'), false); assert.deepEqual(t.errors, []);
 });
 

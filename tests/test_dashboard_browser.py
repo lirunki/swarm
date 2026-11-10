@@ -326,7 +326,10 @@ def test_local_relay_settings_dialog_connect_disconnect_and_errors(static_url, w
             page.locator("#notifications-button").click()
             page.locator("#settings-button").click()
             assert not errors, f"Settings click raised a browser error: {errors}"
-            playwright.expect(page.locator("#settings-dialog")).to_be_visible()
+            settings = page.locator("#settings-dialog")
+            playwright.expect(settings).to_be_visible()
+            assert not any(path == "/api/federation/settings" for _, path in requests)
+            page.locator("#relay-settings-section summary").click()
             form = page.locator("#relay-settings-form")
             playwright.expect(page.locator("#relay-connect")).to_have_text("Connect")
             playwright.expect(form.locator('[name="relay_node_id"]')).to_have_value("demo-a")
@@ -338,7 +341,7 @@ def test_local_relay_settings_dialog_connect_disconnect_and_errors(static_url, w
             playwright.expect(page.locator("#relay-connect")).to_have_text("Disconnect")
             playwright.expect(form.locator('[name="relay_api_key"]')).to_have_value("")
             assert key not in page.evaluate("JSON.stringify(localStorage)")
-            page.locator("#settings-dialog [data-close]").last.click()
+            settings.get_by_role("button", name="Close", exact=True).click()
             page.locator("#swarm-selector").select_option("peer-b")
             page.locator("#notifications-button").click()
             page.locator("#settings-button").click()
@@ -483,8 +486,10 @@ def test_compact_status_adoption_and_help_controls(static_url, width):
             playwright.expect(page.locator("#help-dialog")).to_be_hidden()
             page.locator("#notifications-button").click()
             page.get_by_role("button", name="Settings", exact=True).click()
-            playwright.expect(page.locator("#settings-dialog")).to_be_visible()
-            page.keyboard.press("Escape")
+            settings = page.locator("#settings-dialog")
+            playwright.expect(settings).to_be_visible()
+            playwright.expect(settings.locator("#relay-settings-form")).to_be_hidden()
+            settings.get_by_role("button", name="Close", exact=True).click()
             assert page.evaluate("document.body.scrollWidth <= window.innerWidth")
             assert not errors
         finally:

@@ -498,8 +498,8 @@ fresh context or compact first if the chosen model cannot fit it.
 
 Limits for agent-initiated spawns/wakes are four active children per parent,
 three child nesting levels, and a per-controller active-managed budget that defaults
-to **20**. The user can change that server-owned budget in **Notifications → All
-connected Swarms → Active-agent limit**, independently for each connected Swarm.
+to **20**. The user can change that server-owned budget in **Notifications → Settings
+→ Selected Swarm → Active-agent limit**, independently for each connected Swarm.
 When viewing A through B, A stores/enforces A's budget. Agents must not raise their
 own budget or edit `agent-limits.json`; ask the operator and send a Swarm notification
 if more capacity is needed. A reduced budget does not stop existing agents; new

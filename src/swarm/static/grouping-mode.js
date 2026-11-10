@@ -294,15 +294,17 @@
     constructor({query = selector => root.document.querySelector(selector), api, currentSwarm = () => 'local', currentGeneration = () => 0,
       ownerName = source => source === 'local' ? 'Local Swarm' : source, projection = () => null, branches = () => [], primeSnapshot = null,
       onChanged = async () => {}, onError = () => {}, confirm = text => root.confirm(text), requestTimeout = 20000,
-      schedule = (callback, delay) => root.setTimeout(callback, delay), cancel = timer => root.clearTimeout(timer)} = {}) {
+      returnDialog = '#settings-dialog', schedule = (callback, delay) => root.setTimeout(callback, delay), cancel = timer => root.clearTimeout(timer)} = {}) {
       Object.assign(this, {query, api, currentSwarm, currentGeneration, ownerName, projection, branches, primeSnapshot, onChanged, onError, confirm, requestTimeout, schedule, cancel});
+      this.returnDialog = typeof returnDialog === 'string' ? query(returnDialog) : returnDialog;
+      this.relaySection = query('#relay-settings-section');
       this.owner = query('#grouping-mode-owner'); this.checkbox = query('#grouping-server-managed');
       this.status = query('#grouping-mode-status'); this.button = query('#grouping-mode-change');
       this.dialog = query('#grouping-prime-dialog'); this.primeOwner = query('#grouping-prime-owner'); this.summary = query('#grouping-prime-summary');
       this.seedButton = query('#grouping-prime-current'); this.keepButton = query('#grouping-prime-server'); this.cancelButton = query('#grouping-prime-cancel');
       this.settings = null; this.error = null; this.warning = null; this.source = currentSwarm(); this.generation = currentGeneration();
       this.operation = 0; this.busy = false; this.mutationSent = false; this.mutationOperation = null;
-      this.paintSignature = null; this.promptResolve = null;
+      this.paintSignature = null; this.promptResolve = null; this.promptReturn = null;
       this.button?.addEventListener('click', () => void this.changeMode());
       this.checkbox?.addEventListener('change', () => { this.dirty = true; });
       this.seedButton?.addEventListener('click', () => this.resolvePrompt('seed'));
@@ -310,7 +312,7 @@
       this.cancelButton?.addEventListener('click', () => this.resolvePrompt(null));
       this.dialog?.querySelectorAll?.('[data-close]')?.forEach(node => node.addEventListener('click', () => this.resolvePrompt(null)));
       this.dialog?.addEventListener?.('cancel', event => { event.preventDefault?.(); this.resolvePrompt(null); });
-      this.dialog?.addEventListener?.('close', () => this.resolvePrompt(null, false));
+      this.dialog?.addEventListener?.('close', () => { if (!this.dialog.open) this.resolvePrompt(null); });
       this.render();
     }
 
@@ -325,7 +327,7 @@
       if (changedContext || (authoritativeChanged && !pendingAcknowledgement)) {
         const promptWasOpen = !!this.promptResolve;
         this.operation += 1; this.busy = false;
-        this.resolvePrompt(null);
+        this.resolvePrompt(null, {restore: false});
         if (!changedContext && promptWasOpen) this.warning = 'Grouping settings changed while the dialog was open. Review the current mode before applying.';
       }
       if (changedContext) this.warning = null;
@@ -353,11 +355,34 @@
       }
     }
 
-    resolvePrompt(choice, close = true) {
+    resolvePrompt(choice, {restore = true} = {}) {
       const resolve = this.promptResolve; if (!resolve || (choice === 'seed' && this.seedButton?.disabled)) return;
-      this.promptResolve = null;
-      if (close && this.dialog?.open) this.dialog.close();
-      resolve(choice);
+      const returnState = this.promptReturn;
+      this.promptResolve = null; this.promptReturn = null;
+      let result = choice;
+      try {
+        if (this.dialog?.open) this.dialog.close();
+        if (restore && returnState?.wasOpen) {
+          const owned = returnState.operation === this.operation && this.context(returnState.source, returnState.generation);
+          if (!owned) result = null;
+          else if (!returnState.dialog || returnState.dialog.isConnected === false) {
+            result = null; this.onError('Cannot restore Settings; grouping mode was not changed.');
+          } else if (!returnState.dialog.open) {
+            const otherModal = root.document?.querySelector?.('dialog[open]');
+            if (otherModal && otherModal !== returnState.dialog) {
+              result = null; this.onError('Cannot restore Settings while another dialog is open; grouping mode was not changed.');
+            } else if (typeof returnState.dialog.showModal !== 'function') {
+              result = null; this.onError('Cannot restore Settings; grouping mode was not changed.');
+            } else returnState.dialog.showModal();
+          }
+        }
+      } catch (error) {
+        result = null;
+        if (returnState?.operation === this.operation && this.context(returnState.source, returnState.generation))
+          this.onError(`Cannot restore Settings; grouping mode was not changed. ${error?.message || error}`);
+      } finally {
+        resolve(result);
+      }
     }
 
     primePrompt(snapshot) {
@@ -373,8 +398,15 @@
       }
       if (this.keepButton) this.keepButton.textContent = 'Keep saved server grouping';
       if (!this.dialog?.showModal) return Promise.resolve(null);
+      const returnState = {dialog: this.returnDialog, wasOpen: snapshot.returnDialogWasOpen,
+        source: snapshot.source, generation: snapshot.generation, operation: snapshot.operation};
+      if (returnState.wasOpen) {
+        if (!this.returnDialog?.open) return Promise.resolve(null);
+        if (this.relaySection) this.relaySection.open = false;
+        this.returnDialog.close?.();
+      }
       this.dialog.showModal();
-      return new Promise(resolve => { this.promptResolve = resolve; });
+      return new Promise(resolve => { this.promptReturn = returnState; this.promptResolve = resolve; });
     }
 
     snapshotPriming(source = this.currentSwarm(), generation = this.currentGeneration()) {
@@ -429,7 +461,8 @@
     async changeMode() {
       if (this.busy || !this.settings || this.error) return false;
       const desired = !!this.checkbox?.checked, known = clone(this.settings), source = this.currentSwarm(), generation = this.currentGeneration();
-      const snapshot = {source, generation, known, desired, operation: ++this.operation};
+      const snapshot = {source, generation, known, desired, operation: ++this.operation,
+        returnDialogWasOpen: !!this.returnDialog?.open};
       this.warning = null;
       let seedSnapshot;
       this.busy = true; this.render();
@@ -438,6 +471,7 @@
         const fresh = await this.boundedRequest(this.endpoint(source), undefined, undefined,
           `Grouping settings request timed out after ${this.requestTimeout}ms`);
         if (!this.context(source, generation) || snapshot.operation !== this.operation) return false;
+        if (snapshot.returnDialogWasOpen && !this.returnDialog?.open) return false;
         if (!validSettings(fresh)) throw Error('Owning server returned malformed grouping settings');
         if (fresh.revision !== known.revision || fresh.server_managed !== known.server_managed || fresh.initialized !== known.initialized) {
           this.onError('Grouping settings changed. Review the refreshed mode before applying.');
@@ -447,8 +481,10 @@
         let choice = null;
         if (desired && !fresh.initialized) {
           seedSnapshot = await this.capturePrimeSnapshot(source, generation);
-          if (!this.context(source, generation) || snapshot.operation !== this.operation) return false;
-          choice = await this.primePrompt(seedSnapshot);
+          if (!this.context(source, generation) || snapshot.operation !== this.operation ||
+              (snapshot.returnDialogWasOpen && !this.returnDialog?.open)) return false;
+          choice = await this.primePrompt({...seedSnapshot, operation: snapshot.operation,
+            returnDialogWasOpen: snapshot.returnDialogWasOpen});
           if (!this.context(source, generation) || snapshot.operation !== this.operation || choice === null) return false;
           if (choice === 'seed') {
             const currentSeed = await this.capturePrimeSnapshot(source, generation);

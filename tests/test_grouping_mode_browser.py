@@ -289,10 +289,20 @@ def mode_state(projection=None, grouping_settings=None):
     return state
 
 
+def close_settings(page):
+    settings = page.locator("#settings-dialog")
+    if settings.get_attribute("open") is not None:
+        settings.get_by_role("button", name="Close", exact=True).click()
+
+
 def open_mode_panel(page):
+    close_settings(page)
     page.locator("#notifications-button").click()
     playwright.expect(page.locator("#notifications-dialog")).to_be_visible()
-    return page.locator("#notifications-dialog")
+    page.locator("#settings-button").click()
+    settings = page.locator("#settings-dialog")
+    playwright.expect(settings).to_be_visible()
+    return settings
 
 
 def select_family_and_create(page, index, name):
@@ -332,12 +342,14 @@ def test_browser_local_prime_copies_groups_families_and_branches(static_url, wid
         panel.locator("#grouping-server-managed").check()
         panel.locator("#grouping-mode-change").click()
         playwright.expect(page.locator("#grouping-prime-dialog")).to_be_visible()
-        # Opening the first-enable prompt may close the all-Swarms inbox.
+        # Opening the first-enable prompt closes Settings (and the inbox remains closed).
+        playwright.expect(page.locator("#settings-dialog")).to_be_hidden()
         playwright.expect(page.locator("#notifications-dialog")).to_be_hidden()
         prime_text = page.locator("#grouping-prime-dialog").inner_text()
         assert "whole-family memberships" in prime_text
         assert "No agents or terminal sessions are stopped, woken or deleted" in prime_text
         page.locator("#grouping-prime-current").click()
+        close_settings(page)
 
         playwright.expect(
             page.get_by_role("button", name=f"Open group {unsafe}: 3 agents")
@@ -405,6 +417,7 @@ def test_same_context_storage_sync_and_prime_revalidates_latest_full_snapshot(
         click_group_name_action(second, "rename")
         expect_group_name(second, "Changed during prime")
         first.locator("#grouping-prime-current").click()
+        close_settings(first)
         playwright.expect(first.locator("#grouping-prime-dialog")).to_be_hidden()
         playwright.expect(first.locator("#toast")).to_contain_text(
             "Source grouping changed while the dialog was open"
@@ -418,6 +431,7 @@ def test_same_context_storage_sync_and_prime_revalidates_latest_full_snapshot(
         first.locator("#grouping-mode-change").click()
         playwright.expect(first.locator("#grouping-prime-dialog")).to_be_visible()
         first.locator("#grouping-prime-current").click()
+        close_settings(first)
         playwright.expect(first.locator("#grouping-mode-status")).to_contain_text(
             "Server-managed grouping is on"
         )
@@ -562,6 +576,7 @@ def test_first_enable_cancel_and_concurrent_state_then_keep_are_lossless(static_
         page.locator("#grouping-mode-change").click()
         playwright.expect(page.locator("#grouping-prime-dialog")).to_be_visible()
         page.locator("#grouping-prime-cancel").click()
+        close_settings(page)
         assert not server.settings_posts
 
         # A group update from another browser advances the same revision and
@@ -586,6 +601,7 @@ def test_first_enable_cancel_and_concurrent_state_then_keep_are_lossless(static_
         page.locator("#grouping-mode-change").click()
         playwright.expect(page.locator("#grouping-prime-dialog")).to_be_visible()
         page.locator("#grouping-prime-server").click()
+        close_settings(page)
         playwright.expect(
             page.get_by_role("button", name="Open group Concurrent canonical: 1 agents")
         ).to_be_visible()
@@ -616,7 +632,7 @@ def test_disable_local_edits_and_reenable_preserve_canonical_server_state(static
         playwright.expect(page.locator("#grouping-mode-status")).to_contain_text(
             "Browser-local grouping is on"
         )
-        page.get_by_role("button", name="Close notifications").click()
+        close_settings(page)
 
         # Rename and branch collapse now stay browser-local and do not touch
         # either server endpoint or the canonical projection.
@@ -640,7 +656,7 @@ def test_disable_local_edits_and_reenable_preserve_canonical_server_state(static
         playwright.expect(page.locator("#grouping-mode-status")).to_contain_text(
             "Server-managed grouping is on"
         )
-        page.get_by_role("button", name="Close notifications").click()
+        close_settings(page)
         expect_group_name(page, "Canonical team")
         assert len(server.settings_posts) == 2
         assert "seed" not in server.settings_posts[-1]
@@ -685,6 +701,7 @@ def test_bad_browser_storage_can_escape_to_server_but_offline_still_disables_mod
         playwright.expect(page.locator("#grouping-prime-current")).to_be_disabled()
         playwright.expect(page.locator("#grouping-prime-server")).to_be_enabled()
         page.locator("#grouping-prime-server").click()
+        close_settings(page)
         playwright.expect(
             page.get_by_role("button", name="Open group Never overwrite: 1 agents")
         ).to_be_visible()
@@ -707,7 +724,7 @@ def test_bad_browser_storage_can_escape_to_server_but_offline_still_disables_mod
             "Grouping mode unavailable"
         )
         playwright.expect(page.locator("#grouping-server-managed")).to_be_disabled()
-        page.get_by_role("button", name="Close notifications").click()
+        close_settings(page)
         card(page, 0).get_by_role("checkbox", name="Select family of Agent 0").check()
         playwright.expect(page.locator("#group-selection-open")).to_be_disabled()
         assert not server.posts
@@ -747,6 +764,7 @@ def test_legacy_server_managed_uninitialized_primes_canonical_and_local_branch_u
         playwright.expect(page.locator("#grouping-prime-dialog")).to_be_visible()
         playwright.expect(page.locator("#grouping-prime-current")).to_be_enabled()
         page.locator("#grouping-prime-current").click()
+        close_settings(page)
 
         assert len(server.settings_posts) == 1
         post = server.settings_posts[0]
@@ -780,7 +798,7 @@ def test_malformed_settings_lock_edits_but_missing_legacy_settings_allow_groups(
         open_mode_panel(page)
         playwright.expect(page.locator("#grouping-mode-status")).to_contain_text("invalid")
         playwright.expect(page.locator("#grouping-server-managed")).to_be_disabled()
-        page.get_by_role("button", name="Close notifications").click()
+        close_settings(page)
         card(page, 0).get_by_role("checkbox", name="Select family of Agent 0").check()
         playwright.expect(page.locator("#group-selection-open")).to_be_disabled()
         assert not malformed.posts and not malformed.other_mutations and not errors
@@ -790,7 +808,7 @@ def test_malformed_settings_lock_edits_but_missing_legacy_settings_allow_groups(
         page.goto(static_url)
         open_mode_panel(page)
         playwright.expect(page.locator("#grouping-server-managed")).to_be_disabled()
-        page.get_by_role("button", name="Close notifications").click()
+        close_settings(page)
         select_family_and_create(page, 4, "Legacy client group")
         playwright.expect(
             page.get_by_role("button", name="Open group Legacy client group: 1 agents")
@@ -907,6 +925,7 @@ def test_remote_owner_paths_and_mode_update_are_shared_but_browser_views_are_not
         first.locator("#grouping-mode-change").click()
         playwright.expect(first.locator("#grouping-prime-dialog")).to_be_visible()
         first.locator("#grouping-prime-server").click()
+        close_settings(first)
         playwright.expect(first.locator("#grouping-mode-status")).to_contain_text(
             "Server-managed grouping is on"
         )

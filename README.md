@@ -364,7 +364,17 @@ sudo systemctl status swarm-relay
 
 ### 2. Connect each Swarm backend
 
-Open the **bell → Notifications → Settings** to configure the **local controller**.
+Open **bell → Notifications → Settings**. Sections are separated by scope:
+
+- **Selected Swarm:** active-agent limit and grouping storage, saved on that server.
+- **Terminal · This browser:** mouse-wheel speed, applied immediately without a server change.
+- **Relay connection · Local controller:** collapsed by default; expand to load/edit
+  this dashboard host's relay connection, even while viewing a remote Swarm.
+
+Each section saves independently; changing grouping, capacity or terminal speed does
+not require filling relay credentials. Relay polling starts only while its section
+is expanded and stops when collapsed or Settings closes. The API-key field is cleared
+on close/collapse and during the first-enable grouping prompt.
 The dialog remains local even while the Swarm selector displays a remote workspace.
 Enter:
 
@@ -621,7 +631,7 @@ Refresh the page after updating; no backend restart is needed.
 
 ### Per-Swarm active-agent capacity
 
-Open **bell → Notifications (All connected Swarms) → Active-agent limit**, select
+Open **bell → Notifications → Settings → Selected Swarm → Active-agent limit**, select
 its owner using the Swarm picker, and save **Maximum active managed agents**.
 The default is **20**; supported values are integers **1–10,000**. Settings are
 saved on the active controller in private `$SWARM_HOME/agent-limits.json`, not in
@@ -658,7 +668,7 @@ There is no automatic production limit edit or agent start on upgrade.
 
 ### Agent grouping and folder dashboards
 
-Open **bell → Notifications (All connected Swarms) → Agent grouping storage** to
+Open **bell → Notifications → Settings → Selected Swarm → Agent grouping storage** to
 choose **Manage this Swarm's grouping on its server** for the active Swarm. The
 owner is shown explicitly: when viewing **Swarm A through Swarm B**, settings and
 server-managed edits are authenticated against and saved on **A**, never B.
@@ -752,6 +762,28 @@ reconciliation rather than discarding saved assignments.
 Install the updated backend and restart that controller explicitly when convenient,
 then refresh the dashboard. The feature makes no production changes on install,
 and does not automatically restart a running controller or migrate agents.
+
+### Mouse-wheel speed
+
+In **Settings → Terminal → Mouse-wheel multiplier**, choose **1×–20×** (default 1×)
+and click **Save speed**. This client preference is saved only in the current
+browser, applies immediately to existing and future terminal tabs, and follows
+that browser when switching Swarms. Other browsers/clients and tmux's global
+configuration are unchanged.
+
+A multiplier of 3 forwards three negotiated wheel reports for each report generated
+by the client's real vertical mouse wheel. Direction, mouse coordinates and supported
+modifier bits are retained, so tmux or the application handling its mouse protocol
+receives the increased speed. Speed is bounded to prevent oversized input frames;
+invalid settings are rejected and a failed browser-storage write leaves the old
+speed unchanged.
+
+Keyboard input, paste, mobile touch gestures, native copy/selection, browser zoom
+and horizontal gestures are not multiplied. Mouse-free normal screens keep local
+scrollback behavior; mouse-free alternate screens never turn a wheel into editor
+Up/Down keystrokes. There are no additional terminal commands or backend API calls.
+Refresh the dashboard to load this frontend-only feature; no controller restart is
+required.
 
 ### Mobile terminal copying
 
@@ -1148,7 +1180,8 @@ others.
 
 The inbox also contains **Master control**, **Settings**, and **Restart active
 Swarm**. Master control/restart keep their active-Swarm scope and existing remote
-permission checks; Settings always configures the browser's local relay connection.
+permission checks. Settings separates active-server limits/grouping from browser-only
+terminal preferences and the local controller's relay connection.
 These controls are no longer duplicated in the top-right header.
 
 ### Broadcast messages to agents

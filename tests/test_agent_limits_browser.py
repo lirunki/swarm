@@ -244,9 +244,14 @@ def setup_page(browser, api, width, **mock_options):
 
 
 def open_limits(page):
+    settings = page.locator("#settings-dialog")
+    if settings.get_attribute("open") is not None:
+        settings.get_by_role("button", name="Close", exact=True).click()
     page.locator("#notifications-button").click()
     playwright.expect(page.locator("#notifications-dialog")).to_be_visible()
-    return page.locator("#agent-limits-max"), page.locator("#agent-limits-save")
+    page.locator("#settings-button").click()
+    playwright.expect(settings).to_be_visible()
+    return settings.locator("#agent-limits-max"), settings.locator("#agent-limits-save")
 
 
 def apply_limit_state(page, value, error=None):
@@ -276,10 +281,10 @@ def test_default_projection_save_contract_scope_and_layout(static_url, width):
             playwright.expect(page.locator(".agent-card")).to_have_count(16)
             limit_input, save = open_limits(page)
 
-            playwright.expect(page.locator("#agent-limits-owner")).to_have_text(
+            playwright.expect(page.locator("#settings-dialog #agent-limits-owner")).to_have_text(
                 "Owning server: Local Swarm"
             )
-            playwright.expect(page.locator("#agent-limits-count")).to_have_text(
+            playwright.expect(page.locator("#settings-dialog #agent-limits-count")).to_have_text(
                 "Active managed agents: 20"
             )
             playwright.expect(limit_input).to_have_value("20")
@@ -288,13 +293,15 @@ def test_default_projection_save_contract_scope_and_layout(static_url, width):
                 "10000",
                 "1",
             ]
-            section_text = page.locator(".agent-limits-settings").inner_text()
+            section = page.locator("#settings-dialog .agent-limits-settings")
+            section.locator("details summary").click()
+            section_text = section.inner_text()
             assert "Default 20" in section_text
+            assert "lowering never stops agents" in section_text
+            assert "Operator Create/Wake remain overrides" in section_text
             assert "does not stop or wake agents" in page.locator(
                 "#agent-limits-status"
             ).inner_text()
-            assert "Manual operator Create/Wake" in section_text
-            assert "further orchestration starts wait" in section_text
 
             limit_input.fill("25")
             playwright.expect(save).to_be_enabled()
@@ -317,7 +324,7 @@ def test_default_projection_save_contract_scope_and_layout(static_url, width):
             assert page.locator(".agent-card").count() == 16
             assert_no_agent_mutations(api)
 
-            dialog = page.locator("#notifications-dialog")
+            dialog = page.locator("#settings-dialog")
             assert dialog.evaluate("node => node.scrollWidth <= node.clientWidth")
             assert page.evaluate("document.body.scrollWidth <= innerWidth")
             assert not errors
@@ -378,7 +385,7 @@ def test_stale_http_and_lower_revision_cannot_replace_newer_live_limit(static_ur
             playwright.expect(limit_input).to_have_value("25")
             playwright.expect(limit_input).to_be_enabled()
             playwright.expect(save).to_be_disabled()
-            playwright.expect(page.locator("#agent-limits-count")).to_have_text(
+            playwright.expect(page.locator("#settings-dialog #agent-limits-count")).to_have_text(
                 "Active managed agents: 9"
             )
             playwright.expect(page.locator("#agent-limits-error")).to_have_text("")
@@ -424,7 +431,7 @@ def test_poll_preserves_dirty_draft_and_concurrent_revision_requires_rebase(stat
 
             apply_limit_state(page, projection(active=24))
             playwright.expect(limit_input).to_have_value("30")
-            playwright.expect(page.locator("#agent-limits-count")).to_have_text(
+            playwright.expect(page.locator("#settings-dialog #agent-limits-count")).to_have_text(
                 "Active managed agents: 24"
             )
 
@@ -552,7 +559,7 @@ def test_remote_owner_is_independent_and_offline_or_legacy_is_read_only(static_u
             page.locator("#swarm-selector").select_option("peer/a")
             playwright.expect(page.locator(".agent-card")).to_have_count(16)
             limit_input, save = open_limits(page)
-            owner = page.locator("#agent-limits-owner")
+            owner = page.locator("#settings-dialog #agent-limits-owner")
             playwright.expect(owner).to_have_text(
                 'Owning server: <img src=x onerror="window.unsafe=true"> Remote A'
             )
@@ -589,7 +596,7 @@ def test_remote_owner_is_independent_and_offline_or_legacy_is_read_only(static_u
             posts = api.limit_requests("POST")
             assert len(posts) == 1 and "peer%2Fa" in posts[0][1]
             assert not any(path == "/api/agent-limits" for _, path, _ in posts)
-            assert page.locator("#notifications-dialog").evaluate(
+            assert page.locator("#settings-dialog").evaluate(
                 "node => node.scrollWidth <= node.clientWidth"
             )
             assert page.evaluate("document.body.scrollWidth <= innerWidth")
@@ -627,7 +634,7 @@ def test_late_post_after_source_switch_cannot_alter_new_owner_controls(static_ur
             )
             page.wait_for_timeout(50)
             playwright.expect(limit_input).to_have_value("38")
-            playwright.expect(page.locator("#agent-limits-owner")).to_contain_text("Remote A")
+            playwright.expect(page.locator("#settings-dialog #agent-limits-owner")).to_contain_text("Remote A")
             playwright.expect(page.locator("#agent-limits-error")).to_have_text("")
             assert len(api.limit_requests("POST")) == 1
             assert "peer%2Fa" in api.limit_requests("POST")[0][1]

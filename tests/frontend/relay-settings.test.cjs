@@ -17,12 +17,13 @@ function initial(changes = {}) {
   return {relay_url: 'wss://relay.example:9443/v1/connect', relay_node_id: 'office-a', relay_name: 'Office A',
     enabled: false, connected: false, status: 'disconnected', has_api_key: false, last_error: null, ...changes};
 }
-function fixture(profile = initial(), customApi) {
+function fixture(profile = initial(), customApi, {section = true} = {}) {
   const ids = ['settings-dialog', 'relay-settings-form', 'relay-settings-fields', 'relay-connect', 'settings-button', 'relay-settings-error', 'relay-settings-status', 'relay-settings-connection-error'];
+  if (section) ids.push('relay-settings-section');
   const elements = Object.fromEntries(ids.map(id => [`#${id}`, new Element()]));
   const form = elements['#relay-settings-form']; form.elements = Object.fromEntries(['relay_url', 'relay_node_id', 'relay_name', 'relay_api_key'].map(name => [name, new Element()]));
   form.reportValidity = () => form.valid !== false;
-  const calls = [], changes = [], timers = new Map(); let nextTimer = 0;
+  const calls = [], changes = [], opens = [], timers = new Map(); let nextTimer = 0;
   const api = async (url, method, body) => {
     calls.push({url, method, body});
     if (customApi) return customApi(url, method, body);
@@ -32,19 +33,33 @@ function fixture(profile = initial(), customApi) {
     return {...redacted};
   };
   const controller = new RelaySettingsDialog({query: selector => elements[selector], api,
-    onChange: async value => changes.push(value), schedule: callback => { timers.set(++nextTimer, callback); return nextTimer; }, cancel: id => timers.delete(id)});
-  return {controller, elements, form, calls, changes, timers, action: elements['#relay-connect'], dialog: elements['#settings-dialog']};
+    onChange: async value => changes.push(value), onOpen: () => opens.push('open'),
+    schedule: callback => { timers.set(++nextTimer, callback); return nextTimer; }, cancel: id => timers.delete(id)});
+  return {controller, elements, form, calls, changes, opens, timers, action: elements['#relay-connect'], dialog: elements['#settings-dialog'], section: elements['#relay-settings-section']};
+}
+async function expandRelay(t) {
+  t.section.open = true;
+  await t.section.events.get('toggle')();
 }
 
-test('Settings loads local redacted profile with empty password and Connect action', async () => {
+test('Settings opens without relay I/O, then expansion loads the local redacted profile', async () => {
   const t = fixture(); await t.controller.open();
-  assert.equal(t.dialog.open, true); assert.equal(t.action.textContent, 'Connect'); assert.equal(t.action.disabled, false);
+  assert.equal(t.dialog.open, true); assert.equal(t.calls.length, 0); assert.deepEqual(t.opens, ['open']);
+  assert.equal(t.action.disabled, true); assert.ok(t.section.events.has('toggle'));
+  await expandRelay(t);
+  assert.equal(t.action.textContent, 'Connect'); assert.equal(t.action.disabled, false);
   assert.equal(t.form.elements.relay_node_id.value, 'office-a');
   assert.equal(t.form.elements.relay_api_key.value, ''); assert.equal(t.form.elements.relay_api_key.required, true);
   assert.equal(t.calls[0].url, '/api/federation/settings');
   assert.equal(t.elements['#relay-settings-fields'].disabled, false);
   assert.equal(t.elements['#relay-settings-status'].textContent, 'Disconnected');
   assert.ok(t.elements['#settings-button'].events.has('click') && t.form.events.has('submit'));
+});
+
+test('isolated legacy fixture without relay details keeps eager loading', async () => {
+  const t = fixture(initial(), undefined, {section: false});
+  await t.controller.open();
+  assert.equal(t.calls.length, 1); assert.equal(t.action.textContent, 'Connect'); assert.equal(t.timers.size, 1);
 });
 
 test('Settings click uses native timer defaults without a dialog receiver', async () => {
@@ -64,7 +79,7 @@ test('Settings click uses native timer defaults without a dialog receiver', asyn
     },
   };
   vm.runInNewContext(source, sandbox);
-  const t = fixture();
+  const t = fixture(); t.section.open = true;
   new sandbox.module.exports.RelaySettingsDialog({
     query: selector => t.elements[selector], api: async () => initial(),
   });
@@ -80,7 +95,7 @@ test('Settings click uses native timer defaults without a dialog receiver', asyn
 });
 
 test('Connect sends config only through local API and immediately clears the password', async () => {
-  const t = fixture(); await t.controller.open();
+  const t = fixture(); await t.controller.open(); await expandRelay(t);
   t.form.elements.relay_api_key.value = KEY;
   await t.controller.submit();
   const request = t.calls.find(call => call.method === 'POST');
@@ -93,7 +108,7 @@ test('Connect sends config only through local API and immediately clears the pas
 
 test('Disconnect needs no password and re-enables editing while keeping saved-key indicator', async () => {
   const t = fixture(initial({enabled: true, connected: true, status: 'connected', has_api_key: true}));
-  await t.controller.open(); assert.equal(t.action.textContent, 'Disconnect');
+  await t.controller.open(); await expandRelay(t); assert.equal(t.action.textContent, 'Disconnect');
   await t.controller.submit();
   assert.equal(t.calls.at(-1).url, '/api/federation/disconnect'); assert.equal(t.calls.at(-1).body, undefined);
   assert.equal(t.action.textContent, 'Connect'); assert.equal(t.elements['#relay-settings-fields'].disabled, false);
@@ -102,7 +117,7 @@ test('Disconnect needs no password and re-enables editing while keeping saved-ke
 });
 
 test('Saved key reuse sends null, but changing the URL requires a new key', async () => {
-  const t = fixture(initial({has_api_key: true})); await t.controller.open();
+  const t = fixture(initial({has_api_key: true})); await t.controller.open(); await expandRelay(t);
   t.form.elements.relay_url.value = 'wss://different.example/v1/connect';
   t.form.elements.relay_url.events.get('input')();
   assert.equal(t.form.elements.relay_api_key.required, true);
@@ -116,7 +131,8 @@ test('Closing clears a draft key, cancels polling and ignores late GET results',
   let resolve;
   const pending = new Promise(done => { resolve = done; });
   const t = fixture(initial(), () => pending);
-  const opened = t.controller.open(); t.form.elements.relay_api_key.value = KEY;
+  await t.controller.open(); t.section.open = true; const opened = t.section.events.get('toggle')();
+  t.form.elements.relay_api_key.value = KEY;
   t.dialog.close(); resolve(initial({relay_name: 'Late response'})); await opened;
   assert.equal(t.form.elements.relay_api_key.value, ''); assert.equal(t.timers.size, 0);
   assert.notEqual(t.form.elements.relay_name.value, 'Late response');
@@ -124,7 +140,7 @@ test('Closing clears a draft key, cancels polling and ignores late GET results',
 
 test('Polling preserves unsaved fields/key and updates actual connection status', async () => {
   let value = initial();
-  const t = fixture(value, async () => value); await t.controller.open();
+  const t = fixture(value, async () => value); await t.controller.open(); await expandRelay(t);
   t.form.elements.relay_name.value = 'Unsaved name'; t.form.elements.relay_api_key.value = KEY;
   value = initial({last_error: 'Relay unreachable', status: 'reconnecting', enabled: true});
   await t.timers.get(t.controller.timer)();
@@ -135,12 +151,54 @@ test('Polling preserves unsaved fields/key and updates actual connection status'
   t.dialog.close(); assert.equal(t.form.elements.relay_api_key.value, ''); assert.equal(t.timers.size, 0);
 });
 
+test('submit invalidates an in-flight poll so its late GET cannot replace the POST receipt', async () => {
+  let resolvePoll;
+  const poll = new Promise(resolve => { resolvePoll = resolve; });
+  const saved = initial({relay_name: 'Saved by POST', enabled: true, status: 'connecting', has_api_key: true});
+  let gets = 0;
+  const t = fixture(initial(), async (url, method) => {
+    if (method === 'POST') return saved;
+    gets += 1;
+    return gets === 1 ? initial() : poll;
+  });
+  await t.controller.open(); await expandRelay(t);
+  const pollCallback = t.timers.get(t.controller.timer);
+  const pendingPoll = pollCallback(); await Promise.resolve();
+  t.form.elements.relay_name.value = 'Saved by POST'; t.form.elements.relay_api_key.value = KEY;
+  await t.controller.submit();
+  assert.equal(t.calls.filter(call => call.method === 'POST').length, 1);
+  assert.equal(t.controller.current.relay_name, 'Saved by POST');
+  assert.equal(t.controller.loading, false); assert.equal(t.controller.busy, false); assert.equal(t.timers.size, 1);
+
+  resolvePoll(initial({relay_name: 'Stale poll result'})); await pendingPoll;
+  assert.equal(t.controller.current.relay_name, 'Saved by POST');
+  assert.equal(t.form.elements.relay_name.value, 'Saved by POST');
+  assert.equal(t.timers.size, 1, 'only the post-submit generation continues polling');
+});
+
+test('collapsing stops polling, clears credentials, and re-expansion loads once', async () => {
+  let resolve;
+  const pending = new Promise(done => { resolve = done; });
+  const t = fixture(initial(), async () => t.calls.length === 2 ? pending : initial());
+  await t.controller.open(); await expandRelay(t);
+  t.form.elements.relay_api_key.value = KEY;
+  t.section.open = false; await t.section.events.get('toggle')();
+  assert.equal(t.form.elements.relay_api_key.value, ''); assert.equal(t.timers.size, 0);
+
+  t.section.open = true;
+  const first = t.section.events.get('toggle')();
+  const duplicate = t.section.events.get('toggle')();
+  assert.equal(t.calls.length, 2, 'loading deduplicates repeated open toggle events');
+  resolve(initial({relay_name: 'Reloaded'})); await Promise.all([first, duplicate]);
+  assert.equal(t.form.elements.relay_name.value, 'Reloaded'); assert.equal(t.timers.size, 1);
+});
+
 test('Failed Connect restores controls and redacts any unexpected echoed typed key', async () => {
   const t = fixture(initial(), async (url, method) => {
     if (method === 'POST') throw Error(`Rejected: ${KEY}`);
     return initial();
   });
-  await t.controller.open(); t.form.elements.relay_api_key.value = KEY; await t.controller.submit();
+  await t.controller.open(); await expandRelay(t); t.form.elements.relay_api_key.value = KEY; await t.controller.submit();
   assert.equal(t.action.textContent, 'Connect'); assert.equal(t.action.disabled, false);
   assert.equal(t.form.elements.relay_api_key.value, ''); assert.equal(t.controller.busy, false);
   assert.equal(t.elements['#relay-settings-error'].textContent, 'Rejected: [redacted]');
@@ -149,17 +207,17 @@ test('Failed Connect restores controls and redacts any unexpected echoed typed k
 
 test('Load failure and native invalid form never issue a Connect request', async () => {
   const t = fixture(initial(), async () => { throw Error('backend unavailable'); });
-  await t.controller.open(); await t.controller.submit();
+  await t.controller.open(); await expandRelay(t); await t.controller.submit();
   assert.match(t.elements['#relay-settings-error'].textContent, /Cannot load/); assert.equal(t.action.disabled, true);
   assert.equal(t.calls.length, 1);
-  const valid = fixture(); await valid.controller.open(); valid.form.valid = false;
+  const valid = fixture(); await valid.controller.open(); await expandRelay(valid); valid.form.valid = false;
   await valid.controller.submit(); assert.equal(valid.calls.length, 1);
 });
 
 test('busy guard prevents duplicate submissions and close never disconnects', async () => {
   let resolve;
   const t = fixture(initial(), async (url, method) => method ? new Promise(done => { resolve = done; }) : initial());
-  await t.controller.open(); t.form.elements.relay_api_key.value = KEY;
+  await t.controller.open(); await expandRelay(t); t.form.elements.relay_api_key.value = KEY;
   const pending = t.controller.submit(); await t.controller.submit();
   assert.equal(t.calls.filter(call => call.method === 'POST').length, 1);
   assert.equal(t.form.elements.relay_api_key.value, ''); assert.equal(t.action.disabled, true);

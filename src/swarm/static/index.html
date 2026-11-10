@@ -7,29 +7,30 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=agent-limits-1">
+  <link rel="stylesheet" href="/static/app.css?v=settings-wheel-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=agent-limits-1"></script>
-  <script defer src="/static/org-chart.js?v=agent-limits-1"></script>
-  <script defer src="/static/relay-settings.js?v=agent-limits-1"></script>
-  <script defer src="/static/terminal-touch.js?v=agent-limits-1"></script>
-  <script defer src="/static/terminal-copy.js?v=agent-limits-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=agent-limits-1"></script>
-  <script defer src="/static/terminal-keys.js?v=agent-limits-1"></script>
-  <script defer src="/static/agent-files.js?v=agent-limits-1"></script>
-  <script defer src="/static/agent-messages.js?v=agent-limits-1"></script>
-  <script defer src="/static/agent-broadcast.js?v=agent-limits-1"></script>
-  <script defer src="/static/auth.js?v=agent-limits-1"></script>
-  <script defer src="/static/fleet-control.js?v=agent-limits-1"></script>
-  <script defer src="/static/system-notifications.js?v=agent-limits-1"></script>
-  <script defer src="/static/notifications.js?v=agent-limits-1"></script>
-  <script defer src="/static/agent-groups.js?v=agent-limits-1"></script>
-  <script defer src="/static/grouping-mode.js?v=agent-limits-1"></script>
-  <script defer src="/static/agent-search.js?v=agent-limits-1"></script>
-  <script defer src="/static/history-archive.js?v=agent-limits-1"></script>
-  <script defer src="/static/agent-limits.js?v=agent-limits-1"></script>
-  <script defer src="/static/app.js?v=agent-limits-1"></script>
+  <script defer src="/static/card-views.js?v=settings-wheel-1"></script>
+  <script defer src="/static/org-chart.js?v=settings-wheel-1"></script>
+  <script defer src="/static/relay-settings.js?v=settings-wheel-1"></script>
+  <script defer src="/static/terminal-touch.js?v=settings-wheel-1"></script>
+  <script defer src="/static/terminal-copy.js?v=settings-wheel-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=settings-wheel-1"></script>
+  <script defer src="/static/terminal-keys.js?v=settings-wheel-1"></script>
+  <script defer src="/static/agent-files.js?v=settings-wheel-1"></script>
+  <script defer src="/static/agent-messages.js?v=settings-wheel-1"></script>
+  <script defer src="/static/agent-broadcast.js?v=settings-wheel-1"></script>
+  <script defer src="/static/auth.js?v=settings-wheel-1"></script>
+  <script defer src="/static/fleet-control.js?v=settings-wheel-1"></script>
+  <script defer src="/static/system-notifications.js?v=settings-wheel-1"></script>
+  <script defer src="/static/notifications.js?v=settings-wheel-1"></script>
+  <script defer src="/static/agent-groups.js?v=settings-wheel-1"></script>
+  <script defer src="/static/grouping-mode.js?v=settings-wheel-1"></script>
+  <script defer src="/static/agent-search.js?v=settings-wheel-1"></script>
+  <script defer src="/static/history-archive.js?v=settings-wheel-1"></script>
+  <script defer src="/static/agent-limits.js?v=settings-wheel-1"></script>
+  <script defer src="/static/terminal-wheel.js?v=settings-wheel-1"></script>
+  <script defer src="/static/app.js?v=settings-wheel-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -87,29 +88,10 @@
       <p id="notifications-active-swarm" class="hint">Active Swarm: Local Swarm</p>
       <div class="notifications-actions">
         <button id="fleet-control-button" class="fleet-control-button small" type="button" aria-label="Master control" title="Master control for the active Swarm" aria-haspopup="dialog" aria-controls="fleet-restart-dialog">⋯ Master control</button>
-        <button id="settings-button" class="settings-button small" type="button" aria-label="Settings" title="Local relay settings" aria-haspopup="dialog" aria-controls="settings-dialog">⚙ Settings</button>
+        <button id="settings-button" class="settings-button small" type="button" aria-label="Settings" title="Swarm and terminal settings" aria-haspopup="dialog" aria-controls="settings-dialog">⚙ Settings</button>
         <button id="restart-controller" class="restart-controller small" type="button" aria-label="Restart backend" aria-busy="false" title="Restart the active Swarm backend controller">↻ Restart active Swarm</button>
       </div>
-      <p class="hint">Master control and restart apply to the active Swarm. Settings configures this browser's local relay connection.</p>
-    </section>
-    <section class="agent-limits-settings" aria-labelledby="agent-limits-title">
-      <h3 id="agent-limits-title">Active-agent limit</h3>
-      <p id="agent-limits-owner" class="hint">Owning server: Local Swarm</p>
-      <p id="agent-limits-count" class="hint">Active managed agents: unavailable</p>
-      <label for="agent-limits-max">Maximum active managed agents<input id="agent-limits-max" type="number" min="1" max="10000" step="1" value="20" disabled></label>
-      <p class="hint">Default 20. Saved and enforced by the active Swarm, including when accessed through another controller. Counts live managed processes, setup/restart reservations, and automatic-recovery intent—not just “Running” status.</p>
-      <p class="hint">This budget limits agent-requested child spawns and wakes. Manual operator Create/Wake and recovery remain overrides. Lowering it never stops existing agents; further orchestration starts wait until usage is below the limit. The separate 4-active-children-per-parent guard remains.</p>
-      <p id="agent-limits-status" class="hint" role="status" aria-live="polite"></p>
-      <p id="agent-limits-error" class="form-error" role="alert"></p>
-      <button id="agent-limits-save" type="button" class="small" disabled>Save limit</button>
-    </section>
-    <section class="grouping-mode-settings" aria-labelledby="grouping-mode-title">
-      <h3 id="grouping-mode-title">Agent grouping storage</h3>
-      <p id="grouping-mode-owner" class="hint">Owning server: Local Swarm</p>
-      <label class="checkbox"><input id="grouping-server-managed" type="checkbox" disabled>Manage this Swarm's grouping on its server</label>
-      <p class="hint">This setting belongs to the active Swarm and affects its grouping in every browser. Viewing Swarm A through B still reads and writes A. Includes named groups, family membership and branch collapse; active tabs stay browser-local.</p>
-      <p id="grouping-mode-status" class="hint" role="status" aria-live="polite"></p>
-      <button id="grouping-mode-change" type="button" class="small" disabled>Apply grouping mode</button>
+      <p class="hint">Master control and restart apply to the active Swarm. Settings includes server limits, grouping and terminal preferences.</p>
     </section>
     <section class="notification-broadcast" aria-labelledby="notification-broadcast-title">
       <h3 id="notification-broadcast-title">Broadcast to agents</h3>
@@ -202,36 +184,66 @@
     <header class="dialog-head"><div><div class="eyebrow">QUICK GUIDE</div><h2 id="help-title">Swarm help</h2></div><button type="button" class="icon-button" data-close aria-label="Close help">×</button></header>
     <div class="help-content">
       <section><h3>Dashboard</h3><p>Each tile is an independent agent. Expand it for goal, activities, checkpoint and controls. Open the state dropdown to search by text and show several states together; All checks or clears every state. Counts update live. Press / to open the menu and focus search. Search covers full card metadata: names, goals, activity titles, checkpoint/details, products and registered file labels/names—even while the card is compact. It does not read file contents or terminal history. Dimmed ancestors remain to explain parent → child relationships. When an agent has several visible sub-agents, use the small − / + control at their branch join to group or show the whole child branch. That grouping is part of browser-local UI view state and is remembered independently for each Swarm backend.</p></section>
-      <section><h3>Agent groups</h3><p>Select cards using their checkbox or Ctrl/⌘-click. Parents, children and siblings move as one family, including hidden descendants. Right-click → Grouping (or the selection toolbar) offers Default group, New group and saved groups. Shift+F10 opens the menu from a focused card.</p><p>Blue folder tiles show each group's agent count. Only the active folder appears as a tab immediately after Dashboard, followed by its terminal tabs. Use Dashboard and its folder tiles to switch groups; Dashboard shows ungrouped agents. Hidden terminal tabs stay alive. Dashboard/folder tabs are bold and brighter than tmux tabs. Click the group name ▾ for Rename/Delete; return through the Dashboard tab. These actions change grouping only, never agent processes. The grouping-storage switch in Notifications chooses owner-server or browser-local folders, membership and branch grouping. First enable asks whether to prime from this browser. Viewing A through B saves server grouping on A. Active views and terminal tabs stay browser-local.</p></section>
+      <section><h3>Agent groups</h3><p>Select cards using their checkbox or Ctrl/⌘-click. Parents, children and siblings move as one family, including hidden descendants. Right-click → Grouping (or the selection toolbar) offers Default group, New group and saved groups. Shift+F10 opens the menu from a focused card.</p><p>Blue folder tiles show each group's agent count. Only the active folder appears as a tab immediately after Dashboard, followed by its terminal tabs. Use Dashboard and its folder tiles to switch groups; Dashboard shows ungrouped agents. Hidden terminal tabs stay alive. Dashboard/folder tabs are bold and brighter than tmux tabs. Click the group name ▾ for Rename/Delete; return through the Dashboard tab. These actions change grouping only, never agent processes. The grouping-storage switch in Settings chooses owner-server or browser-local folders, membership and branch grouping. First enable asks whether to prime from this browser. Viewing A through B saves server grouping on A. Active views and terminal tabs stay browser-local.</p></section>
       <section><h3>Agent states</h3><dl><dt class="running">Running</dt><dd>Working toward its goal.</dd><dt class="waiting">Waiting</dt><dd>Needs human input.</dd><dt class="dormant">Dormant</dt><dd>Waiting for an event or timer.</dd><dt class="idle">Idle</dt><dd>Turn complete, goal not yet complete.</dd><dt class="done">Done</dt><dd>Goal accomplished. Process liveness is shown separately.</dd></dl></section>
-      <section><h3>Notifications and broadcast</h3><p>The bell beside the Swarm logo combines unread notifications from every connected Swarm and groups each agent's messages together. Agents must notify you whenever they need your action or complete your request. Open agent clears every notification in that agent's group, selects its source Swarm, and opens an existing live terminal tab or reveals and highlights its card. Discard clears only that agent's notification group without navigating away. Clear all flushes every available notification across connected Swarms. Enable OS alerts asks the browser for permission and then displays only newly arriving bell items through the operating system, including Android notifications. Browser notifications require localhost or HTTPS. This preference is local to the browser; the dashboard must remain open to receive events because Swarm does not use a remote push service.</p><p>The dialog also contains Master control, Settings and Restart active Swarm. Type a message and use Select &amp; broadcast to choose managed agents by checkbox, Swarm, process state or search. Only shown checked agents receive it. Broadcast queues durable messages without waking agents; inspect request IDs for uncertain results instead of retrying blindly.</p></section>
+      <section><h3>Notifications and broadcast</h3><p>The bell beside the Swarm logo combines unread notifications from every connected Swarm and groups each agent's messages together. Agents must notify you whenever they need your action or complete your request. Open agent clears every notification in that agent's group, selects its source Swarm, and opens an existing live terminal tab or reveals and highlights its card. Discard clears only that agent's notification group without navigating away. Clear all flushes every available notification across connected Swarms. Enable OS alerts asks the browser for permission and then displays only newly arriving bell items through the operating system, including Android notifications. Browser notifications require localhost or HTTPS. This preference is local to the browser; the dashboard must remain open to receive events because Swarm does not use a remote push service.</p><p>The dialog also contains Master control, Settings and Restart active Swarm. Settings holds active-agent limits, grouping storage, mouse-wheel speed and a collapsed local-relay section. Type a message and use Select &amp; broadcast to choose managed agents by checkbox, Swarm, process state or search. Only shown checked agents receive it. Broadcast queues durable messages without waking agents; inspect request IDs for uncertain results instead of retrying blindly.</p></section>
       <section><h3>Sessions and controls</h3><p>New agent starts pi. Its bottom-left Adopt session menu offers saved pi conversations or Grok history converted into pi; adopted/imported sessions stay offline until you Wake them. Closing a terminal tab does not stop its agent. UI view state remembers open terminal tabs and the selected tab only in this browser, independently for each Swarm backend. Wake resumes; Stop terminates and disables automatic restore. Edit → Forget removes an inactive agent while keeping its saved session history.</p></section>
       <section><h3>Terminal scrolling and copying</h3><p>On mobile, swipe down for older output and up for newer output. At the bottom, tap to type. Copy text sits immediately left of the product button (⧉ on narrow screens, ✓ while selecting). It puts the visible screen in a read-only layer directly over the terminal: use native selection handles and Copy. It closes after copying, or tap Done copying. Only the visible screen is captured—scroll first for other text.</p><p>While the mobile software keyboard is open, the terminal key bar adds Esc, Tab, Ctrl, Alt, arrows, Home, End and Sup (forward Delete). Ctrl and Alt apply to the next typed key or accessory key, then reset; tap both for a combined shortcut. The bar keeps the keyboard focused and hides when it closes, when you leave the terminal, or while copying.</p><p>On desktop, hold Shift while dragging to select past tmux mouse handling, then use your browser or system Copy command. Desktop terminals have no extra copy layer. After the connection state, the terminal toolbar shows Product, Files, mail count, tmux and Reconnect in that order. Product uses a short blue label and opens or downloads that agent's latest published result. The mail button opens that agent's durable messages and highlights a nonzero outstanding count. On mobile widths, Copy text, Product, Files and Reconnect collapse to icons while mail keeps its icon and count and tmux keeps its menu label. The tmux button beside Files can split the current window, close a selected split pane, open/switch windows, move focus and zoom panes. New splits and windows start Bash in the agent's working folder. The main agent pane cannot be closed from this menu.</p></section>
       <section><h3>Files</h3><p>Files on a card or beside Reconnect opens its library. Upload picks a file on your browser's computer and saves a copy in the selected agent machine's temporary folder. Paste or Ctrl+V / ⌘V inside Files can also upload a copied image/file. The Paste button may require HTTPS/localhost and clipboard permission; plain text/URLs are not uploaded. Upload does not send a prompt. Download retrieves it; Insert pastes its quoted local path into a live agent's input without pressing Enter. Continue typing and submit when ready.</p><p>Agents can also register existing server files with swarm file add. Only metadata loads first; Open/Download reads bytes on demand. Remove reference keeps existing originals. Remove upload deletes only the uploaded temporary copy, never your browser-side original. Keep important inputs in durable storage: OS temp cleanup can make references unavailable.</p></section>
-      <section><h3>Relay and safety</h3><p>The Swarm selector changes workspace. Settings in Notifications always configures the local relay connection. A relay joins fully trusted controllers: peers can control agents and read data. Keep the dashboard on localhost, HTTPS, or a trusted network. Restart backend reloads the controller, not its tmux-backed agents.</p></section>
+      <section><h3>Relay and safety</h3><p>The Swarm selector changes workspace. Settings separates selected-server capacity/grouping, this browser's wheel speed, and the local relay connection. A relay joins fully trusted controllers: peers can control agents and read data. Keep the dashboard on localhost, HTTPS, or a trusted network. Restart backend reloads the controller, not its tmux-backed agents.</p></section>
     </div>
     <footer class="dialog-footer"><button type="button" data-close>Close</button></footer>
   </dialog>
 
-  <dialog id="settings-dialog" aria-labelledby="settings-title">
-    <form id="relay-settings-form" autocomplete="off">
-      <header class="dialog-head"><div><div class="eyebrow">LOCAL CONTROLLER</div><h2 id="settings-title">Settings</h2></div><button type="button" class="icon-button" data-close aria-label="Close settings">×</button></header>
-      <h3 class="relay-settings-heading">Relay connection</h3>
-      <p class="hint">These settings always configure this local backend, even while viewing another Swarm.</p>
-      <p id="relay-settings-status" class="connection" role="status" aria-live="polite">Disconnected</p>
-      <p id="relay-settings-connection-error" class="form-error" role="status"></p>
-      <fieldset id="relay-settings-fields">
-        <label>Relay URL<input name="relay_url" type="url" required maxlength="2048" spellcheck="false" placeholder="wss://swarm-relay.example.com:9443/v1/connect"></label>
-        <p class="hint relay-url-example">Example: <code>wss://swarm-relay.example.com:9443/v1/connect</code></p>
-        <label>Relay node ID<input name="relay_node_id" required maxlength="64" pattern="[A-Za-z0-9]([A-Za-z0-9._\-]{0,62}[A-Za-z0-9])?" spellcheck="false" placeholder="workstation-a"></label>
-        <label>Relay name<input name="relay_name" required maxlength="120" placeholder="Office workstation"></label>
-        <label>Relay API key<input name="relay_api_key" type="password" maxlength="4096" autocomplete="off" spellcheck="false" placeholder="Relay API key (at least 32 bytes)"></label>
-        <p class="hint">A saved key is never sent back to this form. Leave blank to reuse it; enter a key when changing the relay URL.</p>
-      </fieldset>
-      <p class="hint relay-settings-warning">Connecting joins a fully trusted mesh: peers can read data and control agents. Submit keys only over localhost or HTTPS. Configuration is saved in a protected file on this server; no key is stored in browser storage. Disconnect before editing an active connection.</p>
-      <p id="relay-settings-error" class="form-error" role="alert"></p>
-      <footer class="dialog-footer"><button type="button" data-close>Close</button><button id="relay-connect" class="primary" type="submit">Connect</button></footer>
-    </form>
+  <dialog id="settings-dialog" class="wide-dialog settings-dialog" aria-labelledby="settings-title">
+    <header class="dialog-head"><h2 id="settings-title">Settings</h2><button type="button" class="icon-button" data-close aria-label="Close settings">×</button></header>
+    <section class="settings-section settings-owner-section" aria-labelledby="settings-owner-title">
+      <div class="settings-section-heading"><h3 id="settings-owner-title">Selected Swarm</h3><span id="settings-active-owner" class="settings-scope"></span></div>
+      <p class="hint">Saved on the selected server, including remote Swarms.</p>
+    <section class="agent-limits-settings" aria-labelledby="agent-limits-title">
+      <h3 id="agent-limits-title">Active-agent limit</h3>
+      <p id="agent-limits-owner" class="hint">Owning server: Local Swarm</p>
+      <p id="agent-limits-count" class="hint">Active managed agents: unavailable</p>
+      <label for="agent-limits-max">Maximum active managed agents<input id="agent-limits-max" type="number" min="1" max="10000" step="1" value="20" disabled></label>
+      <p class="hint">Default 20. Limits agent-requested starts; lowering never stops agents.</p>
+      <details class="settings-help"><summary>What counts?</summary><p class="hint">Live managed processes, setup/restart reservations and automatic-recovery intent count. Operator Create/Wake remain overrides; the four-active-children-per-parent guard is separate.</p></details>
+      <p id="agent-limits-status" class="hint" role="status" aria-live="polite"></p>
+      <p id="agent-limits-error" class="form-error" role="alert"></p>
+      <button id="agent-limits-save" type="button" class="small" disabled>Save limit</button>
+    </section>
+    <section class="grouping-mode-settings" aria-labelledby="grouping-mode-title">
+      <h3 id="grouping-mode-title">Agent grouping storage</h3>
+      <p id="grouping-mode-owner" class="hint">Owning server: Local Swarm</p>
+      <label class="checkbox"><input id="grouping-server-managed" type="checkbox" disabled>Manage this Swarm's grouping on its server</label>
+      <p class="hint">Share folders and branch grouping across browsers. First enable offers optional import.</p>
+      <p id="grouping-mode-status" class="hint" role="status" aria-live="polite"></p>
+      <button id="grouping-mode-change" type="button" class="small" disabled>Apply grouping mode</button>
+    </section>
+    </section>
+    <section class="settings-section settings-client-section" aria-labelledby="settings-client-title">
+      <div class="settings-section-heading"><h3 id="settings-client-title">Terminal</h3><span class="settings-scope">This browser</span></div>
+      <div class="settings-input-row"><label for="mouse-wheel-multiplier">Mouse-wheel multiplier<input id="mouse-wheel-multiplier" type="number" min="1" max="20" step="1" value="1"></label><button id="mouse-wheel-save" type="button" class="small">Save speed</button></div>
+      <p class="hint">1×–20× tmux wheel speed. Applies immediately to this browser only.</p>
+      <p id="mouse-wheel-status" class="hint" role="status" aria-live="polite"></p>
+    </section>
+    <details id="relay-settings-section" class="settings-section settings-relay-section">
+      <summary><span>Relay connection</span><span class="settings-scope">Local controller</span></summary>
+      <form id="relay-settings-form" autocomplete="off">
+        <p id="relay-settings-status" class="connection" role="status" aria-live="polite">Disconnected</p>
+        <p id="relay-settings-connection-error" class="form-error" role="status"></p>
+        <fieldset id="relay-settings-fields">
+          <label>Relay URL<input name="relay_url" type="url" required maxlength="2048" spellcheck="false" placeholder="wss://swarm-relay.example.com:9443/v1/connect"></label>
+          <p class="hint relay-url-example">Example: <code>wss://swarm-relay.example.com:9443/v1/connect</code></p>
+          <div class="form-columns"><label>Node ID<input name="relay_node_id" required maxlength="64" pattern="[A-Za-z0-9]([A-Za-z0-9._\-]{0,62}[A-Za-z0-9])?" spellcheck="false" placeholder="workstation-a"></label><label>Display name<input name="relay_name" required maxlength="120" placeholder="Office workstation"></label></div>
+          <label>API key<input name="relay_api_key" type="password" maxlength="4096" autocomplete="off" spellcheck="false" placeholder="Relay API key (at least 32 bytes)"></label>
+          <p class="hint">Leave blank to reuse the saved key.</p>
+        </fieldset>
+        <p class="hint relay-settings-warning">Trusted peers can control agents. Use localhost or HTTPS. Keys stay on this server.</p>
+        <p id="relay-settings-error" class="form-error" role="alert"></p>
+        <div class="settings-relay-actions"><button id="relay-connect" class="primary" type="submit">Connect</button></div>
+      </form>
+    </details>
+    <footer class="dialog-footer"><button type="button" data-close>Close</button></footer>
   </dialog>
 
   <dialog id="create-dialog">

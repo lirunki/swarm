@@ -4,20 +4,32 @@
 
   class RelaySettingsDialog {
     // Browser timers require the Window receiver, not this dialog instance.
-    constructor({query = selector => document.querySelector(selector), api, onChange = async () => {}, schedule = (callback, delay) => setTimeout(callback, delay), cancel = timer => clearTimeout(timer)}) {
-      this.query = query; this.api = api; this.onChange = onChange;
+    constructor({query = selector => document.querySelector(selector), api, onChange = async () => {}, onOpen = () => {}, schedule = (callback, delay) => setTimeout(callback, delay), cancel = timer => clearTimeout(timer)}) {
+      this.query = query; this.api = api; this.onChange = onChange; this.onOpen = onOpen;
       this.schedule = schedule; this.cancel = cancel;
       this.dialog = query('#settings-dialog'); this.form = query('#relay-settings-form');
+      this.section = query('#relay-settings-section');
       this.fields = query('#relay-settings-fields'); this.action = query('#relay-connect');
       this.key = this.form.elements.relay_api_key;
       this.current = null; this.busy = false; this.loading = false; this.timer = null; this.generation = 0;
       query('#settings-button').addEventListener('click', () => this.open());
       this.form.addEventListener('submit', event => { event.preventDefault(); this.submit(); });
       this.form.elements.relay_url.addEventListener('input', () => this.render());
-      this.dialog.addEventListener('close', () => {
-        this.generation += 1; this.cancel(this.timer); this.timer = null;
-        this.key.value = ''; // No credential survives a closed dialog.
-      });
+      this.section?.addEventListener('toggle', () => this.toggle());
+      this.dialog.addEventListener('close', () => this.deactivate());
+    }
+
+    expanded() { return !this.section || !!this.section.open; }
+    active() { return !!this.dialog.open && this.expanded(); }
+
+    deactivate() {
+      this.generation += 1; this.cancel(this.timer); this.timer = null; this.loading = false;
+      this.key.value = ''; // No credential survives a closed or collapsed relay section.
+    }
+
+    toggle() {
+      if (!this.active()) { this.deactivate(); return; }
+      return this.load();
     }
 
     error(text) { this.query('#relay-settings-error').textContent = text; }
@@ -50,32 +62,39 @@
 
     async open() {
       this.query('#notifications-dialog')?.close();
-      const generation = ++this.generation;
-      this.cancel(this.timer); this.key.value = ''; this.current = null; this.error(''); this.loading = true;
+      this.deactivate(); this.current = null; this.error('');
       this.dialog.showModal(); this.render();
+      this.onOpen();
+      if (this.expanded()) await this.load(); // Old isolated fixtures without <details> remain eager.
+    }
+
+    async load() {
+      if (!this.active() || this.loading) return;
+      const generation = ++this.generation;
+      this.cancel(this.timer); this.timer = null; this.current = null; this.error(''); this.loading = true; this.render();
       try {
         const value = await this.api('/api/federation/settings');
-        if (generation !== this.generation || !this.dialog.open) return;
+        if (generation !== this.generation || !this.active()) return;
         this.fill(value);
       } catch (error) {
-        if (generation === this.generation) this.error(`Cannot load relay settings: ${error.message}`);
+        if (generation === this.generation && this.active()) this.error(`Cannot load relay settings: ${error.message}`);
       } finally {
-        if (generation === this.generation && this.dialog.open) { this.loading = false; this.render(); this.pollLater(generation); }
+        if (generation === this.generation && this.active()) { this.loading = false; this.render(); this.pollLater(generation); }
       }
     }
 
     pollLater(generation) {
       this.cancel(this.timer);
       this.timer = this.schedule(async () => {
-        if (generation !== this.generation || !this.dialog.open) return;
+        if (generation !== this.generation || !this.active()) return;
         if (!this.busy) {
           try {
             const value = await this.api('/api/federation/settings');
-            if (generation !== this.generation || !this.dialog.open) return;
+            if (generation !== this.generation || !this.active()) return;
             this.current = value; this.render(); // Do not overwrite a user's unsaved fields/key.
           } catch { /* Temporary local disconnects must not discard the form draft. */ }
         }
-        if (generation === this.generation && this.dialog.open) this.pollLater(generation);
+        if (generation === this.generation && this.active()) this.pollLater(generation);
       }, 1500);
     }
 
@@ -90,20 +109,23 @@
         relay_api_key: this.key.value || null,
       };
       this.key.value = '';
+      const generation = ++this.generation; // Own the view before POST; an earlier poll GET is now stale.
+      this.cancel(this.timer); this.timer = null; this.loading = false;
       this.busy = true; this.error(''); this.render();
-      const generation = this.generation;
       try {
         const value = await this.api(disconnect ? '/api/federation/disconnect' : '/api/federation/connect', 'POST', body);
-        if (generation === this.generation && this.dialog.open) this.fill(value);
-        await this.onChange(value);
+        if (generation === this.generation && this.active()) this.fill(value);
+        await this.onChange(value); // A completed local configuration change refreshes every scope.
       } catch (error) {
-        if (generation === this.generation && this.dialog.open) {
+        if (generation === this.generation && this.active()) {
           const secret = body?.relay_api_key;
           this.error(secret ? error.message.split(secret).join('[redacted]') : error.message);
         }
       } finally {
         this.busy = false;
-        if (generation === this.generation && this.dialog.open) this.render();
+        if (generation === this.generation && this.active()) {
+          this.loading = false; this.render(); this.pollLater(generation);
+        }
       }
     }
   }

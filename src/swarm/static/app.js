@@ -20,6 +20,8 @@ let selectedAgentGroup = null, agentGroupsController = null, groupingModeControl
 let browserGroups = null, browserGroupingProjection = null, browserGroupingError = null, browserGroupingOperation = 0, groupingBranchBusy = false, groupingBranchOperation = 0;
 const openedAgentGroups = new Set(), agentGroupTabs = new Map();
 const cardViews = new SwarmCardViews.CardViews();
+const wheelPreferences = SwarmTerminalWheel.preferences;
+const wheelSettings = new SwarmTerminalWheel.WheelSettingsController({preferences:wheelPreferences,onError:error=>toast(error.message||String(error),true)});
 let toastTimer;
 function toast(message, error = false) {
   const el = $('#toast'); el.textContent = message; el.className = `toast${error ? ' error' : ''}`; el.hidden = false;
@@ -181,7 +183,9 @@ function updateRestartCapability() {
   button.setAttribute('aria-busy', String(restartingController));
   button.title = restartingController ? 'Restarting backend; waiting to reconnect' : allowed ? 'Restart the active Swarm backend controller' : 'This remote Swarm was not launched with --allow-remote-restart';
   const scope = $('#notifications-active-swarm');
-  if (scope) scope.textContent = `Active Swarm: ${activeSwarm === 'local' ? 'Local Swarm' : federationNodes.get(activeSwarm)?.name || activeSwarm}`;
+  const ownerName=activeSwarm === 'local' ? 'Local Swarm' : federationNodes.get(activeSwarm)?.name || activeSwarm;
+  if (scope) scope.textContent = `Active Swarm: ${ownerName}`;
+  const settingsOwner=$('#settings-active-owner');if(settingsOwner)settingsOwner.textContent=ownerName;
 }
 function notificationSources() {
   return [{id: 'local', name: 'Local Swarm'}, ...[...federationNodes.values()]
@@ -885,8 +889,16 @@ function initTerminal(t) {
   if (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined') { toast('Terminal assets are missing. See README vendor instructions.', true); return; }
   t.term = new Terminal({cursorBlink: true, fontSize: 13, fontFamily: 'ui-monospace,Consolas,monospace', scrollback: 10000, theme: {background: '#0d1015', foreground: '#e8ebf1', cursor: '#ffa16a'}});
   t.fit = new FitAddon.FitAddon(); t.term.loadAddon(t.fit); t.term.open(t.screen); t.fit.fit();
-  t.term.onData(data => { if (!t.copyText?.active && t.ws?.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({type: 'input', data: t.mobileKeys?.transform(data) ?? data})); });
+  t.term.onData(data => {
+    if (t.copyText?.active || t.ws?.readyState !== WebSocket.OPEN) return;
+    const wheelData=t.wheelSpeed?.transform(data) ?? data;
+    t.ws.send(JSON.stringify({type:'input',data:t.mobileKeys?.transform(wheelData) ?? wheelData}));
+  });
   t.term.onResize(({cols, rows}) => { if (t.ws?.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({type: 'resize', cols, rows})); });
+  t.wheelSpeed = new SwarmTerminalWheel.TerminalWheelMultiplier({
+    element:t.screen,term:t.term,multiplier:()=>wheelPreferences.value,
+    canScale:()=>!t.closed && !t.pane.hidden && !t.copyText?.active && !$('dialog[open]') && t.ws?.readyState===WebSocket.OPEN,
+  });
   t.touchScroll = new SwarmTerminalTouch.TerminalTouchScroll({
     element: t.screen,
     canScroll: () => !t.closed && !t.copyText?.active && t.ws?.readyState === WebSocket.OPEN && SwarmTerminalTouch.supportsScroll(t.term),
@@ -980,7 +992,7 @@ function disconnectTerminal(t) {
 }
 function closeTerminal(id, persist = true) {
   const t = terminals.get(id); if (!t) return;
-  t.closed = true; t.mobileKeys?.dispose(); t.copyText?.dispose(); t.touchScroll?.dispose(); disconnectTerminal(t); t.observer?.disconnect(); t.term?.dispose(); t.pane.remove(); t.group.remove(); terminals.delete(id);
+  t.closed = true; t.mobileKeys?.dispose(); t.copyText?.dispose(); t.touchScroll?.dispose(); t.wheelSpeed?.dispose(); disconnectTerminal(t); t.observer?.disconnect(); t.term?.dispose(); t.pane.remove(); t.group.remove(); terminals.delete(id);
   // Deliberately no stop API call: only the attachment is disposable.
   if (activeTab === id) {activate(selectedAgentGroup ? agentGroupTabId(selectedAgentGroup) : 'dashboard', persist);render();}
   else if (persist) rememberUIViewState();
@@ -1448,6 +1460,7 @@ const groupNameMenu = new SwarmDashboardControls.GroupNameMenu({
 });
 const relaySettingsDialog = new SwarmRelaySettings.RelaySettingsDialog({
   api: localApi,
+  onOpen:()=>{wheelSettings.open();updateRestartCapability();},
   onChange: async value => {
     if (!value.enabled && activeSwarm !== 'local') switchSwarm('local');
     await loadFederation();
@@ -1535,6 +1548,7 @@ const agentBroadcast = new SwarmAgentBroadcast.BroadcastController({
   onChange: () => { void refresh(); },
 });
 globalThis.addEventListener?.('storage',event=>{
+  if(event.key==='swarm.terminal-wheel-multiplier'||event.key===null)wheelSettings.reload();
   if(!uiViewStateRestored || serverManagedGrouping())return;
   if(event.key===browserGroupingKey() || event.key===null){syncGroupingStorage(null,false);render();}
   else if(event.key===uiViewStateStorageKey()){
