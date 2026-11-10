@@ -15,6 +15,8 @@ from uuid import UUID, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .agent_limits import DEFAULT_MAX_ACTIVE_MANAGED
+from .agent_limits import active as active_managed
 from .meta_compact import busy, require_not_busy
 from .models import Agent, Status, now
 from .paths import local_path
@@ -23,7 +25,8 @@ if TYPE_CHECKING:
     from .controller import Controller
 
 MAX_ACTIVE_CHILDREN = 4
-MAX_ACTIVE_MANAGED = 16
+# Compatibility export only. Runtime enforcement reads agent-limits.json.
+MAX_ACTIVE_MANAGED = DEFAULT_MAX_ACTIVE_MANAGED
 MAX_CHILDREN = 32
 MAX_DEPTH = 3
 MAX_FORK_CHARS = 400000
@@ -159,16 +162,11 @@ class Orchestrator:
         return depth
 
     def active(self, agent: Agent) -> bool:
-        return (
-            agent.spawn_state == "provisioning"
-            or bool(getattr(agent, "restart_job_id", None))
-            or self.controller.processes.alive(agent)
-            or (agent.managed and agent.auto_resume and agent.status != Status.done)
-        )
+        return active_managed(agent, self.controller.processes)
 
     def check_limits(self, parent: Agent, creating: bool = True) -> None:
-        agents = self.store.scan()
-        if self.store.errors:
+        agents, record_errors = self.store.scan_with_errors()
+        if record_errors:
             raise RuntimeError("Registry contains unreadable records; repair before spawning")
         children = [a for a in agents if a.parent_id == parent.id]
         if self.depth(parent) > MAX_DEPTH:
@@ -177,8 +175,12 @@ class Orchestrator:
             raise ValueError(f"Parent already has {MAX_CHILDREN} retained children")
         if sum(self.active(a) for a in children) >= MAX_ACTIVE_CHILDREN:
             raise ValueError(f"Parent already has {MAX_ACTIVE_CHILDREN} active children")
-        if sum(self.active(a) for a in agents if a.managed) >= MAX_ACTIVE_MANAGED:
-            raise ValueError(f"Swarm already has {MAX_ACTIVE_MANAGED} active managed agents")
+        active_count = sum(self.active(a) for a in agents if a.managed)
+        limits = self.controller.agent_limits.get(active_count)
+        if active_count >= limits["max_active_managed"]:
+            raise ValueError(
+                f"Swarm already has {limits['max_active_managed']} active managed agents"
+            )
 
     def spawn(self, parent_id: str, request: SpawnRequest) -> dict:
         with self.controller.lock:

@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from swarm.importers.pi_history import PiHistory
-from swarm.models import Agent, Status, now
+from swarm.models import Agent, CreateAgent, Status, now
 from swarm.orchestration import ChildMessage, Orchestrator, OwnershipError, SpawnRequest
 from swarm.provisioning import Worker
 from swarm.server import create_app
@@ -409,6 +409,62 @@ def test_limits_and_retained_child_limit_does_not_block_wake(setup, monkeypatch)
         )
 
 
+def test_dynamic_global_limit_blocks_only_new_orchestration_admissions(setup):
+    app, parent, request, repo = setup
+    child = spawn(setup)
+    ctl, service = app.state.controller, app.state.orchestration
+    ctl.apply_agent_limits(
+        {"max_active_managed": 1, "revision": 0, "request_id": str(uuid4())}
+    )
+
+    # Existing active work and idempotent spawn retries do not consume another slot.
+    assert service.wake(str(parent.id), str(child.id))["alive"]
+    assert service.spawn(str(parent.id), request)["reused"]
+    assert ctl.processes.alive(parent) and ctl.processes.alive(child)
+
+    ctl.stop(str(child.id))
+    with pytest.raises(ValueError, match="1 active managed"):
+        service.wake(str(parent.id), str(child.id))
+
+    # Operator controls are deliberately broader than orchestration admission.
+    assert ctl.wake(str(child.id)).id == child.id
+    ctl.stop(str(child.id))
+    manual = ctl.create(
+        CreateAgent(
+            name="Operator override",
+            goal="Manually queued",
+            folder=str(repo),
+            model=parent.model,
+        )
+    )
+    assert manual.spawn_state == "provisioning"
+
+
+def test_invalid_agent_limit_file_fails_closed_for_spawn_and_child_wake(setup):
+    app, parent, request, _ = setup
+    child = spawn(setup)
+    ctl = app.state.controller
+    ctl.stop(str(child.id))
+    path = ctl.agent_limits.path
+    path.write_text('{"secret":"not echoed"', encoding="utf-8")
+    path.chmod(0o600)
+
+    with pytest.raises(RuntimeError, match="Saved agent limits") as wake_error:
+        app.state.orchestration.wake(str(parent.id), str(child.id))
+    with pytest.raises(RuntimeError, match="Saved agent limits") as spawn_error:
+        app.state.orchestration.spawn(
+            str(parent.id),
+            request.model_copy(
+                update={
+                    "request_id": "new-request",
+                    "branch": "new-branch",
+                    "worktree": str(Path(request.worktree).parent / "new"),
+                }
+            ),
+        )
+    assert "secret" not in str(wake_error.value) + str(spawn_error.value)
+
+
 def test_wrong_parent_cannot_control_child_directly(setup):
     app, parent, _, repo = setup
     child = spawn(setup)
@@ -443,7 +499,9 @@ def test_nesting_global_limits_are_sync_and_fork_storage_limits_fail_in_worker(
     if limit == "depth":
         monkeypatch.setattr("swarm.orchestration.MAX_DEPTH", 0)
     elif limit == "global":
-        monkeypatch.setattr("swarm.orchestration.MAX_ACTIVE_MANAGED", 1)
+        app.state.controller.apply_agent_limits(
+            {"max_active_managed": 1, "revision": 0, "request_id": str(uuid4())}
+        )
     elif limit == "fork-source":
         monkeypatch.setattr("swarm.orchestration.MAX_FORK_SOURCE_BYTES", 1)
     else:

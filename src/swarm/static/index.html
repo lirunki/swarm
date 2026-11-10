@@ -7,28 +7,29 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=history-archive-visible-2">
+  <link rel="stylesheet" href="/static/app.css?v=agent-limits-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/org-chart.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/relay-settings.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/terminal-touch.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/terminal-copy.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/dashboard-controls.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/terminal-keys.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/agent-files.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/agent-messages.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/agent-broadcast.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/auth.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/fleet-control.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/system-notifications.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/notifications.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/agent-groups.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/grouping-mode.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/agent-search.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/history-archive.js?v=history-archive-visible-2"></script>
-  <script defer src="/static/app.js?v=history-archive-visible-2"></script>
+  <script defer src="/static/card-views.js?v=agent-limits-1"></script>
+  <script defer src="/static/org-chart.js?v=agent-limits-1"></script>
+  <script defer src="/static/relay-settings.js?v=agent-limits-1"></script>
+  <script defer src="/static/terminal-touch.js?v=agent-limits-1"></script>
+  <script defer src="/static/terminal-copy.js?v=agent-limits-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=agent-limits-1"></script>
+  <script defer src="/static/terminal-keys.js?v=agent-limits-1"></script>
+  <script defer src="/static/agent-files.js?v=agent-limits-1"></script>
+  <script defer src="/static/agent-messages.js?v=agent-limits-1"></script>
+  <script defer src="/static/agent-broadcast.js?v=agent-limits-1"></script>
+  <script defer src="/static/auth.js?v=agent-limits-1"></script>
+  <script defer src="/static/fleet-control.js?v=agent-limits-1"></script>
+  <script defer src="/static/system-notifications.js?v=agent-limits-1"></script>
+  <script defer src="/static/notifications.js?v=agent-limits-1"></script>
+  <script defer src="/static/agent-groups.js?v=agent-limits-1"></script>
+  <script defer src="/static/grouping-mode.js?v=agent-limits-1"></script>
+  <script defer src="/static/agent-search.js?v=agent-limits-1"></script>
+  <script defer src="/static/history-archive.js?v=agent-limits-1"></script>
+  <script defer src="/static/agent-limits.js?v=agent-limits-1"></script>
+  <script defer src="/static/app.js?v=agent-limits-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -90,6 +91,17 @@
         <button id="restart-controller" class="restart-controller small" type="button" aria-label="Restart backend" aria-busy="false" title="Restart the active Swarm backend controller">↻ Restart active Swarm</button>
       </div>
       <p class="hint">Master control and restart apply to the active Swarm. Settings configures this browser's local relay connection.</p>
+    </section>
+    <section class="agent-limits-settings" aria-labelledby="agent-limits-title">
+      <h3 id="agent-limits-title">Active-agent limit</h3>
+      <p id="agent-limits-owner" class="hint">Owning server: Local Swarm</p>
+      <p id="agent-limits-count" class="hint">Active managed agents: unavailable</p>
+      <label for="agent-limits-max">Maximum active managed agents<input id="agent-limits-max" type="number" min="1" max="10000" step="1" value="20" disabled></label>
+      <p class="hint">Default 20. Saved and enforced by the active Swarm, including when accessed through another controller. Counts live managed processes, setup/restart reservations, and automatic-recovery intent—not just “Running” status.</p>
+      <p class="hint">This budget limits agent-requested child spawns and wakes. Manual operator Create/Wake and recovery remain overrides. Lowering it never stops existing agents; further orchestration starts wait until usage is below the limit. The separate 4-active-children-per-parent guard remains.</p>
+      <p id="agent-limits-status" class="hint" role="status" aria-live="polite"></p>
+      <p id="agent-limits-error" class="form-error" role="alert"></p>
+      <button id="agent-limits-save" type="button" class="small" disabled>Save limit</button>
     </section>
     <section class="grouping-mode-settings" aria-labelledby="grouping-mode-title">
       <h3 id="grouping-mode-title">Agent grouping storage</h3>

@@ -16,7 +16,7 @@ let forgettingAgent = false, metaCompactingId = null, toolInputCompactingId = nu
 const toolOutputRepairRequests = new Map();
 const terminals = new Map();
 const groupedBranches = new Set();
-let selectedAgentGroup = null, agentGroupsController = null, groupingModeController = null, historyArchiveController = null;
+let selectedAgentGroup = null, agentGroupsController = null, groupingModeController = null, historyArchiveController = null, agentLimitsController = null;
 let browserGroups = null, browserGroupingProjection = null, browserGroupingError = null, browserGroupingOperation = 0, groupingBranchBusy = false, groupingBranchOperation = 0;
 const openedAgentGroups = new Set(), agentGroupTabs = new Map();
 const cardViews = new SwarmCardViews.CardViews();
@@ -111,6 +111,7 @@ function applyState(data) {
   if(data.grouping_settings!=null && !SwarmGroupingMode.validSettings(data.grouping_settings)) data={...data,grouping_settings:state.grouping_settings || data.grouping_settings,grouping_settings_error:'Current grouping mode is invalid; edits are disabled.'};
   else if(data.grouping_settings==null && state.grouping_settings && !savedView) data={...data,grouping_settings:state.grouping_settings,grouping_settings_error:'Current grouping mode is unavailable; edits are disabled.'};
   if (!savedView && data.grouping_settings && state.grouping_settings && data.grouping_settings.revision < state.grouping_settings.revision) data={...data,grouping_settings:state.grouping_settings};
+  if(!savedView && data.agent_limits && state.agent_limits && data.agent_limits.revision < state.agent_limits.revision) data={...data,agent_limits:state.agent_limits,agent_limits_error:state.agent_limits_error};
   state = data;
   syncGroupingStorage(savedView,previousServerMode);
   if (savedView) {
@@ -131,8 +132,8 @@ function applyState(data) {
   notificationsInbox?.refresh();
 }
 async function refresh() {
-  const generation = stateGeneration;
-  try { const data = await api('/api/state'); if (generation === stateGeneration) applyState(data); }
+  const generation = stateGeneration, before = state;
+  try { const data = await api('/api/state'); if (generation === stateGeneration && before === state) applyState(data); }
   catch (error) { if (generation === stateGeneration) toast(error.message, true); }
 }
 async function connectState() {
@@ -771,6 +772,7 @@ function renderAgentFolders(matching, includeEmpty = true) {
   container.hidden=!container.childNodes.length;
 }
 function render() {
+  agentLimitsController?.setState(state.agent_limits,state.federation_offline?'Owning Swarm is offline.':state.agent_limits_error);
   groupingModeController?.setState(state.grouping_settings,state.federation_offline?'Owning Swarm is offline.':state.grouping_settings_error);
   $('#home-path').textContent = state.home ? `${state.home}/agents` : '~/.swarm/agents';
   $('#agent-count').textContent = state.agents.length;
@@ -1506,6 +1508,16 @@ groupingModeController = new SwarmGroupingMode.GroupingModeController({
       catch(error){browserGroupingError=error.message;render();}
       return;
     }
+    await refresh();
+  },
+});
+agentLimitsController = new SwarmAgentLimits.AgentLimitsController({
+  api:localApi,currentSwarm:()=>activeSwarm,currentGeneration:()=>stateGeneration,
+  ownerName:source=>source==='local'?'Local Swarm':federationNodes.get(source)?.name||source,
+  onError:message=>toast(message,true),
+  onChanged:async(projection,metadata)=>{
+    if(metadata.source!==activeSwarm||metadata.generation!==stateGeneration)return;
+    if(projection && (!state.agent_limits || projection.revision>=state.agent_limits.revision))state.agent_limits=projection;
     await refresh();
   },
 });

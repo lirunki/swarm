@@ -487,6 +487,14 @@ def test_credential_outputs_must_not_collide_with_setup_json_or_launcher(config,
         wizard.save_config(path, config)
 
 
+def test_agent_limits_path_is_reserved_for_registry_state(config, tmp_path):
+    config["server"]["password_file"] = str(
+        Path(config["home"]) / "agent-limits.json"
+    )
+    with pytest.raises(wizard.SetupError, match="Swarm-managed registry state"):
+        wizard.validate_config(config)
+
+
 def test_browser_password_must_not_reuse_relay_api_key_file(config, tmp_path):
     add_repeater(config, tmp_path)
     config["server"]["password_file"] = config["relay"]["api_key_file"]

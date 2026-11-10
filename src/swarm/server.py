@@ -35,6 +35,11 @@ from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .agent_limits import (
+    AgentLimitsConflict,
+    AgentLimitsCorrupt,
+    AgentLimitsError,
+)
 from .auth import MAX_LOGIN_BODY, AuthFailure, BrowserAccess, BrowserAuthMiddleware, loopback
 from .controller import Controller
 from .discovery import browse_folders, discover_models
@@ -328,6 +333,20 @@ def create_app(
     async def ownership_error(request: Request, exc: OwnershipError):
         return JSONResponse({"detail": str(exc)}, status_code=403)
 
+    @app.exception_handler(AgentLimitsError)
+    async def agent_limits_bad_request(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    @app.exception_handler(AgentLimitsConflict)
+    async def agent_limits_conflict(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
+    @app.exception_handler(AgentLimitsCorrupt)
+    async def agent_limits_corrupt(request, exc):
+        return JSONResponse(
+            {"detail": "Saved agent limits could not be read safely"}, status_code=409
+        )
+
     @app.exception_handler(GroupingError)
     async def grouping_bad_request(request, exc):
         return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -394,6 +413,32 @@ def create_app(
     def state():
         controller.refresh()
         return controller.state
+
+    @app.get("/api/agent-limits")
+    async def agent_limits():
+        return await asyncio.to_thread(controller.agent_limits_state)
+
+    @app.post("/api/agent-limits")
+    async def update_agent_limits(request: Request):
+        # Agent service credentials can orchestrate their own children but cannot
+        # raise controller-wide owner policy. Password-disabled local mode has no
+        # separate owner identity and remains backward compatible.
+        if access.required and not access.authorize(
+            request.headers.get("authorization", ""), service_allowed=False
+        ):
+            raise AuthFailure("Owner browser authentication required", 403)
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > 8192:
+                raise AgentLimitsError("Agent limits request is too large")
+            raw.extend(chunk)
+        try:
+            body = json.loads(raw)
+        except (UnicodeError, json.JSONDecodeError):
+            raise AgentLimitsError("Request body must be valid JSON") from None
+        result = await asyncio.to_thread(controller.apply_agent_limits, body)
+        await broadcast()
+        return result
 
     @app.get("/api/groups")
     async def list_groups():

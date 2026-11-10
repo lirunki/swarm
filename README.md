@@ -619,6 +619,43 @@ keyboards without the software keyboard do not show the accessory bar.
 This uses the existing terminal WebSocket/PTY transport, including remote terminals.
 Refresh the page after updating; no backend restart is needed.
 
+### Per-Swarm active-agent capacity
+
+Open **bell → Notifications (All connected Swarms) → Active-agent limit**, select
+its owner using the Swarm picker, and save **Maximum active managed agents**.
+The default is **20**; supported values are integers **1–10,000**. Settings are
+saved on the active controller in private `$SWARM_HOME/agent-limits.json`, not in
+browser storage. Viewing A through B reads and writes **A's** limit, independently
+of B and every other connected controller. The usage counter is server-calculated.
+
+This replaces the previous hard-coded 16-agent **orchestration admission** budget:
+new agent-requested child spawns and wakes of inactive children consult the owning
+server's current setting. Explicit operator Create/Wake, existing automatic recovery,
+and restart behavior remain overrides, as before. The separate safeguards of
+**four active direct children per parent**, **three nesting levels**, and **32 retained
+children per parent** are unchanged. Increasing the controller budget does not
+remove those guards or wake any agents.
+
+An active managed slot includes provisioning/setup and restart reservations, live
+managed processes (even if their goal says Done/Dormant), and pending automatic
+recovery intent for non-Done agents. Observed/unmanaged processes do not count.
+Lowering below current usage asks for confirmation, never stops existing processes,
+and blocks additional orchestration admission until usage falls below the setting.
+Repeating an already accepted spawn request does not consume another slot.
+
+Changes use authenticated **GET/POST `/api/agent-limits`**, revision conflict checks
+and UUID receipts. Password-protected controllers reject setting changes made with
+agent service credentials; operators use browser authentication, including destination
+credentials over federation. Other browsers receive the updated state. Dirty drafts
+survive live count updates, newer revisions cannot be replaced by stale HTTP state,
+and timeouts retain request IDs rather than automatically retrying. Offline/older
+servers show the control as unavailable. Corrupt settings or unreadable agent records
+fail closed for new orchestration starts and leave the stored file unchanged.
+
+Deploy/restart the updated controller for the new default/API, then refresh the
+browser. Changing a limit after deployment is immediate and needs no restart.
+There is no automatic production limit edit or agent start on upgrade.
+
 ### Agent grouping and folder dashboards
 
 Open **bell → Notifications (All connected Swarms) → Agent grouping storage** to
@@ -1323,7 +1360,7 @@ the parent session.
 
 Ownership is direct-child and cooperative, not a hostile-agent security sandbox;
 all agents run as the same user. Limits are four concurrent children per parent,
-16 active managed agents globally, three child nesting levels, and 32 retained children per
+20 active managed agents by default per Swarm controller (configurable below), three child nesting levels, and 32 retained children per
 parent. Failures remain as records/artifacts and are not automatically retried;
 inspect them before assigning a new key.
 

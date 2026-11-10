@@ -497,7 +497,14 @@ fresh context or compact first if the chosen model cannot fit it.
 `/resume`) in a managed process.
 
 Limits for agent-initiated spawns/wakes are four active children per parent,
-16 active managed agents globally, and three child nesting levels. At most 32 children are retained per parent. A live process still consumes an active
+three child nesting levels, and a per-controller active-managed budget that defaults
+to **20**. The user can change that server-owned budget in **Notifications → All
+connected Swarms → Active-agent limit**, independently for each connected Swarm.
+When viewing A through B, A stores/enforces A's budget. Agents must not raise their
+own budget or edit `agent-limits.json`; ask the operator and send a Swarm notification
+if more capacity is needed. A reduced budget does not stop existing agents; new
+orchestration starts wait until usage is below it. Explicit operator Create/Wake and
+existing recovery/restarts retain their overrides. At most 32 children are retained per parent. A live process still consumes an active
 slot even if its goal is marked done; stop finished children to free those slots. Failed children
 remain visible with their records, setup errors and private log path. Worktree
 operations that were already started are not replayed after a worker crash. A surviving

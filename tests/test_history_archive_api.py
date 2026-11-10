@@ -207,6 +207,6 @@ def test_dashboard_shell_does_not_cache_away_archive_controls(tmp_path, monkeypa
         assert shell.headers["cache-control"] == "no-store"
         assert 'id="archive-history"' in shell.text
         assert 'id="history-archive-percent"' in shell.text
-        assert "/static/history-archive.js?v=history-archive-visible-2" in shell.text
+        assert "/static/history-archive.js?v=" in shell.text
         assert "No LLM" in shell.text
         assert client.get("/static/history-archive.js").status_code == 200

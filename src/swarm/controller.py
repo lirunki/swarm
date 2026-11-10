@@ -9,6 +9,12 @@ import threading
 from pathlib import Path
 
 from .adapters import resume_prompt, session_header
+from .agent_limits import (
+    AgentLimits,
+    AgentLimitsCorrupt,
+    count_active,
+    count_active_entries,
+)
 from .discovery import sibling_worktree_path
 from .files import AgentFiles
 from .grouping import Groups
@@ -52,6 +58,7 @@ class Controller:
         self.processes = processes
         self.lock = threading.RLock()
         self.files = AgentFiles(store)
+        self.agent_limits = AgentLimits(store)
         self.groups = Groups(store)
         self.notifications = Notifications(store)
         self.wakes = ScheduledWakes(self)
@@ -113,8 +120,15 @@ class Controller:
             "files_error": None,
         }
         entries = [a for a in self.state.get("agents", []) if a["id"] != str(agent.id)]
+        entries.append(entry)
+        agent_limits = self.state.get("agent_limits")
+        if isinstance(agent_limits, dict):
+            agent_limits = agent_limits | {
+                "active_managed": count_active_entries(entries)
+            }
         self.state = self.state | {
-            "agents": [*entries, entry],
+            "agents": entries,
+            "agent_limits": agent_limits,
             "home": str(self.store.home),
             "errors": self.state.get("errors", {}),
             "health": self.state.get("health", {}),
@@ -413,6 +427,28 @@ class Controller:
                     log.exception("Mailbox remains queued; could not pump agent %s", agent.id)
             return self.refresh()
 
+    def agent_limits_state(self) -> dict:
+        """Read limits against one complete, authoritative registry snapshot."""
+        with self.lock:
+            agents, record_errors = self.store.scan_with_errors()
+            if record_errors:
+                raise AgentLimitsCorrupt(
+                    "Registry contains unreadable records; agent limits are unavailable"
+                )
+            return self.agent_limits.get(count_active(agents, self.processes))
+
+    def apply_agent_limits(self, body: object) -> dict:
+        """Apply owner admission settings without starting or stopping any agent."""
+        with self.lock:
+            agents, record_errors = self.store.scan_with_errors()
+            if record_errors:
+                raise AgentLimitsCorrupt(
+                    "Registry contains unreadable records; agent limits cannot be changed"
+                )
+            result = self.agent_limits.apply(body, count_active(agents, self.processes))
+            self.refresh()
+            return result
+
     def apply_groups(self, body: object) -> dict:
         """Apply a grouping mutation against one controller-serialized registry view."""
         with self.lock:
@@ -476,6 +512,19 @@ class Controller:
             )
             if agent_groups_error:
                 errors["groups.json"] = agent_groups_error
+            agent_limits = None
+            agent_limits_error = None
+            if record_errors:
+                agent_limits_error = (
+                    "Registry contains unreadable records; active managed count is unavailable"
+                )
+            else:
+                try:
+                    agent_limits = self.agent_limits.get(count_active_entries(entries))
+                except AgentLimitsCorrupt:
+                    agent_limits_error = "Saved agent limits could not be read"
+            if agent_limits_error:
+                errors["agent-limits.json"] = agent_limits_error
             self.state = {
                 "restart_jobs": restart_jobs,
                 "notifications": notifications,
@@ -484,6 +533,8 @@ class Controller:
                 "grouping_settings": grouping_settings,
                 "agent_groups_error": agent_groups_error,
                 "grouping_settings_error": agent_groups_error,
+                "agent_limits": agent_limits,
+                "agent_limits_error": agent_limits_error,
                 "errors": errors,
                 "home": str(self.store.home),
                 "health": self.processes.health(),
