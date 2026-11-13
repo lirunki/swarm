@@ -13,6 +13,7 @@ dependencies = [
     "anyio>=3.6.2,<5",
     "uvicorn>=0.30,<1",
     "websockets>=12,<18",
+    "pychrome>=0.2.4,<0.3",
     "pydantic>=2.9,<3",
     "PyYAML>=6,<7",
 ]

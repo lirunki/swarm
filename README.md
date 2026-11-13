@@ -763,6 +763,77 @@ Install the updated backend and restart that controller explicitly when convenie
 then refresh the dashboard. The feature makes no production changes on install,
 and does not automatically restart a running controller or migrate agents.
 
+### Remote Browser tab (EdgeMCP reuse)
+
+Swarm includes EdgeMCP's screenshot-based browser viewer and browser-control code,
+adapted from EdgeMCP commit `c09dc257886305539ea90bc454ceda63b9b150a6` in
+`/mnt/d/git/edgemcp`. This reuses the existing design—not a new VNC/CDP engine or
+streaming protocol. It does **not** require running an MCP/SSH service. The
+controller embeds the pychrome browser adapters; the existing authenticated Swarm
+HTTP relay forwards JSON actions and binary PNG responses unchanged.
+
+1. Select the owning Swarm (local or connected remote).
+2. Open **Notifications → Settings → Remote browser**. Enable access, select
+   headless mode if there is no desktop display, and optionally choose an installed
+   Edge/Chromium executable on that owner. Default is disabled, headless, automatic
+   executable discovery. Settings are persisted on the owning server; enabling
+   does not launch a browser. Close its dedicated browser before changing settings.
+3. Click **Browser** in the workspace tab strip, then **Launch browser**. Launch
+   is explicit and uses `<SWARM_HOME>/remote-browser/profile`, never the normal
+   personal profile. Remote requests are executed by that remote owner, not the
+   browser's local machine.
+4. View/select/create/close page tabs, use Back/Forward/Reload, and interact with
+   the screenshot. Pointer drags are sent as one gesture rather than one network
+   request per movement. Focus the image for keyboard input. Copy/Paste and
+   Ctrl/Cmd+C/V explicitly bridge plain text; no automatic clipboard sync occurs.
+
+The active **Browser** workspace tab is pinned beside Dashboard. Inactive Browser
+stays available after other tabs; folder dashboards still sit immediately after
+Dashboard when selected. Tab selection is restored separately per Swarm. Switching
+away stops screenshot polling, discards pending unsent input, and leaves the remote
+browser open; controller shutdown detaches browser-control callbacks without closing
+it. The dedicated profile persists cookies/logins, so protect the registry directory.
+
+Captures refresh every **2 seconds** by default; the client interval is adjustable
+from 0.25–60 seconds with Pause/Resume and explicit refresh. These are **snapshots,
+not live video**. Page movement between screenshot and click can make coordinates
+stale. Multiple browser viewers share the selected page, just like EdgeMCP; use
+one controlling user at a time. Existing screenshots and input calls can finish
+when you leave, but queued old-owner actions are not dispatched or replayed.
+Timeouts are not cancellation and commands are never blindly retried.
+
+**Security and limits:**
+
+- Browser access is disabled until an operator enables it on each owner. Existing
+  browser-password authentication and same-origin rules apply at both gateway and
+  destination; agent service credentials cannot control browsers. Without a Swarm
+  password, use only a trusted loopback deployment, as for other operator actions.
+- CDP stays on a private loopback port. Swarm retains and verifies the dedicated
+  debugger identity before reuse/attachment; it refuses an unrelated CDP listener.
+  The browser sandbox stays enabled. No personal profile or external debugger
+  endpoint can be selected in the web form.
+- The webapp displays only PNG pixels and text metadata—target-site HTML/JavaScript
+  never executes on the Swarm dashboard origin. No arbitrary CDP/eval endpoint is
+  exposed. Only HTTP(S) new-tab URLs are accepted; these can reach the owner's
+  internal network with its browser privileges. Enable this only for trusted users.
+- A screenshot is limited to 8 MiB, a command to 16 KiB, and inserted text to 4096
+  characters per request. Clipboard selection is plain text; file uploads/download
+  bridging, audio/video streaming, and security-key forwarding are not implemented.
+- The embedded browser remains open when Swarm exits. Close that dedicated browser
+  normally on the owning host when finished. Do not delete its profile while it is
+  running. There is intentionally no new process-killing controller.
+- Native Edge/Chromium must be installed. The Python dependency `pychrome` is
+  installed with Swarm; importing/running a disabled controller does not attach it.
+  Headless mode works on a server with the necessary browser runtime libraries.
+  For Windows Edge, use native Windows Python/Cygwin's compatible configuration;
+  WSL Python does not launch a Windows `.exe`. No firewall or machine trust changes
+  are made automatically.
+
+Deploy the updated controller and frontend, then refresh. The existing relay needs
+no update for this feature: it already carries bounded HTTP JSON/PNG responses.
+No model call is involved. Keep dedicated browser profiles and screenshots out of
+source control and never publish them as products without explicit permission.
+
 ### Mouse-wheel speed
 
 In **Settings → Terminal → Mouse-wheel multiplier**, choose **1×–20×** (default 1×)

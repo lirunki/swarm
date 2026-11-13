@@ -521,6 +521,8 @@ def test_generated_service_arguments_are_accepted_by_real_swarm_parser(config, t
     "relative",
     [
         "groups.json",
+        "browser-settings.json",
+        "remote-browser/profile/Cookies",
         "relay-settings.json",
         "state.json",
         "controller.lock",

@@ -41,6 +41,12 @@ from .agent_limits import (
     AgentLimitsError,
 )
 from .auth import MAX_LOGIN_BODY, AuthFailure, BrowserAccess, BrowserAuthMiddleware, loopback
+from .browser_settings import (
+    BrowserSettings,
+    BrowserSettingsConflict,
+    BrowserSettingsCorrupt,
+    BrowserSettingsError,
+)
 from .controller import Controller
 from .discovery import browse_folders, discover_models
 from .federation import MAX_RPC_REQUEST, FederationConfig
@@ -61,6 +67,7 @@ from .orchestration import ChildMessage, ChildStop, Orchestrator, OwnershipError
 from .processes import Processes
 from .products import ProductRequest, Products
 from .relay_settings import RelayConnectRequest, RelaySettings
+from .remote_browser import BrowserError, RemoteBrowser
 from .restarts import RestartAction, RestartRequest, require_not_restarting
 from .sessions import AdoptRequest, Sessions
 from .store import Store
@@ -177,6 +184,9 @@ def create_app(
     tool_input_compactor = ToolInputCompactor(meta_compactor)
     output_repair = ToolOutputRepair(meta_compactor)
     history_archiver = HistoryArchiver(meta_compactor)
+    browser_settings = BrowserSettings(store.home)
+    remote_browser = RemoteBrowser(store.home, browser_settings)
+    browser_settings_lock = asyncio.Lock()
     sessions = Sessions(store, session_roots)
     grok = GrokSessions(store, grok_session_roots)
     listeners: set[asyncio.Queue] = set()
@@ -231,6 +241,7 @@ def create_app(
                 await relay_settings.close()
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
+                await asyncio.to_thread(app.state.remote_browser.close)
                 await asyncio.to_thread(meta_compactor.close)
                 # Stopping the web application deliberately does NOT stop any agent.
 
@@ -244,6 +255,8 @@ def create_app(
     app.state.tool_input_compactor = tool_input_compactor
     app.state.output_repair = output_repair
     app.state.history_archiver = history_archiver
+    app.state.remote_browser = remote_browser
+    app.state.browser_settings = browser_settings
     app.state.sessions = sessions
     app.state.grok_sessions = grok
     app.state.federation = federation
@@ -266,7 +279,7 @@ def create_app(
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-            "connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'"
+            "connect-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'none'"
         )
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
@@ -363,6 +376,22 @@ def create_app(
     async def grouping_corrupt(request, exc):
         return JSONResponse({"detail": "Saved groups could not be read"}, status_code=409)
 
+    @app.exception_handler(BrowserSettingsConflict)
+    async def browser_settings_conflict(_request: Request, exc: BrowserSettingsConflict):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
+    @app.exception_handler(BrowserSettingsCorrupt)
+    async def browser_settings_corrupt(_request: Request, exc: BrowserSettingsCorrupt):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
+    @app.exception_handler(BrowserSettingsError)
+    async def browser_settings_error(_request: Request, exc: BrowserSettingsError):
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    @app.exception_handler(BrowserError)
+    async def remote_browser_error(_request: Request, exc: BrowserError):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
     @app.exception_handler(ValueError)
     async def bad_request(request, exc):
         return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -458,6 +487,102 @@ def create_app(
         result = await asyncio.to_thread(controller.apply_groups, body)
         await broadcast()
         return result
+
+    async def bounded_json(request: Request, limit: int):
+        data = bytearray()
+        async for part in request.stream():
+            data.extend(part)
+            if len(data) > limit:
+                raise ValueError("Browser request is too large")
+        try:
+            body = json.loads(data)
+        except (ValueError, UnicodeDecodeError):
+            raise ValueError("Invalid browser JSON") from None
+        if not isinstance(body, dict):
+            raise ValueError("Browser request must be an object")
+        return body
+
+    def require_browser_operator(request: Request):
+        if access.required and not access.authorize(
+            request.headers.get("authorization", ""), service_allowed=False
+        ):
+            raise AuthFailure("Operator browser authentication required", 403)
+
+    @app.get("/api/browser/settings")
+    async def get_browser_settings(request: Request):
+        require_browser_operator(request)
+        return await asyncio.to_thread(browser_settings.get)
+
+    @app.post("/api/browser/settings")
+    async def set_browser_settings(request: Request):
+        require_browser_operator(request)
+        body = await bounded_json(request, 16 * 1024)
+        async with browser_settings_lock:
+            current = await asyncio.to_thread(browser_settings.get)
+            status = await asyncio.to_thread(app.state.remote_browser.status)
+            if status["running"] and any(
+                body.get(key) != current.get(key) for key in ("enabled", "headless", "executable")
+            ):
+                raise RuntimeError("Close the dedicated browser on this server before changing its settings.")
+            value = await asyncio.to_thread(browser_settings.apply, body)
+        return value
+
+    @app.get("/api/browser/status")
+    async def get_browser_status(request: Request):
+        require_browser_operator(request)
+        return await asyncio.to_thread(app.state.remote_browser.status)
+
+    @app.post("/api/browser/launch")
+    async def launch_browser(request: Request):
+        require_browser_operator(request)
+        body = await bounded_json(request, 2048)
+        if set(body) != {"request_id"}:
+            raise ValueError("request_id is required")
+        try:
+            request_id = str(UUID(body["request_id"]))
+        except (ValueError, TypeError, AttributeError):
+            raise ValueError("request_id must be a UUID") from None
+        async with browser_settings_lock:
+            return await asyncio.to_thread(app.state.remote_browser.launch, request_id)
+
+    @app.get("/api/browser/{action}")
+    async def browser_read(action: str, request: Request):
+        require_browser_operator(request)
+        if action not in {"tabs", "screenshot"}:
+            raise ValueError("Unknown browser action")
+        result = await asyncio.to_thread(
+            app.state.remote_browser.request, action, query=dict(request.query_params)
+        )
+        if isinstance(result, bytes):
+            if len(result) > 8 * 1024 * 1024:
+                raise ValueError("Browser screenshot exceeds 8 MiB")
+            return Response(
+                result,
+                media_type="image/png",
+                headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+            )
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/browser/{action}")
+    async def browser_action(action: str, request: Request):
+        require_browser_operator(request)
+        if action not in {
+            "select",
+            "new",
+            "close",
+            "back",
+            "forward",
+            "reload",
+            "click",
+            "drag",
+            "text",
+            "key",
+            "copy",
+        }:
+            raise ValueError("Unknown browser action")
+        body = await bounded_json(request, 16 * 1024)
+        result = await asyncio.to_thread(app.state.remote_browser.request, action, body)
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/grouping-settings")
     async def grouping_settings():
@@ -565,6 +690,8 @@ def create_app(
         methods=["GET", "POST", "PATCH", "DELETE"],
     )
     async def federation_proxy(node_id: str, remote_path: str, request: Request):
+        if remote_path.lstrip('/').startswith('api/browser/'):
+            require_browser_operator(request)
         if not federation:
             return JSONResponse({"detail": "federation is not configured"}, status_code=404)
         try:

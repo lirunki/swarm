@@ -30,6 +30,7 @@
   <script defer src="/static/history-archive.js?v=settings-wheel-1"></script>
   <script defer src="/static/agent-limits.js?v=settings-wheel-1"></script>
   <script defer src="/static/terminal-wheel.js?v=settings-wheel-1"></script>
+  <script defer src="/static/remote-browser.js?v=settings-wheel-1"></script>
   <script defer src="/static/app.js?v=settings-wheel-1"></script>
 </head>
 <body>
@@ -45,7 +46,7 @@
     </div>
     <div class="top-meta"><span id="health"></span><span id="connection" class="connection">Connecting…</span><button id="help-button" class="header-icon" type="button" aria-label="Help" title="Swarm help" aria-haspopup="dialog" aria-controls="help-dialog">?</button></div>
   </header>
-  <nav id="tabs" class="tabs" aria-label="Workspace tabs"><button id="dashboard-tab" class="tab active" type="button" aria-current="page">◫ &nbsp;Dashboard</button></nav>
+  <nav id="tabs" class="tabs" aria-label="Workspace tabs"><button id="dashboard-tab" class="tab active" type="button" aria-current="page">◫ &nbsp;Dashboard</button><button id="browser-tab" class="tab" type="button" aria-current="false">Browser</button></nav>
   <main id="dashboard">
     <section class="page-head mission-toolbar" aria-label="Dashboard controls">
       <div class="page-head-title"><div id="agent-group-heading" class="compact-dropdown agent-group-heading"><h1 id="dashboard-title" class="sr-only"><span id="dashboard-root-title">Agent dashboard</span><button id="agent-group-name-button" type="button" class="agent-group-name-button" aria-haspopup="menu" aria-expanded="false" aria-controls="agent-group-name-menu" hidden><span id="agent-group-name"></span><span class="agent-group-menu-caret" aria-hidden="true">▾</span></button></h1><div id="agent-group-name-menu" class="dropdown-panel agent-group-name-menu" role="menu" aria-label="Group actions" hidden><button id="agent-group-rename" type="button" role="menuitem">Rename group</button><button id="agent-group-delete" type="button" class="danger" role="menuitem">Delete group</button></div></div>
@@ -76,6 +77,32 @@
     <footer class="page-footer"><span><i class="tiny-dot"></i> LOCAL-FIRST · FILE-BASED · ALWAYS YOURS</span><code id="home-path">~/.swarm/agents</code></footer>
   </main>
   <section id="terminals" aria-label="Agent terminal workspace" hidden></section>
+  <section id="browser-panel" aria-label="Shared remote browser" hidden>
+    <header class="browser-toolbar">
+      <div class="browser-heading"><strong>Browser</strong><span id="browser-owner" class="hint"></span><span id="browser-status" class="hint" role="status" aria-live="polite">Browser status unavailable</span></div>
+      <div class="browser-actions">
+        <button id="browser-launch" type="button" class="small primary" disabled>Launch browser</button>
+        <button id="browser-refresh-tabs" type="button" class="small" disabled>Refresh tabs</button>
+        <button id="browser-back" type="button" class="small" aria-label="Back" disabled>Back</button>
+        <button id="browser-forward" type="button" class="small" aria-label="Forward" disabled>Forward</button>
+        <button id="browser-reload" type="button" class="small" disabled>Reload</button>
+        <button id="browser-copy" type="button" class="small" disabled>Copy</button>
+        <button id="browser-paste" type="button" class="small" disabled>Paste</button>
+      </div>
+      <div class="browser-location">
+        <input id="browser-url" type="url" inputmode="url" aria-label="New browser tab URL" placeholder="https://example.com">
+        <button id="browser-new" type="button" class="small" disabled>New tab</button>
+        <label for="browser-interval">Screenshot every <input id="browser-interval" type="number" value="2"> seconds</label>
+        <button id="browser-pause" type="button" class="small">Pause refresh</button>
+      </div>
+      <p class="browser-sharing hint">Screenshots, not video. This is one shared selected tab: other connected clients can change or close it.</p>
+      <div id="browser-tabs" class="browser-page-tabs" role="tablist" aria-label="Remote browser pages"></div>
+    </header>
+    <div class="browser-viewport">
+      <p id="browser-placeholder" class="hint">Browser status unavailable</p>
+      <img id="browser-screen" alt="Remote browser screenshot; click, drag, type, or paste to interact" tabindex="0" draggable="false" hidden>
+    </div>
+  </section>
 
   <div id="group-context-menu" class="group-context-menu" role="menu" aria-label="Selected agent families" hidden>
     <button id="grouping-submenu-button" type="button" role="menuitem" aria-haspopup="menu" aria-controls="grouping-submenu" aria-expanded="false">Grouping ▸</button>
@@ -220,6 +247,16 @@
       <button id="grouping-mode-change" type="button" class="small" disabled>Apply grouping mode</button>
     </section>
     </section>
+    <details id="browser-settings-section" class="settings-section browser-settings-section">
+      <summary><span>Remote browser</span><span class="settings-scope">Selected Swarm</span></summary>
+      <p id="browser-settings-owner" class="hint">Owning server: Local Swarm</p>
+      <label class="checkbox"><input id="browser-enabled" type="checkbox" disabled>Enable remote browser launches</label>
+      <label class="checkbox"><input id="browser-headless" type="checkbox" checked disabled>Run headless</label>
+      <label for="browser-executable">Browser executable <span class="hint">optional</span><input id="browser-executable" type="text" spellcheck="false" placeholder="Auto-discover Edge or Chromium" disabled></label>
+      <p class="hint">The owning server auto-discovers Microsoft Edge or Chromium when the executable is blank. Settings are shared; saving never launches a browser.</p>
+      <p id="browser-settings-status" class="hint" role="status" aria-live="polite">Browser settings have not been loaded.</p>
+      <button id="browser-settings-save" type="button" class="small" disabled>Save browser settings</button>
+    </details>
     <section class="settings-section settings-client-section" aria-labelledby="settings-client-title">
       <div class="settings-section-heading"><h3 id="settings-client-title">Terminal</h3><span class="settings-scope">This browser</span></div>
       <div class="settings-input-row"><label for="mouse-wheel-multiplier">Mouse-wheel multiplier<input id="mouse-wheel-multiplier" type="number" min="1" max="20" step="1" value="1"></label><button id="mouse-wheel-save" type="button" class="small">Save speed</button></div>

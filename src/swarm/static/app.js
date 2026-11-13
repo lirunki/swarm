@@ -17,6 +17,7 @@ const toolOutputRepairRequests = new Map();
 const terminals = new Map();
 const groupedBranches = new Set();
 let selectedAgentGroup = null, agentGroupsController = null, groupingModeController = null, historyArchiveController = null, agentLimitsController = null;
+let remoteBrowserController = null, browserSettingsController = null;
 let browserGroups = null, browserGroupingProjection = null, browserGroupingError = null, browserGroupingOperation = 0, groupingBranchBusy = false, groupingBranchOperation = 0;
 const openedAgentGroups = new Set(), agentGroupTabs = new Map();
 const cardViews = new SwarmCardViews.CardViews();
@@ -56,6 +57,30 @@ async function api(path, method = 'GET', body) {
     error.status = response.status; throw error;
   }
   return value;
+}
+async function browserRequest(path, method = 'GET', body, binary = false) {
+  const request = typeof authenticatedFetch === 'function' ? authenticatedFetch : fetch;
+  const response = await request(path, {method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+  if (!binary) {
+    let value; try { value = await response.json(); } catch { throw nonJsonResponseError(response); }
+    if (!response.ok) {
+      const error = new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value));
+      error.status = response.status; throw error;
+    }
+    return value;
+  }
+  if (!response.ok) {
+    let value; try { value = await response.json(); } catch { throw nonJsonResponseError(response); }
+    const error = new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value));
+    error.status = response.status; throw error;
+  }
+  const type = (response.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
+  const declared = Number(response.headers.get('content-length'));
+  if (type !== 'image/png') throw Error('Browser screenshot response was not a PNG image');
+  if (Number.isFinite(declared) && declared > 8 * 1024 * 1024) throw Error('Browser screenshot exceeds the 8 MiB limit');
+  const blob = await response.blob();
+  if (blob.type && blob.type !== 'image/png' || blob.size > 8 * 1024 * 1024) throw Error('Browser returned an invalid screenshot');
+  return blob;
 }
 const agentById = id => state.agents.find(a => a.id === id);
 const wsURL = path => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${path}`;
@@ -128,7 +153,7 @@ function applyState(data) {
     uiViewStateRestored = true;
     for (const id of savedView.terminalTabs.ids) if (agentById(id)) openTerminal(id, false);
     const selected = savedView.terminalTabs.active;
-    activate(selected === 'dashboard' || terminals.has(selected) || isAgentGroupTab(selected) ? selected : 'dashboard');
+    activate(selected === 'dashboard' || selected === 'browser' || terminals.has(selected) || isAgentGroupTab(selected) ? selected : 'dashboard');
   }
   consumeNotificationReveal();
   notificationsInbox?.refresh();
@@ -246,6 +271,7 @@ async function loadFederation() {
 function switchSwarm(nodeId) {
   if (nodeId === activeSwarm) return;
   notificationsInbox?.clear();
+  if(typeof remoteBrowserController!=='undefined')remoteBrowserController?.deactivate();
   if(uiViewStateRestored) rememberUIViewState();
   for (const id of [...terminals.keys()]) closeTerminal(id, false);
   for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
@@ -256,6 +282,8 @@ function switchSwarm(nodeId) {
   state = {agents: [], errors: {}, health: {}, home: ''}; dashboardControls.status.reset(); $('#search').value = '';
   $('#swarm-selector').value = activeSwarm;
   $('#swarm-selector').title = $('#swarm-selector').selectedOptions?.[0]?.textContent || 'Active Swarm';
+  if(typeof remoteBrowserController!=='undefined')remoteBrowserController?.setContext();
+  if(typeof browserSettingsController!=='undefined')browserSettingsController?.setContext();
   activate('dashboard', false); render(); updateRestartCapability(); connectState();
   updateNotificationSources();
 }
@@ -752,12 +780,16 @@ function syncAgentGroupTabs() {
   }
   // Only the selected folder belongs in the tab strip; retained terminals stay alive.
   for (const [id,entry] of agentGroupTabs) if(id!==selectedAgentGroup) entry.wrapper.remove();
-  if(selectedAgentGroup && agentGroupTabs.has(selectedAgentGroup)) {
-    const dashboard=$('#dashboard-tab');
+  const dashboard=$('#dashboard-tab'), browserTab=$('#browser-tab');
+  const hasBrowserTab=browserTab?.id==='browser-tab';
+  if(selectedAgentGroup && agentGroupTabs.has(selectedAgentGroup))
     $('#tabs').insertBefore(agentGroupTabs.get(selectedAgentGroup).wrapper,dashboard.nextSibling);
-  }
   const assignments=SwarmAgentGroups.effectiveAssignments(state.agents,agentGroupProjection());
   for(const [id,t] of terminals) {t.group.hidden=(assignments[id]||null)!==selectedAgentGroup;$('#tabs').append(t.group);}
+  if(hasBrowserTab) {
+    if(activeTab==='browser') $('#tabs').insertBefore(browserTab,dashboard.nextSibling);
+    else $('#tabs').append(browserTab);
+  }
 }
 function renderAgentFolders(matching, includeEmpty = true) {
   const container=$('#agent-group-folders');container.replaceChildren();
@@ -776,6 +808,8 @@ function renderAgentFolders(matching, includeEmpty = true) {
   container.hidden=!container.childNodes.length;
 }
 function render() {
+  if(typeof remoteBrowserController!=='undefined')remoteBrowserController?.setContext();
+  if(typeof browserSettingsController!=='undefined')browserSettingsController?.setContext();
   agentLimitsController?.setState(state.agent_limits,state.federation_offline?'Owning Swarm is offline.':state.agent_limits_error);
   groupingModeController?.setState(state.grouping_settings,state.federation_offline?'Owning Swarm is offline.':state.grouping_settings_error);
   $('#home-path').textContent = state.home ? `${state.home}/agents` : '~/.swarm/agents';
@@ -845,12 +879,18 @@ function activate(id, persist = true) {
   if (id && terminals.has(id)) {selectedAgentGroup=agentGroupFor(id);if(selectedAgentGroup)openedAgentGroups.add(selectedAgentGroup);}
   else if(isAgentGroupTab(id)) {selectedAgentGroup=id.slice('agent-group:'.length);openedAgentGroups.add(selectedAgentGroup);}
   else {selectedAgentGroup=null;}
-  activeTab = id && (terminals.has(id) || isAgentGroupTab(id)) ? id : 'dashboard';
+  activeTab = id === 'browser' ? 'browser' : id && (terminals.has(id) || isAgentGroupTab(id)) ? id : 'dashboard';
   groupNameMenu.dropdown.close();
-  const dashboardVisible=activeTab==='dashboard'||isAgentGroupTab(activeTab);
-  $('#dashboard').hidden = !dashboardVisible; $('#terminals').hidden = dashboardVisible;
+  const dashboardVisible=activeTab==='dashboard'||isAgentGroupTab(activeTab), browserVisible=activeTab==='browser';
+  $('#dashboard').hidden = !dashboardVisible; $('#terminals').hidden = dashboardVisible || browserVisible;
+  const browserPanel=$('#browser-panel'),browserTab=$('#browser-tab');
+  if(browserPanel?.id==='browser-panel')browserPanel.hidden=!browserVisible;
+  if(browserTab?.id==='browser-tab'){browserTab.classList.toggle('active',browserVisible);browserTab.setAttribute('aria-current',browserVisible?'page':'false');}
   $('#dashboard-tab').classList.toggle('active', activeTab === 'dashboard');
   $('#dashboard-tab').setAttribute('aria-current', activeTab === 'dashboard' ? 'page' : 'false');
+  if(browserVisible && typeof remoteBrowserController!=='undefined' && remoteBrowserController && !remoteBrowserController.active)
+    void remoteBrowserController.activate().then(()=>browserSettingsController?.setContext(remoteBrowserController.status));
+  else if(!browserVisible && typeof remoteBrowserController!=='undefined')remoteBrowserController?.deactivate();
   for (const [key, t] of terminals) {
     t.pane.hidden = key !== activeTab; t.tab.classList.toggle('active', key === activeTab); t.group.classList.toggle('active', key === activeTab);
     t.tab.setAttribute('aria-current', key === activeTab ? 'page' : 'false');
@@ -1460,7 +1500,7 @@ const groupNameMenu = new SwarmDashboardControls.GroupNameMenu({
 });
 const relaySettingsDialog = new SwarmRelaySettings.RelaySettingsDialog({
   api: localApi,
-  onOpen:()=>{wheelSettings.open();updateRestartCapability();},
+  onOpen:()=>{wheelSettings.open();updateRestartCapability();if($('#browser-settings-section')?.open)void browserSettingsController?.openSettings();},
   onChange: async value => {
     if (!value.enabled && activeSwarm !== 'local') switchSwarm('local');
     await loadFederation();
@@ -1476,10 +1516,14 @@ const createDialog = () => {
 $('#create-button').addEventListener('click', createDialog); $('#empty-create').addEventListener('click', createDialog);
 $('#adopt-button').addEventListener('click', () => { dashboardControls.adoption.close(); $('#create-dialog').close(); $('#adopt-form').reset(); $('#session-search').value = ''; showDialog('#adopt-dialog'); loadSessions(); });
 $('#refresh-sessions').addEventListener('click', loadSessions); $('#session-search').addEventListener('input', renderSessions);
-$('#dashboard-tab').addEventListener('click', () => {agentGroupsController?.clearSelection();activate('dashboard');}); $('#search').addEventListener('input', render);
+$('#dashboard-tab').addEventListener('click', () => {agentGroupsController?.clearSelection();activate('dashboard');});
+$('#browser-tab')?.addEventListener('click', () => {agentGroupsController?.clearSelection();activate('browser');});
+$('#browser-settings-section')?.addEventListener('toggle', event => {if(event.currentTarget.open)void browserSettingsController?.openSettings();});
+$('#search').addEventListener('input', render);
 document.addEventListener('keydown', event => { if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && (activeTab === 'dashboard' || isAgentGroupTab(activeTab)) && !document.querySelector('dialog[open]')) { event.preventDefault(); dashboardControls.status.dropdown.open(); $('#search').focus(); } });
 function clearUnauthorizedWorkspace(nodeId) {
   notificationsInbox?.clear();
+  if(typeof remoteBrowserController!=='undefined')remoteBrowserController?.deactivate();
   pendingNotificationReveal = null;
   if (nodeId !== 'local' && nodeId !== activeSwarm) return;
   if(uiViewStateRestored) rememberUIViewState();
@@ -1540,6 +1584,19 @@ historyArchiveController = new SwarmHistoryArchive.HistoryArchiveController({
   onBusyChange:()=>render(),
   onChanged:async(report)=>{const agent=state.agents.find(agent=>agent.session_file===report.source&&(!agent.session_id||agent.session_id===report.session_id));if(agent)agent.context_archive=report;render();await refresh();},
 });
+const browserOwnerName = source => source === 'local' ? 'Local Swarm' : federationNodes.get(source)?.name || source;
+if (globalThis.SwarmRemoteBrowser) {
+  remoteBrowserController = new SwarmRemoteBrowser.RemoteBrowserController({
+    request: browserRequest, currentSwarm: () => activeSwarm, currentGeneration: () => stateGeneration,
+    ownerName: browserOwnerName, toast,
+    onChanged: async status => browserSettingsController?.setContext(status),
+  });
+  browserSettingsController = new SwarmRemoteBrowser.BrowserSettingsController({
+    request: browserRequest, currentSwarm: () => activeSwarm, currentGeneration: () => stateGeneration,
+    ownerName: browserOwnerName, toast,
+    onChanged: async () => { remoteBrowserController?.setContext(); },
+  });
+}
 const agentBroadcast = new SwarmAgentBroadcast.BroadcastController({
   api: localApi,
   currentSwarm: () => activeSwarm,
@@ -1557,4 +1614,5 @@ globalThis.addEventListener?.('storage',event=>{
 });
 globalThis.addEventListener?.('swarm-auth-unauthorized', event => clearUnauthorizedWorkspace(event.detail?.node || 'local'));
 globalThis.addEventListener?.('swarm-auth-retry', () => { notificationsInbox.clear(); updateNotificationSources(); loadFederation(); refresh(); connectState(); });
+globalThis.addEventListener?.('beforeunload', () => remoteBrowserController?.dispose());
 loadFederation(); refresh(); connectState();

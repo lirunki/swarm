@@ -317,12 +317,13 @@ def visible_workspace_tabs(page):
     return page.locator("#tabs > :not([hidden])").evaluate_all(
         """elements => elements.map(element => {
             if (element.id === 'dashboard-tab') return 'dashboard';
+            if (element.id === 'browser-tab') return null;
             if (element.classList.contains('agent-group-tab')) {
                 return `group:${element.dataset.groupId}`;
             }
             const terminal = [...terminals].find(([, value]) => value.group === element);
             return terminal ? `terminal:${terminal[0]}` : 'unknown';
-        })"""
+        }).filter(value => value !== null)"""
     )
 
 
