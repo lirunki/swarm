@@ -22,7 +22,7 @@ class Element {
 }
 
 test('Browser tab, screenshot-only viewer, settings, and controller asset are present', () => {
-  assert.match(html, /id="tabs"[\s\S]*id="dashboard-tab"[\s\S]*id="browser-tab"/);
+  assert.match(html, /id="tabs"[\s\S]*id="dashboard-tab"[\s\S]*<span id="browser-tab-group" class="tab-group" hidden>[\s\S]*id="browser-tab"[\s\S]*id="browser-tab-close"/);
   for (const id of ['browser-panel', 'browser-owner', 'browser-status', 'browser-launch', 'browser-refresh-tabs',
     'browser-back', 'browser-forward', 'browser-reload', 'browser-copy', 'browser-paste', 'browser-url',
     'browser-new', 'browser-interval', 'browser-pause', 'browser-tabs', 'browser-screen', 'browser-placeholder',
@@ -32,19 +32,19 @@ test('Browser tab, screenshot-only viewer, settings, and controller asset are pr
   assert.doesNotMatch(html.slice(html.indexOf('id="browser-panel"'), html.indexOf('id="group-context-menu"')), /<iframe|<video/i);
   assert.ok(html.indexOf('/static/remote-browser.js?') < html.indexOf('/static/app.js?'));
   assert.match(css, /#dashboard-tab\{[^}]*flex:0 0 102px/);
-  assert.match(css, /#browser-tab\.active\{[^}]*position:sticky[^}]*left:102px/);
+  assert.match(css, /#browser-tab-group\.active\{[^}]*position:sticky[^}]*left:102px/);
   assert.match(css, /#browser-screen\{[^}]*max-width:100%/);
 });
 
 test('activation exposes Browser as a global workspace and deactivates it when leaving', () => {
   const dashboard = new Element('dashboard'), terminalsNode = new Element('terminals');
-  const dashboardTab = new Element('dashboard-tab'), browserTab = new Element('browser-tab'), browserPanel = new Element('browser-panel');
+  const dashboardTab = new Element('dashboard-tab'), browserTab = new Element('browser-tab'), browserGroup = new Element('browser-tab-group'), browserPanel = new Element('browser-panel');
   const terminal = {pane: new Element(), tab: new Element(), group: new Element(), mobileKeys: {update() {}}};
   const elements = new Map([['#dashboard', dashboard], ['#terminals', terminalsNode], ['#dashboard-tab', dashboardTab],
-    ['#browser-tab', browserTab], ['#browser-panel', browserPanel]]);
+    ['#browser-tab', browserTab], ['#browser-tab-group', browserGroup], ['#browser-panel', browserPanel]]);
   const calls = [];
   const context = vm.createContext({
-    selectedAgentGroup: null, openedAgentGroups: new Set(), activeTab: 'dashboard', terminals: new Map([['agent-a', terminal]]),
+    selectedAgentGroup: null, openedAgentGroups: new Set(), activeTab: 'dashboard', browserOpen: false, terminals: new Map([['agent-a', terminal]]),
     agentGroupFor: () => null, isAgentGroupTab: () => false, groupNameMenu: {dropdown: {close() {}}},
     remoteBrowserController: {active: true, deactivate() { calls.push('deactivate'); this.active = false; }},
     $: selector => elements.get(selector), syncAgentGroupTabs() {}, render() {}, initTerminal() {},
@@ -60,20 +60,23 @@ test('activation exposes Browser as a global workspace and deactivates it when l
   assert.equal(dashboardTab.attributes['aria-current'], 'page');
 });
 
-test('Browser is last while inactive and pinned immediately after Dashboard while active', () => {
-  const tabs = new Element('tabs'), dashboard = new Element('dashboard-tab'), browser = new Element('browser-tab');
-  const terminalA = new Element(), terminalB = new Element(); tabs.append(dashboard, browser, terminalA, terminalB);
+test('opened Browser is last on root Dashboard, hidden in other views, and pinned as a wrapper while active', () => {
+  const tabs = new Element('tabs'), dashboard = new Element('dashboard-tab'), browser = new Element('browser-tab'), browserGroup = new Element('browser-tab-group');
+  browserGroup.append(browser); const terminalA = new Element(), terminalB = new Element(); tabs.append(dashboard, browserGroup, terminalA, terminalB);
   const context = vm.createContext({
-    selectedAgentGroup: null, openedAgentGroups: new Set(), agentGroupTabs: new Map(), activeTab: 'dashboard',
+    selectedAgentGroup: null, openedAgentGroups: new Set(), agentGroupTabs: new Map(), activeTab: 'dashboard', browserOpen: true,
     state: {agents: [{id: 'a'}, {id: 'b'}]}, agentGroupProjection: () => ({groups: []}),
     SwarmAgentGroups: {effectiveAssignments: () => ({})}, terminals: new Map([['a', {group: terminalA}], ['b', {group: terminalB}]]),
-    $: selector => selector === '#tabs' ? tabs : selector === '#dashboard-tab' ? dashboard : browser,
+    $: selector => selector === '#tabs' ? tabs : selector === '#dashboard-tab' ? dashboard : selector === '#browser-tab-group' ? browserGroup : browser,
   });
   vm.runInContext(source.slice(source.indexOf('function syncAgentGroupTabs()'), source.indexOf('function renderAgentFolders(')), context);
   context.syncAgentGroupTabs();
-  assert.deepEqual(tabs.children, [dashboard, terminalA, terminalB, browser]);
+  assert.deepEqual(tabs.children, [dashboard, terminalA, terminalB, browserGroup]);
+  assert.equal(browserGroup.hidden, false);
   context.activeTab = 'browser'; context.syncAgentGroupTabs();
-  assert.deepEqual(tabs.children, [dashboard, browser, terminalA, terminalB]);
+  assert.deepEqual(tabs.children, [dashboard, browserGroup, terminalA, terminalB]);
+  context.activeTab = 'a'; context.syncAgentGroupTabs(); assert.equal(browserGroup.hidden, true);
+  context.activeTab = 'dashboard'; context.browserOpen = false; context.syncAgentGroupTabs(); assert.equal(browserGroup.hidden, true);
 });
 
 test('browser request helper enforces authenticated HTTP PNG and size checks', () => {

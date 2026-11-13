@@ -315,7 +315,7 @@ def test_remote_web_route_validation_is_bounded_and_fixed(harness):
 
 def test_launcher_keeps_one_attempt_and_accepts_chromium(tmp_path, monkeypatch):
     executable = tmp_path / "chromium"
-    executable.write_bytes(b"fake")
+    executable.write_bytes(b"\x7fELFfake")
     executable.chmod(0o700)
     profile = tmp_path / "profile"
     process = type("Process", (), {"pid": 1234, "poll": lambda self: None})()

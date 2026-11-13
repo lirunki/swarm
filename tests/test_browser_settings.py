@@ -141,24 +141,77 @@ def test_executable_requires_clean_absolute_path(tmp_path, value):
         settings.apply(request(executable=value))
 
 
-def test_executable_must_exist_be_regular_native_executable(tmp_path, native_executable):
-    settings = BrowserSettings(tmp_path / "home")
-    script = tmp_path / "script"
-    script.write_text("#!/bin/sh\nexit 0\n")
+def test_executable_accepts_native_shebang_and_symlink_paths_lexically(
+    tmp_path, native_executable
+):
+    native_settings = BrowserSettings(tmp_path / "native-home")
+    assert native_settings.apply(request(executable=native_executable))["executable"] == str(
+        Path(native_executable)
+    )
+
+    script = tmp_path / "browser-wrapper"
+    script.write_text("#!/bin/sh\nexec chromium \"$@\"\n")
     script.chmod(0o700)
+    script_settings = BrowserSettings(tmp_path / "script-home")
+    assert script_settings.apply(request(executable=str(script)))["executable"] == str(script)
+
+    link = tmp_path / "browser-link"
+    link.symlink_to(script)
+    link_settings = BrowserSettings(tmp_path / "link-home")
+    assert link_settings.apply(request(executable=str(link)))["executable"] == str(link)
+
+
+def test_executable_rejects_missing_nonregular_and_symlink_loops(tmp_path):
     directory = tmp_path / "directory"
     directory.mkdir()
-    link = tmp_path / "browser-link"
-    link.symlink_to(native_executable)
+    loop = tmp_path / "loop"
+    loop.symlink_to(loop.name)
 
-    for path in (tmp_path / "missing", script, directory, link):
+    for index, path in enumerate((tmp_path / "missing", directory, loop)):
+        settings = BrowserSettings(tmp_path / f"home-{index}")
         with pytest.raises(BrowserSettingsError):
             settings.apply(request(executable=str(path)))
-    assert not settings.path.exists()
+        assert not settings.path.exists()
 
-    assert settings.apply(request(executable=native_executable))["executable"] == str(
-        Path(native_executable).resolve()
-    )
+
+def test_linux_rejects_windows_pe_with_actionable_message(tmp_path, monkeypatch):
+    executable = tmp_path / "msedge"
+    executable.write_bytes(b"MZ" + b"x" * 126)
+    executable.chmod(0o700)
+    monkeypatch.setattr(browser_settings_module.sys, "platform", "linux")
+
+    with pytest.raises(BrowserSettingsError, match="Windows.*WSL/Linux"):
+        BrowserSettings(tmp_path / "home").apply(request(executable=str(executable)))
+
+
+def test_windows_accepts_native_mz_executable_without_resolving_alias(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "msedge.exe"
+    target.write_bytes(b"MZ" + b"x" * 126)
+    target.chmod(0o700)
+    alias = tmp_path / "configured-msedge.exe"
+    alias.symlink_to(target)
+    monkeypatch.setattr(browser_settings_module.sys, "platform", "win32")
+
+    result = BrowserSettings(tmp_path / "home").apply(request(executable=str(alias)))
+    assert result["executable"] == str(alias)
+
+
+def test_executable_header_read_is_bounded_to_128_bytes(tmp_path, monkeypatch):
+    wrapper = tmp_path / "browser-wrapper"
+    wrapper.write_bytes(b"#!/bin/sh\n" + b"x" * 4096)
+    wrapper.chmod(0o700)
+    real_read = browser_settings_module.os.read
+    sizes = []
+
+    def bounded_read(descriptor, size):
+        sizes.append(size)
+        return real_read(descriptor, size)
+
+    monkeypatch.setattr(browser_settings_module.os, "read", bounded_read)
+    BrowserSettings(tmp_path / "home").apply(request(executable=str(wrapper)))
+    assert sizes == [128]
 
 
 def test_nonexecutable_native_file_is_rejected(tmp_path, native_executable):

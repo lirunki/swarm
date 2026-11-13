@@ -7,31 +7,31 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=settings-wheel-1">
+  <link rel="stylesheet" href="/static/app.css?v=optional-browser-discovery-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=settings-wheel-1"></script>
-  <script defer src="/static/org-chart.js?v=settings-wheel-1"></script>
-  <script defer src="/static/relay-settings.js?v=settings-wheel-1"></script>
-  <script defer src="/static/terminal-touch.js?v=settings-wheel-1"></script>
-  <script defer src="/static/terminal-copy.js?v=settings-wheel-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=settings-wheel-1"></script>
-  <script defer src="/static/terminal-keys.js?v=settings-wheel-1"></script>
-  <script defer src="/static/agent-files.js?v=settings-wheel-1"></script>
-  <script defer src="/static/agent-messages.js?v=settings-wheel-1"></script>
-  <script defer src="/static/agent-broadcast.js?v=settings-wheel-1"></script>
-  <script defer src="/static/auth.js?v=settings-wheel-1"></script>
-  <script defer src="/static/fleet-control.js?v=settings-wheel-1"></script>
-  <script defer src="/static/system-notifications.js?v=settings-wheel-1"></script>
-  <script defer src="/static/notifications.js?v=settings-wheel-1"></script>
-  <script defer src="/static/agent-groups.js?v=settings-wheel-1"></script>
-  <script defer src="/static/grouping-mode.js?v=settings-wheel-1"></script>
-  <script defer src="/static/agent-search.js?v=settings-wheel-1"></script>
-  <script defer src="/static/history-archive.js?v=settings-wheel-1"></script>
-  <script defer src="/static/agent-limits.js?v=settings-wheel-1"></script>
-  <script defer src="/static/terminal-wheel.js?v=settings-wheel-1"></script>
-  <script defer src="/static/remote-browser.js?v=settings-wheel-1"></script>
-  <script defer src="/static/app.js?v=settings-wheel-1"></script>
+  <script defer src="/static/card-views.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/org-chart.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/relay-settings.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/terminal-touch.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/terminal-copy.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/terminal-keys.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/agent-files.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/agent-messages.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/agent-broadcast.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/auth.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/fleet-control.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/system-notifications.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/notifications.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/agent-groups.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/grouping-mode.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/agent-search.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/history-archive.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/agent-limits.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/terminal-wheel.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/remote-browser.js?v=optional-browser-discovery-1"></script>
+  <script defer src="/static/app.js?v=optional-browser-discovery-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -46,7 +46,7 @@
     </div>
     <div class="top-meta"><span id="health"></span><span id="connection" class="connection">Connecting…</span><button id="help-button" class="header-icon" type="button" aria-label="Help" title="Swarm help" aria-haspopup="dialog" aria-controls="help-dialog">?</button></div>
   </header>
-  <nav id="tabs" class="tabs" aria-label="Workspace tabs"><button id="dashboard-tab" class="tab active" type="button" aria-current="page">◫ &nbsp;Dashboard</button><button id="browser-tab" class="tab" type="button" aria-current="false">Browser</button></nav>
+  <nav id="tabs" class="tabs" aria-label="Workspace tabs"><button id="dashboard-tab" class="tab active" type="button" aria-current="page">◫ &nbsp;Dashboard</button><span id="browser-tab-group" class="tab-group" hidden><button id="browser-tab" class="tab" type="button" aria-current="false">Browser</button><button id="browser-tab-close" class="tab-close" type="button" aria-label="Close browser viewer">×</button></span></nav>
   <main id="dashboard">
     <section class="page-head mission-toolbar" aria-label="Dashboard controls">
       <div class="page-head-title"><div id="agent-group-heading" class="compact-dropdown agent-group-heading"><h1 id="dashboard-title" class="sr-only"><span id="dashboard-root-title">Agent dashboard</span><button id="agent-group-name-button" type="button" class="agent-group-name-button" aria-haspopup="menu" aria-expanded="false" aria-controls="agent-group-name-menu" hidden><span id="agent-group-name"></span><span class="agent-group-menu-caret" aria-hidden="true">▾</span></button></h1><div id="agent-group-name-menu" class="dropdown-panel agent-group-name-menu" role="menu" aria-label="Group actions" hidden><button id="agent-group-rename" type="button" role="menuitem">Rename group</button><button id="agent-group-delete" type="button" class="danger" role="menuitem">Delete group</button></div></div>
@@ -64,7 +64,7 @@
         </div>
       </div>
       </div>
-      <div class="actions"><button id="create-button" type="button" class="primary">+ New agent</button></div>
+      <div class="actions"><div id="add-menu" class="compact-dropdown"><button id="add-menu-button" type="button" class="primary" aria-label="Add" aria-haspopup="menu" aria-expanded="false" aria-controls="add-menu-options">+</button><div id="add-menu-options" class="dropdown-panel add-menu-options" role="menu" aria-label="Add" hidden><button id="create-button" type="button" role="menuitem">New agent</button><div id="adoption-menu" class="adoption-menu"><button id="adoption-menu-button" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="adoption-options">Adopt session</button><div id="adoption-options" class="adoption-options" role="menu" aria-label="Adopt session" hidden><button id="adopt-button" type="button" role="menuitem">Pi session</button><button id="import-grok-button" type="button" role="menuitem">Grok session</button></div></div><button id="open-browser-button" type="button" role="menuitem">Open browser</button></div></div></div>
     </section>
     <div class="sr-only"><h2>Agent hierarchy <span id="agent-count" class="count">0</span></h2><span>Parent → child · Hover for activity</span></div>
     <p id="hierarchy-summary" class="hint hierarchy-note sr-only" aria-live="polite"></p>
@@ -252,8 +252,10 @@
       <p id="browser-settings-owner" class="hint">Owning server: Local Swarm</p>
       <label class="checkbox"><input id="browser-enabled" type="checkbox" disabled>Enable remote browser launches</label>
       <label class="checkbox"><input id="browser-headless" type="checkbox" checked disabled>Run headless</label>
-      <label for="browser-executable">Browser executable <span class="hint">optional</span><input id="browser-executable" type="text" spellcheck="false" placeholder="Auto-discover Edge or Chromium" disabled></label>
-      <p class="hint">The owning server auto-discovers Microsoft Edge or Chromium when the executable is blank. Settings are shared; saving never launches a browser.</p>
+      <label for="browser-executable-select">Browser executable <span class="hint">optional</span><select id="browser-executable-select" disabled><option value="">Auto</option><option value="__custom__">Custom</option></select></label>
+      <label id="browser-executable-custom" for="browser-executable" hidden>Custom executable<input id="browser-executable" type="text" spellcheck="false" placeholder="/path/to/Edge-or-Chromium" disabled></label>
+      <p id="browser-discovery-status" class="hint" role="status" aria-live="polite">Auto discovers Microsoft Edge or Chromium on the owning server. Choose Custom to enter a path.</p>
+      <p class="hint">Settings are shared; saving never launches a browser.</p>
       <p id="browser-settings-status" class="hint" role="status" aria-live="polite">Browser settings have not been loaded.</p>
       <button id="browser-settings-save" type="button" class="small" disabled>Save browser settings</button>
     </details>
@@ -302,7 +304,7 @@
       <label>Model<select name="model"><option value="">Loading Pi models…</option></select></label>
       <p id="model-selection-hint" class="hint picker-hint">Models are read from the Pi configuration available to this server.</p>
       <p class="form-error" role="alert"></p>
-      <footer class="dialog-footer create-dialog-footer"><div id="adoption-menu" class="compact-dropdown"><button id="adoption-menu-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="adoption-options">↳ Adopt session <span aria-hidden="true">▾</span></button><div id="adoption-options" class="dropdown-panel adoption-options" role="menu" aria-label="Adopt session" hidden><button id="adopt-button" type="button" role="menuitem">pi session</button><button id="import-grok-button" type="button" role="menuitem">Grok session</button></div></div><button type="button" data-close>Cancel</button><button class="primary" type="submit">Launch agent ↗</button></footer>
+      <footer class="dialog-footer create-dialog-footer"><button type="button" data-close>Cancel</button><button class="primary" type="submit">Launch agent ↗</button></footer>
     </form>
   </dialog>
 

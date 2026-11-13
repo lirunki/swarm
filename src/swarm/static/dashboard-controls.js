@@ -15,8 +15,9 @@
           const editingText = ['INPUT', 'TEXTAREA'].includes(event.target?.tagName) && !['checkbox', 'radio', 'button', 'submit'].includes(event.target?.type);
           if (editingText) return;
           if (!this.active && event.target !== button) return;
-          event.preventDefault(); this.open();
-          const items = [...panel.querySelectorAll('button:not([disabled]),input:not([disabled])')];
+          event.preventDefault(); event.stopPropagation?.(); this.open();
+          const items = [...panel.querySelectorAll('button:not([disabled]),input:not([disabled])')]
+            .filter(item => !item.hidden && !(typeof item.closest === 'function' && item.closest('[hidden]')));
           if (!items.length) return;
           const index = items.indexOf(document.activeElement);
           const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : event.key === 'ArrowUp' ? (index <= 0 ? items.length - 1 : index - 1) : (index + 1) % items.length;
@@ -106,9 +107,13 @@
   class DashboardControls {
     constructor({query = selector => document.querySelector(selector), onStatusChange}) {
       this.status = new StatusFilter({query, onChange: onStatusChange});
-      this.adoption = new Dropdown({container: query('#adoption-menu'), button: query('#adoption-menu-button'), panel: query('#adoption-options')});
+      const addContainer = query('#add-menu'), addButton = query('#add-menu-button'), addPanel = query('#add-menu-options');
+      this.add = addContainer && addButton && addPanel ? new Dropdown({container: addContainer, button: addButton, panel: addPanel}) : null;
+      const adoptionContainer = query('#adoption-menu'), adoptionButton = query('#adoption-menu-button'), adoptionPanel = query('#adoption-options');
+      this.adoption = adoptionContainer && adoptionButton && adoptionPanel ? new Dropdown({container: adoptionContainer, button: adoptionButton, panel: adoptionPanel}) : null;
       query('#help-button').addEventListener('click', () => query('#help-dialog').showModal());
     }
+    closeAddMenus(focus = false) { this.adoption?.close(); this.add?.close(focus); }
     update(agents) { this.status.update(agents); }
   }
 

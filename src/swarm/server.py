@@ -508,6 +508,11 @@ def create_app(
         ):
             raise AuthFailure("Operator browser authentication required", 403)
 
+    @app.get("/api/browser/discovery")
+    async def get_browser_discovery(request: Request):
+        require_browser_operator(request)
+        return await asyncio.to_thread(app.state.remote_browser.discovery)
+
     @app.get("/api/browser/settings")
     async def get_browser_settings(request: Request):
         require_browser_operator(request)

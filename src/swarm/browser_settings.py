@@ -136,6 +136,22 @@ class BrowserSettings:
                     fcntl.flock(descriptor, fcntl.LOCK_UN)
                 os.close(descriptor)
 
+    @staticmethod
+    def _sane_shebang(header: bytes) -> bool:
+        if not header.startswith(b"#!"):
+            return False
+        line, separator, _rest = header.partition(b"\n")
+        if not separator or len(line) > 127 or b"\x00" in line:
+            return False
+        try:
+            text = line[2:].decode("ascii").strip()
+        except UnicodeDecodeError:
+            return False
+        if not text or any(ord(character) < 32 or ord(character) == 127 for character in text):
+            return False
+        interpreter = text.split(None, 1)[0]
+        return interpreter.startswith("/") and interpreter not in {"/", "//"}
+
     @classmethod
     def _validate_executable(cls, value: Any) -> str | None:
         if value is None:
@@ -154,9 +170,13 @@ class BrowserSettings:
         supplied = Path(value)
         if not supplied.is_absolute():
             raise BrowserSettingsError("executable must be an absolute path")
+        unix_suffix = supplied.suffix.lower()
+        if sys.platform != "win32" and unix_suffix in {".exe", ".cmd", ".bat"}:
+            raise BrowserSettingsError(
+                "Windows browser executables cannot be launched here; install Edge or Chromium "
+                "for this system"
+            )
         try:
-            if supplied.is_symlink():
-                raise BrowserSettingsError("executable must not be a symbolic link")
             resolved = supplied.resolve(strict=True)
             descriptor = os.open(
                 resolved,
@@ -167,33 +187,40 @@ class BrowserSettings:
             try:
                 info = os.fstat(descriptor)
                 if not stat.S_ISREG(info.st_mode):
-                    raise BrowserSettingsError("executable must be a regular file")
-                header = os.read(descriptor, 4096)
+                    raise BrowserSettingsError("executable must resolve to a regular file")
+                header = os.read(descriptor, 128)
             finally:
                 os.close(descriptor)
         except BrowserSettingsError:
             raise
         except (OSError, RuntimeError) as exc:
-            raise BrowserSettingsError("executable does not exist or is unsafe") from exc
+            raise BrowserSettingsError("executable does not exist or has an invalid symbolic link") from exc
 
         if sys.platform == "win32":
-            native = resolved.suffix.lower() == ".exe" and header.startswith(b"MZ")
+            supported = resolved.suffix.lower() == ".exe" and header.startswith(b"MZ")
+        elif header.startswith(b"MZ"):
+            raise BrowserSettingsError(
+                "Windows browser executables cannot be launched here; install Edge or Chromium "
+                "inside WSL/Linux"
+            )
         elif sys.platform == "darwin":
-            native = header[:4] in {
+            supported = header[:4] in {
                 b"\xfe\xed\xfa\xce",
                 b"\xce\xfa\xed\xfe",
                 b"\xfe\xed\xfa\xcf",
                 b"\xcf\xfa\xed\xfe",
                 b"\xca\xfe\xba\xbe",
                 b"\xbe\xba\xfe\xca",
-            }
+            } or cls._sane_shebang(header)
         else:
-            native = header.startswith(b"\x7fELF") and resolved.suffix.lower() != ".exe"
-        if not native:
-            raise BrowserSettingsError("executable must be a native browser executable")
-        if os.name != "nt" and not os.access(resolved, os.X_OK):
+            supported = header.startswith(b"\x7fELF") or cls._sane_shebang(header)
+        if not supported:
+            raise BrowserSettingsError(
+                "executable must be a native browser executable or executable shebang wrapper"
+            )
+        if os.name != "nt" and not os.access(supplied, os.X_OK):
             raise BrowserSettingsError("executable is not executable")
-        return str(resolved)
+        return str(supplied)
 
     @classmethod
     def _validate_state(cls, value: Any) -> dict[str, Any]:

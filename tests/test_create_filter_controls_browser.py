@@ -1,4 +1,4 @@
-"""Browser coverage for the create-footer adoption menu and combined fleet filters."""
+"""Browser coverage for the global Add menu and combined fleet filters."""
 
 import json
 from pathlib import Path
@@ -134,7 +134,7 @@ def assert_inside(inner, outer, tolerance=1):
 
 
 @pytest.mark.parametrize("width", [320, 390, 1280])
-def test_create_footer_adoption_menu_layout_and_safe_modal_transition(static_url, width):
+def test_add_menu_adoption_layout_and_safe_modal_transition(static_url, width):
     state = fixture_state()
     with playwright.sync_playwright() as runner:
         browser = launch_chromium(runner)
@@ -148,82 +148,91 @@ def test_create_footer_adoption_menu_layout_and_safe_modal_transition(static_url
             playwright.expect(page.locator(".agent-card")).to_have_count(4)
 
             assert page.locator("#collapse-all").count() == 0
-            assert page.locator(".mission-toolbar #adoption-menu").count() == 0
-            assert (
-                page.locator("#create-dialog .create-dialog-footer > #adoption-menu").count() == 1
-            )
+            assert page.locator(".mission-toolbar #adoption-menu").count() == 1
+            assert page.locator("#create-dialog #adoption-menu").count() == 0
 
-            page.locator("#create-button").click()
+            add_button = page.locator("#add-menu-button")
+            add_button.click()
+            add_menu = page.locator("#add-menu-options")
+            playwright.expect(add_menu).to_be_visible()
+            rows = [
+                page.locator("#create-button"),
+                page.locator("#adoption-menu-button"),
+                page.locator("#open-browser-button"),
+            ]
+            boxes = [row.bounding_box() for row in rows]
+            assert max(box["x"] for box in boxes) - min(box["x"] for box in boxes) < 1
+            assert max(box["width"] for box in boxes) - min(box["width"] for box in boxes) < 1
+            for left, right in zip(boxes, boxes[1:]):
+                assert left["y"] + left["height"] <= right["y"] + 1
+            assert_inside(add_menu.bounding_box(), {"x": 0, "y": 0, "width": width, "height": 1000})
+
+            rows[0].click()
             dialog = page.locator("#create-dialog")
             footer = dialog.locator(".create-dialog-footer")
-            adopt = page.locator("#adoption-menu-button")
             cancel = footer.locator("button[data-close]")
             launch = footer.locator('button[type="submit"]')
             playwright.expect(dialog).to_be_visible()
-            for control in (adopt, cancel, launch):
+            assert footer.locator("#adoption-menu").count() == 0
+            for control in (cancel, launch):
                 playwright.expect(control).to_be_visible()
                 playwright.expect(control).to_be_enabled()
-
             footer_box = footer.bounding_box()
-            boxes = [control.bounding_box() for control in (adopt, cancel, launch)]
-            centers = [box["y"] + box["height"] / 2 for box in boxes]
-            assert max(centers) - min(centers) < 1
-            assert abs(boxes[0]["x"] - footer_box["x"]) < 1
+            cancel_box, launch_box = cancel.bounding_box(), launch.bounding_box()
             assert (
-                abs(boxes[-1]["x"] + boxes[-1]["width"] - footer_box["x"] - footer_box["width"]) < 1
+                abs(launch_box["x"] + launch_box["width"] - footer_box["x"] - footer_box["width"])
+                < 1
             )
-            assert boxes[0]["x"] + boxes[0]["width"] <= boxes[1]["x"]
-            assert boxes[1]["x"] + boxes[1]["width"] <= boxes[2]["x"]
+            assert cancel_box["x"] + cancel_box["width"] <= launch_box["x"]
+            assert (
+                abs(
+                    cancel_box["y"]
+                    + cancel_box["height"] / 2
+                    - launch_box["y"]
+                    - launch_box["height"] / 2
+                )
+                < 1
+            )
+            cancel.click()
 
-            adopt.click()
-            menu = page.locator("#adoption-options")
-            playwright.expect(menu).to_be_visible()
-            assert menu.get_by_role("menuitem").all_text_contents() == [
-                "pi session",
-                "Grok session",
-            ]
-            menu_box = menu.bounding_box()
-            button_box = adopt.bounding_box()
-            viewport = {"x": 0, "y": 0, "width": width, "height": 1000}
-            assert menu_box["y"] + menu_box["height"] <= button_box["y"] + 1
-            assert_inside(menu_box, viewport)
-            assert page.evaluate(
+            page.evaluate(
                 """() => {
-                    const menu = document.querySelector('#adoption-options');
-                    const r = menu.getBoundingClientRect();
-                    const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-                    return !!hit && menu.contains(hit);
+                    window.createSubmits = 0;
+                    document.querySelector('#create-form').addEventListener(
+                        'submit', () => window.createSubmits += 1
+                    );
                 }"""
             )
-
-            cancel.click()
-            playwright.expect(dialog).to_be_hidden()
-            page.locator("#create-button").click()
-            playwright.expect(dialog).to_be_visible()
-            playwright.expect(menu).to_be_hidden()
-            playwright.expect(adopt).to_have_attribute("aria-expanded", "false")
-
+            menu = page.locator("#adoption-options")
             for choice, target in (
                 ("#adopt-button", "#adopt-dialog"),
                 ("#import-grok-button", "#import-grok-dialog"),
             ):
-                # Required create fields deliberately remain blank. Choosing an alternative
-                # must bypass create-form validation/submission and open only its target.
+                # Adoption is a direct Add-menu transition. It must neither open nor
+                # submit the required, deliberately blank create form.
                 assert page.locator('#create-form [name="name"]').input_value() == ""
                 assert page.locator('#create-form [name="goal"]').input_value() == ""
                 page.evaluate("window.modalTransitions = []")
-                adopt.click()
+                add_button.click()
+                page.locator("#adoption-menu-button").click()
+                playwright.expect(menu).to_be_visible()
+                choice_boxes = [
+                    page.locator("#adopt-button").bounding_box(),
+                    page.locator("#import-grok-button").bounding_box(),
+                ]
+                assert abs(choice_boxes[0]["x"] - choice_boxes[1]["x"]) < 1
+                assert abs(choice_boxes[0]["width"] - choice_boxes[1]["width"]) < 1
+                assert_inside(menu.bounding_box(), {"x": 0, "y": 0, "width": width, "height": 1000})
                 page.locator(choice).click()
-                playwright.expect(dialog).to_be_hidden()
                 playwright.expect(page.locator(target)).to_be_visible()
+                playwright.expect(add_menu).to_be_hidden()
+                playwright.expect(dialog).to_be_hidden()
                 assert page.evaluate("window.modalTransitions") == [
                     {"id": target[1:], "createOpen": False}
                 ]
+                assert page.evaluate("window.createSubmits") == 0
                 assert not [request for request in requests if request[0] == "POST"]
                 page.locator(f"{target} [data-close]").first.click()
-                page.locator("#create-button").click()
-                playwright.expect(dialog).to_be_visible()
-                playwright.expect(menu).to_be_hidden()
 
             assert page.evaluate("document.body.scrollWidth <= window.innerWidth")
             assert not errors

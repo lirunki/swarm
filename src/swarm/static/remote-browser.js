@@ -25,6 +25,27 @@
       : null;
   }
 
+  function discoveryProjection(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      !Array.isArray(value.browsers) || !Array.isArray(value.unavailable) ||
+      value.browsers.length + value.unavailable.length > 64) return null;
+    const safe = (field, limit) => typeof field === 'string' && field.length > 0 &&
+      field.length <= limit && !/[\u0000-\u001f\u007f]/.test(field);
+    const browsers = [];
+    for (const item of value.browsers) {
+      if (!item || typeof item !== 'object' || Array.isArray(item) || item.supported !== true ||
+        !safe(item.name, 120) || !safe(item.executable, 4096)) return null;
+      browsers.push({name: item.name, executable: item.executable, supported: true});
+    }
+    const unavailable = [];
+    for (const item of value.unavailable) {
+      if (!item || typeof item !== 'object' || Array.isArray(item) || !safe(item.name, 120) ||
+        !safe(item.executable, 4096) || !safe(item.reason, 4096)) return null;
+      unavailable.push({name: item.name, executable: item.executable, reason: item.reason});
+    }
+    return {browsers, unavailable};
+  }
+
   function endpoint(source, suffix) {
     const path = `/api/browser/${suffix}`;
     return source === 'local' ? path : `/api/federation/${encodeURIComponent(source)}/proxy${path}`;
@@ -489,26 +510,43 @@
       this.ownerName = ownerName; this.onChanged = onChanged; this.toast = toast;
       this.owner = query('#browser-settings-owner'); this.enabled = query('#browser-enabled');
       this.headless = query('#browser-headless'); this.executable = query('#browser-executable');
+      this.executableSelect = query('#browser-executable-select');
+      this.customExecutable = query('#browser-executable-custom'); this.customMode = false;
+      this.discoveryStatus = query('#browser-discovery-status');
       this.save = query('#browser-settings-save'); this.status = query('#browser-settings-status');
       this.source = currentSwarm(); this.generation = currentGeneration(); this.settings = null;
+      this.discovery = {browsers: [], unavailable: []}; this.discoveryLoading = false;
+      this.discoveryError = ''; this.discoveryOperation = 0;
       this.dirty = new Set(); this.loading = false; this.saving = false; this.running = false; this.operation = 0; this.error = '';
       if (this.headless) this.headless.checked = true;
-      if (this.executable) this.executable.placeholder = 'Auto-discover Edge or Chromium';
-      for (const [node, field] of [[this.enabled, 'enabled'], [this.headless, 'headless'], [this.executable, 'executable']])
+      if (this.executable) this.executable.placeholder = 'Custom executable';
+      for (const [node, field] of [[this.enabled, 'enabled'], [this.headless, 'headless']])
         listen(node, 'input', () => { this.dirty.add(field); this.render(); });
+      listen(this.executable, 'input', () => {
+        this.dirty.add('executable'); this.snapExecutableSelection(); this.render();
+      });
+      listen(this.executableSelect, 'change', () => this.selectExecutable());
       listen(this.save, 'click', () => void this.saveSettings()); this.render();
     }
 
     absoluteAPI(source = this.source) { return endpoint(source, 'settings'); }
+    absoluteDiscoveryAPI(source = this.source) { return endpoint(source, 'discovery'); }
     valid(source, generation, operation = this.operation) {
       return source === this.currentSwarm() && generation === this.currentGeneration() && operation === this.operation;
+    }
+    validDiscovery(source, generation, operation) {
+      return source === this.source && generation === this.generation &&
+        source === this.currentSwarm() && generation === this.currentGeneration() &&
+        operation === this.discoveryOperation;
     }
 
     setContext(state) {
       const source = this.currentSwarm(), generation = this.currentGeneration();
       if (source !== this.source || generation !== this.generation) {
         this.source = source; this.generation = generation; this.settings = null;
-        this.dirty.clear(); this.error = ''; this.operation += 1;
+        this.discovery = {browsers: [], unavailable: []}; this.discoveryLoading = false;
+        this.discoveryError = ''; this.discoveryOperation += 1;
+        this.dirty.clear(); this.error = ''; this.operation += 1; this.customMode = false;
         this.loading = false; this.saving = false; this.running = false;
       }
       if (state && typeof state.running === 'boolean') this.running = state.running;
@@ -520,25 +558,88 @@
 
     apply(value, resetDirty) {
       const old = this.settings; this.settings = value;
-      if (resetDirty) this.dirty.clear();
+      if (resetDirty) { this.dirty.clear(); this.customMode = false; }
       if (this.enabled && (!this.dirty.has('enabled') || !old)) this.enabled.checked = value.enabled;
       if (this.headless && (!this.dirty.has('headless') || !old)) this.headless.checked = value.headless;
       if (this.executable && (!this.dirty.has('executable') || !old)) this.executable.value = value.executable || '';
-      this.render();
+      this.snapExecutableSelection(); this.render();
+    }
+
+    selectExecutable() {
+      const value = this.executableSelect?.value;
+      if (value === '__custom__') { this.customMode = true; this.render(); this.executable?.focus?.(); return; }
+      if (value !== '' && !this.discovery.browsers.some(item => item.executable === value)) return;
+      this.customMode = false;
+      if (this.executable) this.executable.value = value || '';
+      this.dirty.add('executable'); this.render();
+    }
+
+    snapExecutableSelection() {
+      if (!this.executableSelect) return;
+      const value = this.executable?.value || '';
+      this.executableSelect.value = this.customMode ? '__custom__' : !value ? '' :
+        this.discovery.browsers.some(item => item.executable === value) ? value : '__custom__';
+    }
+
+    replaceOptions(nodes) {
+      const host = this.executableSelect; if (!host) return;
+      if (host.replaceChildren) host.replaceChildren(...nodes);
+      else { while (host.firstChild) host.removeChild(host.firstChild); for (const node of nodes) host.appendChild?.(node); }
+    }
+
+    renderDiscoveryOptions() {
+      const host = this.executableSelect; if (!host) return;
+      const doc = host.ownerDocument || root.document, options = [];
+      const option = (value, label, disabled = false) => {
+        const node = doc?.createElement?.('option'); if (!node) return;
+        node.value = value; node.textContent = label; node.disabled = disabled; options.push(node);
+      };
+      option('', 'Auto-discover');
+      for (const item of this.discovery.browsers) option(item.executable, `${item.name} — ${item.executable}`);
+      for (let index = 0; index < this.discovery.unavailable.length; index += 1) {
+        const item = this.discovery.unavailable[index];
+        option(`__unavailable_${index}__`, `${item.name} — ${item.reason}`, true);
+      }
+      option('__custom__', 'Custom executable');
+      this.replaceOptions(options); this.snapExecutableSelection();
+    }
+
+    async loadDiscovery(source, generation) {
+      if (!this.executableSelect) return null;
+      const operation = ++this.discoveryOperation;
+      this.discoveryLoading = true; this.discoveryError = ''; this.discovery = {browsers: [], unavailable: []}; this.render();
+      try {
+        const value = discoveryProjection(await this.request(this.absoluteDiscoveryAPI(source), 'GET'));
+        if (!this.validDiscovery(source, generation, operation)) return null;
+        if (!value) throw Error('Owning server returned malformed browser discovery');
+        this.discovery = value; return value;
+      } catch (error) {
+        if (this.validDiscovery(source, generation, operation)) {
+          this.discoveryError = error?.status === 404 ?
+            'Browser discovery is unavailable on this controller. Leave Auto-discover selected or enter a custom executable.' :
+            `Cannot discover installed browsers: ${error?.message || error}. Leave Auto-discover selected or enter a custom executable.`;
+        }
+        return null;
+      } finally {
+        if (this.validDiscovery(source, generation, operation)) { this.discoveryLoading = false; this.render(); }
+      }
     }
 
     async load() {
       this.setContext(); const source = this.source, generation = this.generation, operation = ++this.operation;
       this.loading = true; this.error = ''; this.dirty.clear(); this.render();
+      let value = null;
       try {
-        const value = projection(await this.request(this.absoluteAPI(source), 'GET'));
+        value = projection(await this.request(this.absoluteAPI(source), 'GET'));
         if (!this.valid(source, generation, operation)) return null;
         if (!value) throw Error('Owning server returned malformed browser settings');
-        this.apply(value, true); return value;
+        this.apply(value, true);
       } catch (error) {
         if (this.valid(source, generation, operation)) this.error = `Cannot load browser settings: ${error?.message || error}`;
         return null;
       } finally { if (this.valid(source, generation, operation)) { this.loading = false; this.render(); } }
+      if (this.valid(source, generation, operation) && this.executableSelect) await this.loadDiscovery(source, generation);
+      return value;
     }
 
     openSettings() { return this.load(); }
@@ -566,11 +667,20 @@
       const blocked = this.loading || this.saving || !this.settings;
       if (this.enabled) this.enabled.disabled = blocked || this.running;
       if (this.headless) this.headless.disabled = blocked || this.running;
-      if (this.executable) { this.executable.disabled = blocked || this.running; this.executable.placeholder = 'Auto-discover Edge or Chromium'; }
+      if (this.executable) { this.executable.disabled = blocked || this.running; this.executable.placeholder = 'Custom executable'; }
+      if (this.executableSelect) this.executableSelect.disabled = blocked || this.running;
+      this.renderDiscoveryOptions();
+      if (this.customExecutable) this.customExecutable.hidden = this.executableSelect?.value !== '__custom__';
       if (this.save) { this.save.disabled = blocked || this.running || !this.dirty.size; this.save.textContent = this.saving ? 'Saving…' : 'Save browser settings'; }
       if (this.status) this.status.textContent = this.loading ? 'Loading browser settings…' : this.saving ? 'Saving browser settings…' : this.error ||
         (this.running ? 'Browser settings cannot be changed while the browser is running.' : this.settings ?
           'Browser launch is opt-in. Saving settings never launches the browser.' : 'Browser settings have not been loaded.');
+      if (this.discoveryStatus) {
+        const unavailable = this.discovery.unavailable.map(item => `${item.name} is unavailable: ${item.reason}`).join(' ');
+        this.discoveryStatus.textContent = this.discoveryLoading ? 'Discovering installed browsers…' : this.discoveryError ||
+          [this.discovery.browsers.length ? `${this.discovery.browsers.length} installed browser option(s) found.` :
+            'No installed browser options were discovered.', unavailable].filter(Boolean).join(' ');
+      }
     }
   }
 

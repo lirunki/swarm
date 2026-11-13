@@ -489,7 +489,7 @@ conservatively blocks while any native Pi has an unknown working folder.
 - Five explicit goal states: **running**, **waiting for input**, **dormant**,
   **idle** (turn completed), **done** (goal accomplished).
 - The dashboard uses a slim **Mission Control** toolbar: the state multiselect
-  sits under the label on the left and **+ New agent** on the right. Text search
+  sits under the label on the left and **+** menu on the right. Text search
   lives inside the state dropdown; `/` opens it and focuses search. A small search
   marker indicates a text filter remains active after the menu closes. Search
   covers the full card metadata even when compact: product labels/filenames/URLs,
@@ -778,7 +778,7 @@ HTTP relay forwards JSON actions and binary PNG responses unchanged.
    Edge/Chromium executable on that owner. Default is disabled, headless, automatic
    executable discovery. Settings are persisted on the owning server; enabling
    does not launch a browser. Close its dedicated browser before changing settings.
-3. Click **Browser** in the workspace tab strip, then **Launch browser**. Launch
+3. Choose **+ → Open browser**, then **Launch browser**. Launch
    is explicit and uses `<SWARM_HOME>/remote-browser/profile`, never the normal
    personal profile. Remote requests are executed by that remote owner, not the
    browser's local machine.
@@ -787,9 +787,10 @@ HTTP relay forwards JSON actions and binary PNG responses unchanged.
    request per movement. Focus the image for keyboard input. Copy/Paste and
    Ctrl/Cmd+C/V explicitly bridge plain text; no automatic clipboard sync occurs.
 
-The active **Browser** workspace tab is pinned beside Dashboard. Inactive Browser
-stays available after other tabs; folder dashboards still sit immediately after
-Dashboard when selected. Tab selection is restored separately per Swarm. Switching
+The **Browser** workspace tab appears only after **+ → Open browser** and is
+closeable. It is visible in the main Dashboard/Browser views, not group dashboards
+or agent terminals. When active it is pinned beside Dashboard. Closing it detaches
+the viewer without stopping the remote browser. Tab selection is restored separately per Swarm. Switching
 away stops screenshot polling, discards pending unsent input, and leaves the remote
 browser open; controller shutdown detaches browser-control callbacks without closing
 it. The dedicated profile persists cookies/logins, so protect the registry directory.
@@ -826,7 +827,10 @@ Timeouts are not cancellation and commands are never blindly retried.
   installed with Swarm; importing/running a disabled controller does not attach it.
   Headless mode works on a server with the necessary browser runtime libraries.
   For Windows Edge, use native Windows Python/Cygwin's compatible configuration;
-  WSL Python does not launch a Windows `.exe`. No firewall or machine trust changes
+  WSL Python does not launch a Windows `.exe`. WSL discovery recognizes `msedge`,
+  Edge/Chromium aliases and executable wrappers, preserving `/snap/bin/chromium`
+  rather than resolving it to `snap`. Settings lists installed options and marks
+  Windows Edge as unavailable from WSL; Custom executable remains available. No firewall or machine trust changes
   are made automatically.
 
 Deploy the updated controller and frontend, then refresh. The existing relay needs
@@ -885,10 +889,9 @@ The mobile copy control is hidden on mouse-first desktop browsers.
 
 Use the top-right **?** button for a quick guide to dashboard states, adoption,
 terminal scrolling/copying, process controls and relay safety. The adoption actions
-are grouped under **+ New agent → Adopt session → pi session / Grok session**.
-The adoption menu sits at the bottom-left of the creation dialog, aligned with
-Cancel and Launch agent; it opens upward and switches to the selected adoption
-flow without submitting the create form. Registration/import behavior is unchanged.
+are grouped under **+ → Adopt session → pi session / Grok session**.
+The + menu offers New agent, Adopt session (Pi/Grok), and Open browser.
+Adoption opens its own dialog without submitting the create form. Registration/import behavior is unchanged.
 
 ### Mobile terminal gestures
 
@@ -1493,7 +1496,7 @@ the runtime; an incomplete workspace must be inspected and repaired separately.
 
 Quit the original pi process first (not just its terminal view). Then:
 
-1. Open **+ New agent → Adopt session → pi session**.
+1. Open **+ → Adopt session → pi session**.
 2. Choose a saved inactive session; optionally edit its name and goal.
 3. Click **Adopt session**. It appears **idle/offline**, with auto-resume off.
 4. Click **Wake** when you want it to continue.
@@ -2059,7 +2062,7 @@ as `agent.meta_compaction` through the normal state API/WebSocket.
 
 ## Import a Grok Build session into pi
 
-Open **+ New agent → Adopt session → Grok session**, choose a saved conversation, check its working
+Open **+ → Adopt session → Grok session**, choose a saved conversation, check its working
 folder, and click **Convert and adopt**. The new agent appears **idle/offline**
 with auto-resume disabled. It runs **pi**, not Grok, when you explicitly Wake it.
 Stop the original Grok worker before waking its imported counterpart.

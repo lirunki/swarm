@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -19,9 +20,24 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import UUID
 
+from .browser_settings import BrowserSettings
+
 _LOCK = threading.Lock()
 _ATTEMPTS: dict[tuple[int, str], subprocess.Popen] = {}
 _READY: set[tuple[int, str]] = set()
+
+_LINUX_BROWSER_COMMANDS = (
+    ("Microsoft Edge", (
+        "msedge", "microsoft-edge", "microsoft-edge-stable", "msedge-stable", "msedge-beta",
+    )),
+    ("Google Chrome", ("google-chrome", "google-chrome-stable", "googlechrome")),
+    ("Chromium", ("chromium-browser", "chromium")),
+)
+_LINUX_BROWSER_DIRECTORIES = ("/usr/bin", "/usr/local/bin", "/snap/bin")
+_WSL_EDGE_PATHS = (
+    "/mnt/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+    "/mnt/c/Program Files/Microsoft/Edge/Application/msedge.exe",
+)
 
 
 def _validate_port(port: int) -> int:
@@ -30,42 +46,169 @@ def _validate_port(port: int) -> int:
     return port
 
 
+def _lexical_absolute(path: str | os.PathLike[str]) -> Path:
+    """Make a path absolute without resolving a browser wrapper symlink."""
+    expanded = Path(path).expanduser()
+    return expanded if expanded.is_absolute() else Path.cwd() / expanded
+
+
+def _native_header(path: Path) -> tuple[Path, bytes] | None:
+    """Read only the header of a resolved regular file without following its final link."""
+    try:
+        target = path.resolve(strict=True)
+        descriptor = os.open(
+            target,
+            os.O_RDONLY
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+        )
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return None
+            return target, os.read(descriptor, 128)
+        finally:
+            os.close(descriptor)
+    except (OSError, RuntimeError):
+        return None
+
+
+def _launchable_path(path: str | os.PathLike[str], *, platform: str | None = None) -> Path | None:
+    """Validate the ultimate file but retain the supplied wrapper path."""
+    platform = platform or sys.platform
+    supplied = _lexical_absolute(path)
+    if platform != "win32" and supplied.suffix.lower() in {".exe", ".cmd", ".bat"}:
+        return None
+    native = _native_header(supplied)
+    if native is None:
+        return None
+    target, header = native
+    if platform == "win32":
+        supported = target.suffix.lower() == ".exe" and header.startswith(b"MZ")
+    elif platform == "darwin":
+        supported = header[:4] in {
+            b"\xfe\xed\xfa\xce",
+            b"\xce\xfa\xed\xfe",
+            b"\xfe\xed\xfa\xcf",
+            b"\xcf\xfa\xed\xfe",
+            b"\xca\xfe\xba\xbe",
+            b"\xbe\xba\xfe\xca",
+        } or BrowserSettings._sane_shebang(header)
+    else:
+        supported = header.startswith(b"\x7fELF") or BrowserSettings._sane_shebang(header)
+    if not supported or (platform != "win32" and not os.access(supplied, os.X_OK)):
+        return None
+    return supplied
+
+
+def _rooted(root: Path, absolute: str) -> Path:
+    return Path(absolute) if root == Path("/") else root / absolute.lstrip("/")
+
+
+def _is_wsl(environ: dict[str, str], root: Path) -> bool:
+    if environ.get("WSL_DISTRO_NAME") or environ.get("WSL_INTEROP"):
+        return True
+    try:
+        return "microsoft" in _rooted(root, "/proc/sys/kernel/osrelease").read_text(
+            encoding="ascii", errors="ignore"
+        ).lower()
+    except OSError:
+        return False
+
+
+def discover_browsers(
+    *,
+    platform: str | None = None,
+    environ: dict[str, str] | None = None,
+    search_path: str | None = None,
+    root: str | os.PathLike[str] = "/",
+) -> dict[str, list[dict[str, object]]]:
+    """Discover launchable local browsers without launching or probing any of them."""
+    platform = platform or sys.platform
+    environ = dict(os.environ if environ is None else environ)
+    root_path = Path(root)
+    browsers: list[dict[str, object]] = []
+    unavailable: list[dict[str, object]] = []
+    seen: set[str] = set()
+
+    def add(name: str, candidate: str | os.PathLike[str]) -> None:
+        path = _launchable_path(candidate, platform=platform)
+        if path is None or str(path) in seen:
+            return
+        seen.add(str(path))
+        browsers.append({"name": name, "executable": str(path), "supported": True})
+
+    if platform == "win32":
+        for variable in ("PROGRAMFILES(X86)", "PROGRAMFILES", "LOCALAPPDATA"):
+            if environ.get(variable):
+                add("Microsoft Edge", Path(environ[variable]) / "Microsoft/Edge/Application/msedge.exe")
+        for name, command in (("Microsoft Edge", "msedge.exe"), ("Google Chrome", "chrome.exe")):
+            found = shutil.which(command, path=search_path if search_path is not None else environ.get("PATH"))
+            if found:
+                add(name, found)
+        return {"browsers": browsers, "unavailable": unavailable}
+
+    if platform == "darwin":
+        for name, candidate in (
+            ("Microsoft Edge", "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+            ("Google Chrome", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            ("Microsoft Edge", Path.home() / "Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+        ):
+            add(name, candidate)
+        for name, command in (
+            ("Microsoft Edge", "microsoft-edge"),
+            ("Google Chrome", "google-chrome"),
+            ("Chromium", "chromium"),
+        ):
+            found = shutil.which(command, path=search_path if search_path is not None else environ.get("PATH"))
+            if found:
+                add(name, found)
+        return {"browsers": browsers, "unavailable": unavailable}
+
+    path_value = search_path if search_path is not None else environ.get("PATH")
+    for name, commands in _LINUX_BROWSER_COMMANDS:
+        for command in commands:
+            found = shutil.which(command, path=path_value)
+            if found:
+                add(name, found)
+            for directory in _LINUX_BROWSER_DIRECTORIES:
+                add(name, _rooted(root_path, f"{directory}/{command}"))
+
+    if _is_wsl(environ, root_path):
+        for windows_path in _WSL_EDGE_PATHS:
+            candidate = _rooted(root_path, windows_path)
+            try:
+                exists = candidate.is_file()
+            except OSError:
+                exists = False
+            if exists:
+                unavailable.append({
+                    "name": "Windows Microsoft Edge",
+                    "executable": str(candidate),
+                    "reason": "Use native Windows Swarm or install Edge/Chromium inside WSL.",
+                })
+                break
+    return {"browsers": browsers, "unavailable": unavailable}
+
+
 def _find_browser(configured: str | None) -> Path:
     if configured:
-        path = Path(configured).expanduser()
-        if not path.is_file():
-            raise RuntimeError("Configured browser executable does not exist")
-        if sys.platform != "win32" and path.suffix.lower() == ".exe":
-            raise RuntimeError("Run with Windows Python to launch a Windows browser")
-        if sys.platform != "win32" and not os.access(path, os.X_OK):
-            raise RuntimeError("Configured browser executable is not executable")
-        return path.resolve()
+        path = _launchable_path(configured)
+        if path is None:
+            supplied = _lexical_absolute(configured)
+            if sys.platform != "win32" and supplied.suffix.lower() in {".exe", ".cmd", ".bat"}:
+                raise RuntimeError("Run with Windows Python to launch a Windows browser")
+            if not supplied.exists():
+                raise RuntimeError("Configured browser executable does not exist")
+            raise RuntimeError(
+                "Configured browser executable must be a native browser executable or "
+                "executable shebang wrapper"
+            )
+        return path
 
-    candidates: list[Path] = []
-    if sys.platform == "win32":
-        for name in ("PROGRAMFILES(X86)", "PROGRAMFILES", "LOCALAPPDATA"):
-            if os.environ.get(name):
-                candidates.append(Path(os.environ[name]) / "Microsoft/Edge/Application/msedge.exe")
-        commands = ("msedge.exe", "chrome.exe")
-    elif sys.platform == "darwin":
-        candidates = [
-            Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
-            Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-            Path.home() / "Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-        ]
-        commands = ("microsoft-edge", "google-chrome", "chromium")
-    else:
-        commands = (
-            "microsoft-edge", "microsoft-edge-stable", "google-chrome",
-            "google-chrome-stable", "chromium", "chromium-browser",
-        )
-    for path in candidates:
-        if path.is_file():
-            return path.resolve()
-    for command in commands:
-        found = shutil.which(command)
-        if found:
-            return Path(found).resolve()
+    discovery = discover_browsers()
+    if discovery["browsers"]:
+        return Path(str(discovery["browsers"][0]["executable"]))
     raise RuntimeError("Edge or Chromium was not found; configure a browser executable")
 
 

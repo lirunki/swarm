@@ -23,7 +23,7 @@ test('switching Swarms preserves each browser-local UI view state independently'
   const context = vm.createContext({
     selectedAgentGroup:null,openedAgentGroups:new Set(),agentGroupTabs:new Map(),isAgentGroupTab:()=>false,SwarmAgentGroups:{validProjection:()=>false},
     SwarmGroupingMode:{validSettings:()=>false},syncGroupingStorage(){},serverManagedBranches:()=>false,groupingBranchOperation:0,browserGroupingOperation:0,groupingBranchBusy:false,browserGroupingProjection:null,browserGroupingError:null,
-    activeSwarm: 'local', activeTab: 'local-b', terminals: new Map([['local-a', {}], ['local-b', {}]]), groupedBranches,
+    activeSwarm: 'local', activeTab: 'local-b', browserOpen: true, terminals: new Map([['local-a', {}], ['local-b', {}]]), groupedBranches,
     localStorage: {getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key)},
     notificationsInbox: {clear: () => calls.push(['clear'])}, document: {querySelectorAll: () => []}, stateSocket: null,
     stateGeneration: 0, reconnectDelay: 1000, uiViewStateRestored: true,
@@ -41,7 +41,7 @@ test('switching Swarms preserves each browser-local UI view state independently'
   context.switchSwarm('remote');
 
   assert.deepEqual(JSON.parse(values.get('swarm.ui-view-state.local')), {
-    terminalTabs: {ids: ['local-a', 'local-b'], active: 'local-b'}, groupedBranches: ['local-parent'], agentGroupView:{selected:null,opened:[]},
+    terminalTabs: {ids: ['local-a', 'local-b'], active: 'local-b'}, browserOpen: true, groupedBranches: ['local-parent'], agentGroupView:{selected:null,opened:[]},
   });
   assert.deepEqual(JSON.parse(values.get('swarm.ui-view-state.remote')), remoteView);
   assert.deepEqual([...groupedBranches], []);
@@ -56,7 +56,7 @@ test('first state restores available tabs, active tab, and grouped branches befo
   const context = vm.createContext({
     selectedAgentGroup:null,openedAgentGroups:new Set(),agentGroupTabs:new Map(),isAgentGroupTab:()=>false,SwarmAgentGroups:{validProjection:()=>false},
     SwarmGroupingMode:{validSettings:()=>false},syncGroupingStorage(){},serverManagedBranches:()=>false,groupingBranchOperation:0,browserGroupingOperation:0,groupingBranchBusy:false,browserGroupingProjection:null,browserGroupingError:null,
-    activeSwarm: 'remote', activeTab: 'dashboard', terminals: new Map(), groupedBranches, uiViewStateRestored: false, state: {agents: []},
+    activeSwarm: 'remote', activeTab: 'dashboard', browserOpen: false, terminals: new Map(), groupedBranches, uiViewStateRestored: false, state: {agents: []},
     localStorage: {getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key)},
     fleetControl: null, agentById: id => context.state.agents.find(agent => agent.id === id), closeTerminal: () => {},
     render: () => renderedGroups.push([...groupedBranches]),
@@ -84,7 +84,7 @@ test('legacy per-Swarm tab storage migrates into UI view state', () => {
   const groupedBranches = new Set(), context = vm.createContext({
     selectedAgentGroup:null,openedAgentGroups:new Set(),agentGroupTabs:new Map(),isAgentGroupTab:()=>false,SwarmAgentGroups:{validProjection:()=>false},
     SwarmGroupingMode:{validSettings:()=>false},syncGroupingStorage(){},serverManagedBranches:()=>false,groupingBranchOperation:0,browserGroupingOperation:0,groupingBranchBusy:false,browserGroupingProjection:null,browserGroupingError:null,
-    activeSwarm: 'remote', activeTab: 'dashboard', terminals: new Map(), groupedBranches, uiViewStateRestored: false, state: {agents: []},
+    activeSwarm: 'remote', activeTab: 'dashboard', browserOpen: false, terminals: new Map(), groupedBranches, uiViewStateRestored: false, state: {agents: []},
     localStorage: {getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key)},
     fleetControl: null, agentById: id => context.state.agents.find(agent => agent.id === id), closeTerminal: () => {}, render: () => {},
     openTerminal: id => { context.terminals.set(id, {}); context.rememberUIViewState(); },
@@ -95,7 +95,7 @@ test('legacy per-Swarm tab storage migrates into UI view state', () => {
   context.applyState({agents: [{id: 'available'}]});
 
   assert.deepEqual(JSON.parse(values.get('swarm.ui-view-state.remote')), {
-    terminalTabs: {ids: ['available'], active: 'available'}, groupedBranches: [], agentGroupView:{selected:null,opened:[]},
+    terminalTabs: {ids: ['available'], active: 'available'}, browserOpen: false, groupedBranches: [], agentGroupView:{selected:null,opened:[]},
   });
   assert.equal(values.has('swarm.tabs.remote'), false);
 });

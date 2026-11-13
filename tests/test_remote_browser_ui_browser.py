@@ -256,6 +256,16 @@ def select_swarm(page, source):
     )
 
 
+def open_browser(page):
+    """Open the optional Browser workspace through the dashboard Add menu."""
+    if page.locator("#dashboard").is_hidden():
+        page.locator("#dashboard-tab").click()
+    page.locator("#add-menu-button").click()
+    playwright.expect(page.locator("#add-menu-options")).to_be_visible()
+    page.locator("#open-browser-button").click()
+    playwright.expect(page.locator("#browser-panel")).to_be_visible()
+
+
 @pytest.mark.parametrize("width", [390, 1280])
 def test_remote_browser_full_ui_flow_is_responsive_and_http_only(static_url, width):
     api = BrowserUIAPI()
@@ -271,6 +281,7 @@ def test_remote_browser_full_ui_flow_is_responsive_and_http_only(static_url, wid
             assert api.count("/api/browser/settings", method="GET") == 1
             section.locator("#browser-enabled").check()
             section.locator("#browser-headless").uncheck()
+            section.locator('#browser-executable-select').select_option('__custom__')
             section.locator("#browser-executable").fill(" /opt/captured-browser ")
             section.locator("#browser-settings-save").click()
             playwright.expect(section.locator("#browser-settings-save")).to_be_disabled()
@@ -287,18 +298,15 @@ def test_remote_browser_full_ui_flow_is_responsive_and_http_only(static_url, wid
 
             page.locator("#settings-dialog [data-close]").last.click()
             dashboard = page.locator("#dashboard-tab")
-            browser_tab = page.locator("#browser-tab")
+            browser_group = page.locator("#browser-tab-group")
+            playwright.expect(browser_group).to_be_hidden()
             page.locator('.agent-card[data-agent-id="a2"] .card-terminal').click()
-            assert dashboard.evaluate("node => node.nextElementSibling.id") != "browser-tab"
-            assert (
-                page.locator("#tabs").evaluate("node => node.lastElementChild.id") == "browser-tab"
-            )
-            page.locator("#browser-tab").click()
-            playwright.expect(page.locator("#browser-panel")).to_be_visible()
+            playwright.expect(browser_group).to_be_hidden()
+            open_browser(page)
             playwright.expect(page.locator("#browser-status")).to_have_text("Browser stopped")
-            assert dashboard.evaluate("node => node.nextElementSibling.id") == "browser-tab"
-            assert browser_tab.evaluate("node => getComputedStyle(node).position") == "sticky"
-            assert browser_tab.evaluate("node => getComputedStyle(node).left") == "102px"
+            assert dashboard.evaluate("node => node.nextElementSibling.id") == "browser-tab-group"
+            assert browser_group.evaluate("node => getComputedStyle(node).position") == "sticky"
+            assert browser_group.evaluate("node => getComputedStyle(node).left") == "102px"
             assert dashboard.bounding_box()["width"] == pytest.approx(102, abs=0.1)
             assert page.evaluate("document.body.scrollWidth <= innerWidth")
             assert api.count("/api/browser/launch", method="POST") == 0
@@ -380,7 +388,7 @@ def test_remote_legacy_status_is_safe_and_owner_paths_use_authenticated_fetch(st
                 }"""
             )
             select_swarm(page, api.LEGACY)
-            page.locator("#browser-tab").click()
+            open_browser(page)
             playwright.expect(page.locator("#browser-status")).to_have_text(
                 "Browser status unavailable"
             )
@@ -396,7 +404,7 @@ def test_remote_legacy_status_is_safe_and_owner_paths_use_authenticated_fetch(st
             select_swarm(page, api.REMOTE)
             api.settings[api.REMOTE]["enabled"] = True
             api.statuses[api.REMOTE].update(enabled=True, state="stopped")
-            page.locator("#browser-tab").click()
+            open_browser(page)
             playwright.expect(page.locator("#browser-owner")).to_have_text(
                 "Owning server: Captured Browser"
             )
@@ -417,7 +425,7 @@ def test_polling_pause_deactivate_close_and_late_owner_results_are_guarded(stati
         browser = launch_chromium(runner)
         try:
             context, page, errors, _ = open_page(browser, api, static_url)
-            page.locator("#browser-tab").click()
+            open_browser(page)
             playwright.expect(page.locator("#browser-screen")).to_be_visible()
             page.locator("#browser-interval").fill("0.25")
             page.locator("#browser-interval").dispatch_event("change")
@@ -502,7 +510,7 @@ def test_settings_load_without_viewer_running_lock_and_server_rejection_are_safe
             assert api.count("/api/browser/status") == 0
 
             page.locator("#settings-dialog [data-close]").last.click()
-            page.locator("#browser-tab").click()
+            open_browser(page)
             playwright.expect(page.locator("#browser-screen")).to_be_visible()
             page.locator("#notifications-button").click()
             page.get_by_role("button", name="Settings", exact=True).click()
@@ -555,7 +563,7 @@ def test_browser_view_persists_per_owner_without_restoring_a_terminal_id(static_
 
             page.locator("#dashboard-tab").click()
             select_swarm(page, api.REMOTE)
-            page.locator("#browser-tab").click()
+            open_browser(page)
             playwright.expect(page.locator("#browser-owner")).to_have_text(
                 "Owning server: Captured Browser"
             )

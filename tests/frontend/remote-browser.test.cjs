@@ -24,7 +24,7 @@ class Element {
   getBoundingClientRect() { return {left: 10, top: 20, width: 200, height: 100}; }
   setPointerCapture() {}
   releasePointerCapture() {}
-  focus() {}
+  focus() { this.focused = true; }
 }
 
 const IDS = ['panel', 'owner', 'status', 'launch', 'refresh-tabs', 'back', 'forward', 'reload',
@@ -266,6 +266,31 @@ test('an uncertain timeout prevents a second paste chunk', async () => {
   }
 });
 
+function discoverySettingsFixture(options = {}) {
+  const elements = nodes(), calls = [], changed = [];
+  for (const id of ['executable-select', 'discovery-status']) {
+    const node = new Element(); node.ownerDocument = elements['#browser-executable'].ownerDocument;
+    elements[`#browser-${id}`] = node;
+  }
+  let source = options.source || 'local', generation = 1;
+  const settings = options.settings || {revision: 3, enabled: false, headless: true, executable: null};
+  const discovery = options.discovery || {browsers: [], unavailable: []};
+  const request = async (url, method = 'GET', body) => {
+    calls.push([url, method, body]);
+    if (options.request) return options.request(url, method, body, {source, generation});
+    if (url.endsWith('/discovery')) return discovery;
+    if (method === 'POST') return {...body, revision: body.revision + 1};
+    return settings;
+  };
+  const controller = new BrowserSettingsController({query: selector => elements[selector] || null, request,
+    currentSwarm: () => source, currentGeneration: () => generation,
+    ownerName: value => value === 'local' ? 'Local' : `Peer ${value}`,
+    onChanged: async (...args) => changed.push(args)});
+  return {controller, elements, calls, changed, switchSource(value) {
+    source = value; generation += 1; controller.setContext();
+  }};
+}
+
 function settingsFixture(options = {}) {
   const elements = nodes(), calls = [], changed = []; let source = options.source || 'local', generation = 1;
   let saved = {revision: 3, enabled: false, headless: true, executable: null};
@@ -297,6 +322,98 @@ test('settings are lazy, request-based, projected, and blocked while running', a
   t.elements['#browser-headless'].dispatch('input');
   assert.equal(await t.controller.saveSettings(), false);
   assert.match(t.elements['#browser-settings-status'].textContent, /cannot be changed while/i);
+});
+
+test('browser discovery renders lexical aliases and unsafe labels as text, then requires an explicit selection', async () => {
+  const configured = '/snap/bin/chromium';
+  const t = discoverySettingsFixture({settings: {revision: 7, enabled: false, headless: true, executable: configured},
+    discovery: {browsers: [
+      {name: '<img src=x onerror=alert(1)>', executable: configured, supported: true},
+      {name: 'Chromium alias', executable: '/usr/local/bin/chromium-link', supported: true},
+    ], unavailable: [{name: 'Windows Microsoft Edge', executable: 'C:\\Program Files\\Edge\\msedge.exe',
+      reason: 'Use native Windows Swarm or install Edge/Chromium inside WSL.'}]}});
+  assert.equal(await t.controller.load(), t.controller.settings);
+  assert.deepEqual(t.calls.map(call => call.slice(0, 2)), [
+    ['/api/browser/settings', 'GET'], ['/api/browser/discovery', 'GET'],
+  ]);
+  const select = t.elements['#browser-executable-select'];
+  assert.deepEqual(select.children.map(option => option.value), [
+    '', configured, '/usr/local/bin/chromium-link', '__unavailable_0__', '__custom__',
+  ]);
+  assert.equal(select.children[1].textContent, `<img src=x onerror=alert(1)> — ${configured}`);
+  assert.equal(select.children[1].children.length, 0, 'discovery labels are assigned only as text');
+  assert.equal(select.children[3].disabled, true);
+  assert.equal(select.children[3].textContent,
+    'Windows Microsoft Edge — Use native Windows Swarm or install Edge/Chromium inside WSL.');
+  assert.equal(select.value, configured, 'the configured lexical path snaps to its matching alias');
+  assert.match(t.elements['#browser-discovery-status'].textContent, /WSL/i);
+
+  select.value = ''; select.dispatch('change');
+  assert.equal(t.elements['#browser-executable'].value, '');
+  assert.equal(t.controller.dirty.has('executable'), true);
+  assert.equal(t.calls.length, 2, 'changing the selector does not save automatically');
+  select.value = '/usr/local/bin/chromium-link'; select.dispatch('change');
+  assert.equal(t.elements['#browser-executable'].value, '/usr/local/bin/chromium-link');
+  assert.equal(t.calls.length, 2);
+  select.value = '__custom__'; select.dispatch('change');
+  assert.equal(t.elements['#browser-executable'].focused, true);
+  t.elements['#browser-executable'].value = 'C:\\safe\\custom-browser.exe';
+  t.elements['#browser-executable'].dispatch('input');
+  assert.equal(select.value, '__custom__');
+});
+
+test('settings null defaults to Auto and discovery failures preserve manual editing and saving', async () => {
+  const missing = Error('not found'); missing.status = 404;
+  const t = discoverySettingsFixture({request: async (url, method, body) => {
+    if (url.endsWith('/discovery')) throw missing;
+    if (method === 'POST') return {...body, revision: body.revision + 1};
+    return {revision: 2, enabled: false, headless: true, executable: null};
+  }});
+  const loaded = await t.controller.load();
+  assert.equal(loaded.executable, null);
+  assert.equal(t.controller.settings.revision, 2, 'a discovery error does not discard valid settings');
+  assert.equal(t.elements['#browser-executable-select'].value, '');
+  assert.match(t.elements['#browser-discovery-status'].textContent, /unavailable.*custom executable/i);
+  t.elements['#browser-executable'].value = 'C:\\Browsers\\edge.exe';
+  t.elements['#browser-executable'].dispatch('input');
+  assert.equal(await t.controller.saveSettings(), true);
+  const post = t.calls.find(call => call[1] === 'POST');
+  assert.equal(post[2].executable, 'C:\\Browsers\\edge.exe');
+});
+
+test('malformed discovery is bounded and does not replace settings or disable custom save', async () => {
+  const t = discoverySettingsFixture({discovery: {browsers: [
+    {name: `bad\u0000name`, executable: '/bin/browser', supported: true},
+  ], unavailable: []}});
+  await t.controller.load();
+  assert.equal(t.controller.settings.revision, 3);
+  assert.deepEqual(t.controller.discovery, {browsers: [], unavailable: []});
+  assert.match(t.elements['#browser-discovery-status'].textContent, /malformed.*custom executable/i);
+  t.elements['#browser-executable'].value = '/opt/manual-browser';
+  t.elements['#browser-executable'].dispatch('input');
+  assert.equal(t.elements['#browser-settings-save'].disabled, false);
+});
+
+test('owner changes discard pending discovery and never paint stale browser options', async () => {
+  let resolveA;
+  const pendingA = new Promise(resolve => { resolveA = resolve; });
+  const t = discoverySettingsFixture({source: 'peer/a', request: async url => {
+    if (url.includes('peer%2Fa') && url.endsWith('/settings'))
+      return {revision: 1, enabled: false, headless: true, executable: null};
+    if (url.includes('peer%2Fa') && url.endsWith('/discovery')) return pendingA;
+    if (url.endsWith('/settings')) return {revision: 4, enabled: true, headless: false, executable: '/b/browser'};
+    return {browsers: [{name: 'B browser', executable: '/b/browser', supported: true}], unavailable: []};
+  }});
+  const loadA = t.controller.load(); await tick();
+  assert.equal(t.calls.at(-1)[0], '/api/federation/peer%2Fa/proxy/api/browser/discovery');
+  t.switchSource('peer/b');
+  assert.deepEqual(t.elements['#browser-executable-select'].children.map(option => option.value), ['', '__custom__']);
+  await t.controller.load();
+  assert.deepEqual(t.elements['#browser-executable-select'].children.map(option => option.value), ['', '/b/browser', '__custom__']);
+  resolveA({browsers: [{name: 'A browser', executable: '/a/browser', supported: true}], unavailable: []});
+  await loadA;
+  assert.equal(t.controller.source, 'peer/b');
+  assert.deepEqual(t.elements['#browser-executable-select'].children.map(option => option.value), ['', '/b/browser', '__custom__']);
 });
 
 test('source contains EdgeMCP attribution, no websocket/stream protocol, and no data HTML sink', () => {

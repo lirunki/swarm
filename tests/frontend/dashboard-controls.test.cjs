@@ -16,7 +16,7 @@ class Element {
 function fixture() {
   const tasks = [], listeners = new Set();
   const doc = {defaultView: {setTimeout(fn) { tasks.push(fn); }}, addEventListener: (_, fn) => listeners.add(fn), removeEventListener: (_, fn) => listeners.delete(fn)};
-  const names = ['status-filter', 'status-filter-button', 'status-filter-menu', 'status-filter-label', 'status-filter-count', 'status-filter-dot', 'adoption-menu', 'adoption-menu-button', 'adoption-options', 'help-button', 'help-dialog', 'search', 'status-filter-search'];
+  const names = ['status-filter', 'status-filter-button', 'status-filter-menu', 'status-filter-label', 'status-filter-count', 'status-filter-dot', 'add-menu', 'add-menu-button', 'add-menu-options', 'adoption-menu', 'adoption-menu-button', 'adoption-options', 'help-button', 'help-dialog', 'search', 'status-filter-search'];
   const values = Object.fromEntries(names.map(id => [`#${id}`, new Element(doc)]));
   const inputs = Object.fromEntries(['all', ...STATES].map(status => {
     const input = new Element(doc); input.dataset.status = status;
@@ -27,6 +27,8 @@ function fixture() {
   values['#status-filter'].append(values['#status-filter-button'], values['#status-filter-menu']);
   values['#adoption-options'].append(new Element(doc), new Element(doc));
   values['#adoption-menu'].append(values['#adoption-menu-button'], values['#adoption-options']);
+  values['#add-menu-options'].append(new Element(doc), values['#adoption-menu'], new Element(doc));
+  values['#add-menu'].append(values['#add-menu-button'], values['#add-menu-options']);
   values['#help-dialog'].showModal = () => { values['#help-dialog'].open = true; };
   return {values, inputs, doc, tasks, listeners, query: selector => values[selector]};
 }
@@ -76,11 +78,12 @@ test('dropdown supports keyboard, Escape focus restoration, outside dismissal an
   dropdown.dispose(); assert.equal(t.listeners.size, 0);
 });
 
-test('help opens its dialog and adoption/status menus remain separate controls', () => {
+test('help opens its dialog and nested add/adoption menus remain separate controls', () => {
   const t = fixture(), controls = new DashboardControls({query: t.query, onStatusChange() {}});
   t.values['#help-button'].events.get('click')(); assert.equal(t.values['#help-dialog'].open, true);
-  controls.adoption.open(); assert.equal(t.values['#adoption-options'].hidden, false);
+  controls.add.open(); controls.adoption.open(); assert.equal(t.values['#add-menu-options'].hidden, false); assert.equal(t.values['#adoption-options'].hidden, false);
   assert.equal(t.values['#status-filter-menu'].hidden, true);
+  controls.closeAddMenus(); assert.equal(t.values['#add-menu-options'].hidden, true); assert.equal(t.values['#adoption-options'].hidden, true);
 });
 
 
@@ -109,15 +112,16 @@ test('a hidden active search is signaled without changing status checkbox choice
   assert.equal(t.values['#status-filter-search'].hidden,true);
 });
 
-test('adoption is a create-footer alternative, search is in the state menu, collapse-all is absent', () => {
+test('add menu owns new/adopt/browser actions while the create footer only cancels or launches', () => {
   const fs=require('node:fs'),path=require('node:path');
   const html=fs.readFileSync(path.join(__dirname,'../../src/swarm/static/index.html'),'utf8');
   const form=html.split('id="create-form"')[1].split('</form>')[0];
   const footer=form.split('<footer')[1].split('</footer>')[0];
-  assert.ok(footer.includes('id="adoption-menu"'));
-  assert.ok(footer.indexOf('id="adoption-menu"')<footer.indexOf('>Cancel</button>'));
-  assert.ok(footer.includes('>Launch agent ↗</button>'));
-  assert.ok(!html.split('class="actions"')[1].split('</div>')[0].includes('adoption-menu'));
+  assert.ok(!footer.includes('id="adoption-menu"'));
+  assert.ok(footer.includes('>Cancel</button>')); assert.ok(footer.includes('>Launch agent ↗</button>'));
+  const actions=html.split('class="actions"')[1].split('</section>')[0];
+  for(const id of ['add-menu','add-menu-button','create-button','adoption-menu','adopt-button','import-grok-button','open-browser-button'])assert.ok(actions.includes(`id="${id}"`));
+  assert.match(actions,/id="add-menu-button"[^>]*aria-label="Add"[^>]*>\+</);
   const menu=html.split('id="status-filter-menu"')[1].split('</div>')[0];
   assert.ok(menu.includes('id="search"'));
   assert.ok(!html.includes('collapse-all'));

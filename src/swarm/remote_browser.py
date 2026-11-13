@@ -154,6 +154,10 @@ class RemoteBrowser:
         self._write_state(port)
         return port
 
+    def discovery(self) -> dict:
+        """List local browser choices without creating profiles or launching processes."""
+        return self._launcher.discover_browsers()
+
     def status(self) -> dict:
         """Report state without launching or attaching pychrome."""
         with self._lock:

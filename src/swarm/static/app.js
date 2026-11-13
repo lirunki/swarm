@@ -5,7 +5,7 @@ const node = (tag, cls = '', text = '') => { const el = document.createElement(t
 const button = (text, cls, action) => { const el = node('button', cls, text); el.type = 'button'; el.addEventListener('click', action); return el; };
 const labels = {running: 'Running', waiting: 'Waiting for input', dormant: 'Dormant', idle: 'Idle', done: 'Done'};
 let state = {agents: [], errors: {}, health: {}, home: ''};
-let activeTab = 'dashboard', uiViewStateRestored = false, stateSocket, stateSocketPending = null, reconnectDelay = 1000;
+let activeTab = 'dashboard', browserOpen = false, uiViewStateRestored = false, stateSocket, stateSocketPending = null, reconnectDelay = 1000;
 let restartingController = false, restartTimer, activeSwarm = 'local', stateGeneration = 0, presenceSocket, presenceSocketPending = false;
 let federationNodes = new Map(), federationRestored = false;
 let notificationsInbox = null, pendingNotificationReveal = null, notificationHighlightTimer = null;
@@ -92,7 +92,7 @@ function since(value) {
 }
 const uiViewStateStorageKey = () => `swarm.ui-view-state.${activeSwarm}`;
 const legacyTabStorageKey = () => `swarm.tabs.${activeSwarm}`;
-const emptyUIViewState = () => ({terminalTabs: {ids: [], active: 'dashboard'}, groupedBranches: [], agentGroupView: {selected: null, opened: []}});
+const emptyUIViewState = () => ({terminalTabs: {ids: [], active: 'dashboard'}, browserOpen: false, groupedBranches: [], agentGroupView: {selected: null, opened: []}});
 function normalizeUIViewState(value) {
   if (!value || typeof value !== 'object') return emptyUIViewState();
   const tabs = value.terminalTabs && typeof value.terminalTabs === 'object' ? value.terminalTabs : value;
@@ -103,7 +103,8 @@ function normalizeUIViewState(value) {
     : [];
   const groupView = value.agentGroupView && typeof value.agentGroupView === 'object' ? value.agentGroupView : {};
   const opened = Array.isArray(groupView.opened) ? [...new Set(groupView.opened.filter(id => typeof id === 'string' && id).slice(0,100))] : [];
-  return {terminalTabs: {ids, active}, groupedBranches: grouped, agentGroupView: {selected: typeof groupView.selected === 'string' ? groupView.selected : null, opened}};
+  const savedBrowserOpen = typeof value.browserOpen === 'boolean' ? value.browserOpen : typeof value.browserView?.open === 'boolean' ? value.browserView.open : active === 'browser';
+  return {terminalTabs: {ids, active}, browserOpen: savedBrowserOpen || active === 'browser', groupedBranches: grouped, agentGroupView: {selected: typeof groupView.selected === 'string' ? groupView.selected : null, opened}};
 }
 function readUIViewState() {
   try {
@@ -117,6 +118,7 @@ function rememberUIViewState() {
   try {
     const value = {
       terminalTabs: {ids: [...terminals.keys()], active: activeTab},
+      browserOpen,
       groupedBranches: serverManagedBranches() ? readUIViewState().groupedBranches : [...groupedBranches],
       agentGroupView: {selected: selectedAgentGroup, opened: [...openedAgentGroups]},
     };
@@ -142,6 +144,7 @@ function applyState(data) {
   state = data;
   syncGroupingStorage(savedView,previousServerMode);
   if (savedView) {
+    browserOpen = savedView.browserOpen;
     selectedAgentGroup = savedView.agentGroupView.selected;
     openedAgentGroups.clear();
     for (const id of savedView.agentGroupView.opened) openedAgentGroups.add(id);
@@ -270,6 +273,7 @@ async function loadFederation() {
 }
 function switchSwarm(nodeId) {
   if (nodeId === activeSwarm) return;
+  dashboardControls?.closeAddMenus?.();
   notificationsInbox?.clear();
   if(typeof remoteBrowserController!=='undefined')remoteBrowserController?.deactivate();
   if(uiViewStateRestored) rememberUIViewState();
@@ -780,15 +784,16 @@ function syncAgentGroupTabs() {
   }
   // Only the selected folder belongs in the tab strip; retained terminals stay alive.
   for (const [id,entry] of agentGroupTabs) if(id!==selectedAgentGroup) entry.wrapper.remove();
-  const dashboard=$('#dashboard-tab'), browserTab=$('#browser-tab');
-  const hasBrowserTab=browserTab?.id==='browser-tab';
+  const dashboard=$('#dashboard-tab'), browserTab=$('#browser-tab'), browserGroup=$('#browser-tab-group');
+  const hasBrowserTab=browserTab?.id==='browser-tab', browserNode=browserGroup?.id==='browser-tab-group'?browserGroup:browserTab;
   if(selectedAgentGroup && agentGroupTabs.has(selectedAgentGroup))
     $('#tabs').insertBefore(agentGroupTabs.get(selectedAgentGroup).wrapper,dashboard.nextSibling);
   const assignments=SwarmAgentGroups.effectiveAssignments(state.agents,agentGroupProjection());
   for(const [id,t] of terminals) {t.group.hidden=(assignments[id]||null)!==selectedAgentGroup;$('#tabs').append(t.group);}
-  if(hasBrowserTab) {
-    if(activeTab==='browser') $('#tabs').insertBefore(browserTab,dashboard.nextSibling);
-    else $('#tabs').append(browserTab);
+  if(hasBrowserTab && browserNode) {
+    browserNode.hidden=!browserOpen || selectedAgentGroup!==null || !['dashboard','browser'].includes(activeTab);
+    if(activeTab==='browser') $('#tabs').insertBefore(browserNode,dashboard.nextSibling);
+    else $('#tabs').append(browserNode);
   }
 }
 function renderAgentFolders(matching, includeEmpty = true) {
@@ -879,13 +884,15 @@ function activate(id, persist = true) {
   if (id && terminals.has(id)) {selectedAgentGroup=agentGroupFor(id);if(selectedAgentGroup)openedAgentGroups.add(selectedAgentGroup);}
   else if(isAgentGroupTab(id)) {selectedAgentGroup=id.slice('agent-group:'.length);openedAgentGroups.add(selectedAgentGroup);}
   else {selectedAgentGroup=null;}
+  if(id==='browser')browserOpen=true;
   activeTab = id === 'browser' ? 'browser' : id && (terminals.has(id) || isAgentGroupTab(id)) ? id : 'dashboard';
   groupNameMenu.dropdown.close();
   const dashboardVisible=activeTab==='dashboard'||isAgentGroupTab(activeTab), browserVisible=activeTab==='browser';
   $('#dashboard').hidden = !dashboardVisible; $('#terminals').hidden = dashboardVisible || browserVisible;
-  const browserPanel=$('#browser-panel'),browserTab=$('#browser-tab');
+  const browserPanel=$('#browser-panel'),browserTab=$('#browser-tab'),browserGroup=$('#browser-tab-group');
   if(browserPanel?.id==='browser-panel')browserPanel.hidden=!browserVisible;
   if(browserTab?.id==='browser-tab'){browserTab.classList.toggle('active',browserVisible);browserTab.setAttribute('aria-current',browserVisible?'page':'false');}
+  if(browserGroup?.id==='browser-tab-group')browserGroup.classList.toggle('active',browserVisible);
   $('#dashboard-tab').classList.toggle('active', activeTab === 'dashboard');
   $('#dashboard-tab').setAttribute('aria-current', activeTab === 'dashboard' ? 'page' : 'false');
   if(browserVisible && typeof remoteBrowserController!=='undefined' && remoteBrowserController && !remoteBrowserController.active)
@@ -1472,7 +1479,7 @@ $('#import-grok-form').addEventListener('submit', event => {
     toast('Grok history converted and adopted as pi. Wake it when you are ready.'); await refresh();
   });
 });
-$('#import-grok-button').addEventListener('click', () => { dashboardControls.adoption.close(); $('#create-dialog').close(); $('#import-grok-form').reset(); $('#grok-session-search').value = ''; $('#grok-roots').textContent = ''; showDialog('#import-grok-dialog'); loadGrokSessions(); });
+$('#import-grok-button').addEventListener('click', () => { dashboardControls.closeAddMenus(); $('#create-dialog')?.close(); $('#import-grok-form').reset(); $('#grok-session-search').value = ''; $('#grok-roots').textContent = ''; showDialog('#import-grok-dialog'); loadGrokSessions(); });
 $('#refresh-grok-sessions').addEventListener('click', loadGrokSessions);
 $('#grok-session-search').addEventListener('input', renderGrokSessions);
 const fleetControl = new SwarmFleetControl.FleetControl({
@@ -1508,20 +1515,28 @@ const relaySettingsDialog = new SwarmRelaySettings.RelaySettingsDialog({
 });
 for (const el of document.querySelectorAll('[data-close]')) el.addEventListener('click', () => el.closest('dialog').close());
 const createDialog = () => {
-  dashboardControls.adoption.close();
+  dashboardControls.closeAddMenus();
   const form = $('#create-form'); form.reset(); loadAgentFolderOptions(); updateWorktreeCreateFields();
   $('#model-selection-hint').textContent = 'Reading models from the server Pi configuration…';
   showDialog('#create-dialog'); loadModelOptions();
 };
 $('#create-button').addEventListener('click', createDialog); $('#empty-create').addEventListener('click', createDialog);
-$('#adopt-button').addEventListener('click', () => { dashboardControls.adoption.close(); $('#create-dialog').close(); $('#adopt-form').reset(); $('#session-search').value = ''; showDialog('#adopt-dialog'); loadSessions(); });
+$('#open-browser-button').addEventListener('click', () => { dashboardControls.closeAddMenus(); agentGroupsController?.clearSelection(); activate('browser'); render(); });
+$('#adopt-button').addEventListener('click', () => { dashboardControls.closeAddMenus(); $('#create-dialog')?.close(); $('#adopt-form').reset(); $('#session-search').value = ''; showDialog('#adopt-dialog'); loadSessions(); });
 $('#refresh-sessions').addEventListener('click', loadSessions); $('#session-search').addEventListener('input', renderSessions);
 $('#dashboard-tab').addEventListener('click', () => {agentGroupsController?.clearSelection();activate('dashboard');});
 $('#browser-tab')?.addEventListener('click', () => {agentGroupsController?.clearSelection();activate('browser');});
+$('#browser-tab-close')?.addEventListener('click', () => {
+  browserOpen=false;
+  remoteBrowserController?.deactivate();
+  if(activeTab==='browser')activate('dashboard',false);else syncAgentGroupTabs();
+  rememberUIViewState();
+});
 $('#browser-settings-section')?.addEventListener('toggle', event => {if(event.currentTarget.open)void browserSettingsController?.openSettings();});
 $('#search').addEventListener('input', render);
 document.addEventListener('keydown', event => { if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && (activeTab === 'dashboard' || isAgentGroupTab(activeTab)) && !document.querySelector('dialog[open]')) { event.preventDefault(); dashboardControls.status.dropdown.open(); $('#search').focus(); } });
 function clearUnauthorizedWorkspace(nodeId) {
+  dashboardControls?.closeAddMenus?.();
   notificationsInbox?.clear();
   if(typeof remoteBrowserController!=='undefined')remoteBrowserController?.deactivate();
   pendingNotificationReveal = null;

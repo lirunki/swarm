@@ -317,7 +317,7 @@ def visible_workspace_tabs(page):
     return page.locator("#tabs > :not([hidden])").evaluate_all(
         """elements => elements.map(element => {
             if (element.id === 'dashboard-tab') return 'dashboard';
-            if (element.id === 'browser-tab') return null;
+            if (element.id === 'browser-tab-group') return 'browser';
             if (element.classList.contains('agent-group-tab')) {
                 return `group:${element.dataset.groupId}`;
             }
@@ -509,18 +509,20 @@ def test_only_active_folder_tab_is_visible_and_root_terminal_restores(
                     dashboardWeight: style('#dashboard-tab').fontWeight,
                     folderWeight: style('.agent-group-tab > .tab').fontWeight,
                     folderLight: light(style('.agent-group-tab').backgroundColor),
-                    terminalLight: light(style('.tab-group:not(.agent-group-tab)').backgroundColor),
+                    terminalLight: light(style('.tab-group:not(.agent-group-tab):not(#browser-tab-group)').backgroundColor),
                 };
             }"""
         )
         assert folder_visuals["dashboardWeight"] == "700"
         assert folder_visuals["folderWeight"] == "700"
         assert folder_visuals["folderLight"] > folder_visuals["terminalLight"]
-        page.locator('.tab-group:not(.agent-group-tab) .tab[aria-label^="Agent 3"]').click()
+        page.locator(
+            '.tab-group:not(.agent-group-tab):not(#browser-tab-group) .tab[aria-label^="Agent 3"]'
+        ).click()
         selected_terminal_visuals = page.evaluate(
             r"""() => {
                 const light = selector => [...getComputedStyle(document.querySelector(selector)).backgroundColor.matchAll(/[\d.]+/g)].slice(0, 3).reduce((sum, match) => sum + Number(match[0]), 0);
-                return {dashboard: light('#dashboard-tab'), terminal: light('.tab-group:not(.agent-group-tab)')};
+                return {dashboard: light('#dashboard-tab'), terminal: light('.tab-group:not(.agent-group-tab):not(#browser-tab-group)')};
             }"""
         )
         assert selected_terminal_visuals["dashboard"] > selected_terminal_visuals["terminal"]
@@ -538,7 +540,9 @@ def test_only_active_folder_tab_is_visible_and_root_terminal_restores(
             "dashboard",
             f"terminal:{AGENT_IDS[4]}",
         ]
-        page.locator('.tab-group:not(.agent-group-tab) .tab[aria-label^="Agent 4"]').click()
+        page.locator(
+            '.tab-group:not(.agent-group-tab):not(#browser-tab-group) .tab[aria-label^="Agent 4"]'
+        ).click()
         playwright.expect(page.locator(".terminal-pane:not([hidden])")).to_have_count(1)
         assert page.evaluate("activeTab") == AGENT_IDS[4]
         page.locator("#dashboard-tab").click()
@@ -687,7 +691,7 @@ def test_group_tabs_terminals_notifications_dynamic_children_rename_and_delete(s
             f"terminal:{AGENT_IDS[3]}",
         ]
         playwright.expect(
-            page.locator(".tab-group:not(.agent-group-tab):not([hidden])")
+            page.locator(".tab-group:not(.agent-group-tab):not(#browser-tab-group):not([hidden])")
         ).to_have_count(1)
         assert card(page, 3).count() == 1 and card(page, 0).count() == 0
 
@@ -700,11 +704,11 @@ def test_group_tabs_terminals_notifications_dynamic_children_rename_and_delete(s
             f"terminal:{AGENT_IDS[0]}",
         ]
         playwright.expect(
-            page.locator(".tab-group:not(.agent-group-tab):not([hidden])")
+            page.locator(".tab-group:not(.agent-group-tab):not(#browser-tab-group):not([hidden])")
         ).to_have_count(1)
         assert (
             page.locator(
-                '.tab-group:not(.agent-group-tab)[data-status]:not([hidden]) button[aria-label^="Agent 0"]'
+                '.tab-group:not(.agent-group-tab):not(#browser-tab-group)[data-status]:not([hidden]) button[aria-label^="Agent 0"]'
             ).count()
             == 1
         )
@@ -715,7 +719,7 @@ def test_group_tabs_terminals_notifications_dynamic_children_rename_and_delete(s
         playwright.expect(page.locator("#dashboard")).to_be_visible()
         playwright.expect(page.locator("#tabs > .agent-group-tab")).to_have_count(0)
         playwright.expect(
-            page.locator(".tab-group:not(.agent-group-tab):not([hidden])")
+            page.locator(".tab-group:not(.agent-group-tab):not(#browser-tab-group):not([hidden])")
         ).to_have_count(0)
         assert page.locator(".terminal-pane").count() == 2
 
@@ -795,7 +799,7 @@ def test_group_views_and_terminal_tabs_survive_reload(static_url):  # noqa: F811
         assert page.evaluate("selectedAgentGroup") == GROUP_A
         assert page.evaluate("activeTab") == f"agent-group:{GROUP_A}"
         playwright.expect(
-            page.locator(".tab-group:not(.agent-group-tab):not([hidden])")
+            page.locator(".tab-group:not(.agent-group-tab):not(#browser-tab-group):not([hidden])")
         ).to_have_count(1)
         assert page.locator(".terminal-pane").count() == 2
         assert server.projection == projection
@@ -887,7 +891,9 @@ def test_external_family_move_keeps_terminal_and_group_dashboards_safe(static_ur
         playwright.expect(page.locator("#tabs > .agent-group-tab")).to_have_count(0)
         page.get_by_role("button", name="Open group Group B: 4 agents").click()
         expect_group_name(page, "Group B")
-        terminal_tab = page.locator(".tab-group:not(.agent-group-tab):not([hidden])")
+        terminal_tab = page.locator(
+            ".tab-group:not(.agent-group-tab):not(#browser-tab-group):not([hidden])"
+        )
         playwright.expect(terminal_tab).to_have_count(1)
         playwright.expect(page.locator(".agent-group-tab")).to_have_count(1)
         assert visible_workspace_tabs(page) == [

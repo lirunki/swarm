@@ -195,7 +195,7 @@ def test_dense_org_chart_layout_and_interactions(static_url, tmp_path, width):
                 "tmux",
                 "↻ Reconnect",
             ]
-            page.locator(".tab-group .tab-close").click()
+            page.locator(".tab-group:not(#browser-tab-group) .tab-close").click()
             playwright.expect(page.locator("#dashboard")).to_be_visible()
             page.locator('.agent-card[data-agent-id="a0"] .card-toggle').click()
             playwright.expect(
@@ -426,10 +426,10 @@ def test_compact_status_adoption_and_help_controls(static_url, width):
                 title_box = title.bounding_box()
                 assert title_box["width"] <= 1 and title_box["height"] <= 1
                 control = page.locator("#status-filter").bounding_box()
-                create = page.locator("#create-button").bounding_box()
-                assert control["x"] + control["width"] <= create["x"]
-                assert abs(create["y"] - control["y"]) < 1
-                assert abs(create["height"] - control["height"]) < 1
+                add = page.locator("#add-menu-button").bounding_box()
+                assert control["x"] + control["width"] <= add["x"]
+                assert abs(add["y"] - control["y"]) < 1
+                assert abs(add["height"] - control["height"]) < 1
                 playwright.expect(page.locator("#adoption-menu-button")).to_be_hidden()
                 playwright.expect(page.locator("#search")).to_be_hidden()
             assert not page.locator("#collapse-all").count()
@@ -467,13 +467,14 @@ def test_compact_status_adoption_and_help_controls(static_url, width):
                 ("#adopt-button", "#adopt-dialog"),
                 ("#import-grok-button", "#import-grok-dialog"),
             ):
-                page.locator("#create-button").click()
-                playwright.expect(page.locator("#create-dialog")).to_be_visible()
+                page.locator("#add-menu-button").click()
+                playwright.expect(page.locator("#add-menu-options")).to_be_visible()
                 page.locator("#adoption-menu-button").click()
                 playwright.expect(page.locator("#adoption-options")).to_be_visible()
                 page.locator(item).click()
                 playwright.expect(page.locator(dialog)).to_be_visible()
                 playwright.expect(page.locator("#create-dialog")).to_be_hidden()
+                playwright.expect(page.locator("#add-menu-options")).to_be_hidden()
                 playwright.expect(page.locator("#adoption-options")).to_be_hidden()
                 page.locator(dialog + " [data-close]").first.click()
             assert page.locator("#settings-button").inner_text() == "⚙ Settings"
@@ -1052,7 +1053,7 @@ def test_background_creation_stages_fit_compact_tiles_and_terminal_overlay(
             card.locator(".card-terminal").click()
             playwright.expect(page.locator(".terminal-overlay")).to_contain_text("Setup is queued")
             assert not page.locator(".terminal-overlay button:visible").count()
-            page.locator(".tab-group .tab-close").click()
+            page.locator(".tab-group:not(#browser-tab-group) .tab-close").click()
             a["alive"] = True
             a["creation"].update(state="running", stage="Creating worktree…")
             a["activity"] = "Creating worktree…"
@@ -1148,7 +1149,8 @@ def test_workspace_tabs_pin_dashboard_show_status_and_frame_active_title(static_
             )
             tabs = page.locator("#tabs")
             dashboard = page.locator("#dashboard-tab")
-            groups = page.locator(".tab-group")
+            groups = page.locator(".tab-group:not(#browser-tab-group)")
+            playwright.expect(page.locator("#browser-tab-group")).to_be_hidden()
             playwright.expect(groups).to_have_count(18)
             playwright.expect(dashboard).to_have_css("color", "rgb(255, 161, 106)")
             playwright.expect(
