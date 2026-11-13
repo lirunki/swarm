@@ -74,6 +74,7 @@ class RemoteBrowser:
         self._browser_factory = browser_factory
         self._browser: EdgeBrowser | None = None
         self._launch_results: dict[str, dict] = {}
+        self._stop_results: dict[str, dict | None] = {}
         self._lock = threading.RLock()
         self._last_error: str | None = None
 
@@ -236,6 +237,64 @@ class RemoteBrowser:
                     self._launch_results.pop(next(iter(self._launch_results)))
                 self._launch_results[key] = dict(result)
             return result
+
+    def stop(self, request_id: Any) -> dict:
+        """Gracefully stop only the browser identity recorded in dedicated state."""
+        key = str(request_id)
+        with self._lock:
+            if key in self._stop_results:
+                previous = self._stop_results[key]
+                if previous is None:
+                    raise BrowserError(
+                        "Browser stop outcome is uncertain; check status with a new request"
+                    )
+                return dict(previous)
+
+            state = self._read_state()
+            if state is None:
+                self._detach_controls()
+                result = {"running": False, "stopped": False}
+                self._remember_stop(key, result)
+                return result
+            browser_id = state["browser_id"]
+            if browser_id is None:
+                raise BrowserError("Remote browser state has no owned browser identity")
+            try:
+                identity = self._launcher.probe_identity(state["port"])
+            except (RuntimeError, ValueError) as exc:
+                raise BrowserError(str(exc)) from exc
+            if identity is None:
+                self._detach_controls()
+                result = {"running": False, "stopped": False}
+                self._last_error = None
+                self._remember_stop(key, result)
+                return result
+            if identity["browser_id"] != browser_id:
+                self._last_error = f"CDP port {state['port']} belongs to an unowned browser"
+                raise BrowserError(self._last_error)
+
+            # Mark the request before any potentially ambiguous I/O. A retry in this
+            # process must never send Browser.close again, even if a new browser has
+            # since appeared on the retained port.
+            self._remember_stop(key, None)
+            self._detach_controls()
+            try:
+                result = self._launcher.stop_browser(state["port"], browser_id, timeout=5)
+            except (RuntimeError, ValueError, OSError) as exc:
+                raise BrowserError(str(exc)) from exc
+            self._stop_results[key] = dict(result)
+            self._last_error = result.get("error")
+            return result
+
+    def _remember_stop(self, key: str, result: dict | None) -> None:
+        if len(self._stop_results) >= 256:
+            self._stop_results.pop(next(iter(self._stop_results)))
+        self._stop_results[key] = None if result is None else dict(result)
+
+    def _detach_controls(self) -> None:
+        if self._browser is not None:
+            self._browser.close()
+            self._browser = None
 
     @staticmethod
     def _payload(value: Any) -> dict:

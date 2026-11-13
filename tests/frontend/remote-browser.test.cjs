@@ -60,7 +60,7 @@ function fixture(options = {}) {
   const controller = new RemoteBrowserController({query: selector => elements[selector] || null, request,
     currentSwarm: () => source, currentGeneration: () => generation,
     ownerName: value => value === 'local' ? 'Local' : `Peer ${value}`,
-    toast: (...args) => toasts.push(args), confirm: async () => true,
+    toast: (...args) => toasts.push(args), confirm: options.confirm || (() => true),
     onChanged: async (...args) => changes.push(args)});
   return {controller, elements, calls, toasts, changes,
     setStatus(value) { status = value; }, setTabs(value, active) { tabs = value; selected = active; },
@@ -113,6 +113,113 @@ test('owner endpoint and generation are captured and stale late UI results are i
   assert.equal(t.controller.source, 'peer/b');
   assert.equal(t.controller.status, null, 'late peer/a status did not alter peer/b UI');
   assert.equal(t.calls.length, 1, 'late status did not trigger old-owner tabs or screenshot');
+  t.controller.deactivate();
+});
+
+test('launch control toggles labels and a dismissed stop confirmation sends no mutation', async () => {
+  const confirmations = [];
+  const t = fixture({confirm: message => { confirmations.push(message); return false; }});
+  await activate(t);
+  assert.equal(t.elements['#browser-launch'].textContent, 'Stop browser');
+  t.calls.length = 0;
+  assert.equal(await t.controller.toggleLaunch(), false);
+  assert.equal(confirmations.length, 1);
+  assert.match(confirmations[0], /tabs will close.*profile is retained/i);
+  assert.equal(t.calls.some(call => call[1] === 'POST'), false);
+  assert.equal(t.elements['#browser-launch'].textContent, 'Stop browser');
+  t.controller.deactivate();
+});
+
+test('accepted stop captures owner, posts one UUID, blocks double click, clears polling and never launches', async () => {
+  let releaseStop, running = true, screenshots = 0;
+  const stopped = new Promise(resolve => { releaseStop = resolve; });
+  const tabs = [{id: 'tab-a', title: 'A', url: 'https://a.test/'}];
+  const t = fixture({source: 'peer/a', request: async (url, method, body) => {
+    if (url.endsWith('/status')) return {enabled: true, running, state: running ? 'running' : 'stopped'};
+    if (url.endsWith('/tabs')) return {tabs, selected: 'tab-a'};
+    if (url.endsWith('/select')) return {ok: true};
+    if (url.includes('/screenshot?')) { screenshots += 1; return new Blob(['png'], {type: 'image/png'}); }
+    if (url.endsWith('/stop')) { await stopped; running = false; return {running: false, stopped: true}; }
+    throw Error(`unexpected request ${method} ${url} ${JSON.stringify(body)}`);
+  }});
+  assert.equal(await t.controller.activate(), true);
+  assert.equal(t.elements['#browser-launch'].textContent, 'Stop browser');
+  assert.equal(t.controller.displayed, 'tab-a');
+  assert.notEqual(t.controller.timer, null, 'running viewer has a screenshot poll scheduled');
+  t.calls.length = 0;
+
+  const first = t.controller.toggleLaunch(); await tick();
+  const second = await t.controller.toggleLaunch();
+  const stopCalls = t.calls.filter(call => call[0].endsWith('/stop'));
+  const timerWasCleared = t.controller.timer === null;
+  releaseStop();
+  const firstResult = await first;
+  assert.equal(second, false);
+  assert.equal(stopCalls.length, 1, 'an in-flight stop suppresses a double click');
+  assert.deepEqual(stopCalls[0].slice(0, 2), [
+    '/api/federation/peer%2Fa/proxy/api/browser/stop', 'POST',
+  ]);
+  assert.deepEqual(Object.keys(stopCalls[0][2]), ['request_id']);
+  assert.match(stopCalls[0][2].request_id,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  assert.equal(timerWasCleared, true, 'stop immediately cancels screenshot polling');
+
+  assert.equal(firstResult, true);
+  assert.equal(t.calls.filter(call => call[0].endsWith('/stop')).length, 1);
+  assert.equal(t.calls.some(call => call[0].endsWith('/launch')), false, 'stop is never implemented as launch retry');
+  assert.equal(t.controller.displayed, null);
+  assert.equal(t.elements['#browser-screen'].src || '', '');
+  assert.equal(t.elements['#browser-tabs'].children.length, 0);
+  assert.equal(t.elements['#browser-launch'].textContent, 'Launch browser');
+  const afterStop = screenshots; await new Promise(resolve => setTimeout(resolve, 25));
+  assert.equal(screenshots, afterStop, 'stopped browser does not resume screenshot polling');
+  assert.equal(t.changes.length, 1);
+  assert.equal(t.changes[0][1].operation, 'browser-stop');
+  t.controller.deactivate();
+});
+
+test('failed stop reports its uncertain UUID once and does not retry or launch', async () => {
+  const unavailable = Error('stop transport unavailable');
+  const t = fixture({request: async url => {
+    if (url.endsWith('/status')) return {enabled: true, running: true, state: 'running'};
+    if (url.endsWith('/tabs')) return {tabs: [], selected: null};
+    if (url.endsWith('/stop')) throw unavailable;
+    return {ok: true};
+  }});
+  await t.controller.activate(); t.calls.length = 0;
+  assert.equal(await t.controller.stop(), false);
+  const stops = t.calls.filter(call => call[0].endsWith('/stop'));
+  assert.equal(stops.length, 1);
+  assert.match(stops[0][2].request_id,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  assert.equal(t.calls.some(call => call[0].endsWith('/launch')), false);
+  assert.equal(t.toasts.length, 1);
+  assert.match(t.toasts[0][0], /stop transport unavailable.*Request ID [0-9a-f-]{36}/i);
+  assert.equal(t.toasts[0][1], true);
+  t.controller.deactivate();
+});
+
+test('a late stop response cannot mutate the newly selected owner', async () => {
+  let releaseStop;
+  const pending = new Promise(resolve => { releaseStop = resolve; });
+  const t = fixture({source: 'peer/a', request: async url => {
+    if (url.endsWith('/status')) return {enabled: true, running: true, state: 'running'};
+    if (url.endsWith('/tabs')) return {tabs: [], selected: null};
+    if (url.endsWith('/stop')) return pending;
+    return {ok: true};
+  }});
+  await t.controller.activate(); t.calls.length = 0;
+  const stopping = t.controller.stop(); await tick();
+  assert.equal(t.calls[0][0], '/api/federation/peer%2Fa/proxy/api/browser/stop');
+  t.switchSource('peer/b');
+  releaseStop({running: false, stopped: true});
+  assert.equal(await stopping, false);
+  assert.equal(t.controller.source, 'peer/b');
+  assert.equal(t.controller.status, null);
+  assert.equal(t.elements['#browser-owner'].textContent, 'Owning server: Peer peer/b');
+  assert.equal(t.elements['#browser-launch'].textContent, 'Launch browser');
+  assert.equal(t.changes.length, 0);
+  assert.equal(t.calls.length, 1, 'late completion does not refresh or mutate the new owner');
   t.controller.deactivate();
 });
 

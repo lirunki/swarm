@@ -537,18 +537,28 @@ def create_app(
         require_browser_operator(request)
         return await asyncio.to_thread(app.state.remote_browser.status)
 
-    @app.post("/api/browser/launch")
-    async def launch_browser(request: Request):
-        require_browser_operator(request)
+    async def browser_request_id(request: Request) -> str:
         body = await bounded_json(request, 2048)
         if set(body) != {"request_id"}:
             raise ValueError("request_id is required")
         try:
-            request_id = str(UUID(body["request_id"]))
+            return str(UUID(body["request_id"]))
         except (ValueError, TypeError, AttributeError):
             raise ValueError("request_id must be a UUID") from None
+
+    @app.post("/api/browser/launch")
+    async def launch_browser(request: Request):
+        require_browser_operator(request)
+        request_id = await browser_request_id(request)
         async with browser_settings_lock:
             return await asyncio.to_thread(app.state.remote_browser.launch, request_id)
+
+    @app.post("/api/browser/stop")
+    async def stop_browser(request: Request):
+        require_browser_operator(request)
+        request_id = await browser_request_id(request)
+        async with browser_settings_lock:
+            return await asyncio.to_thread(app.state.remote_browser.stop, request_id)
 
     @app.get("/api/browser/{action}")
     async def browser_read(action: str, request: Request):

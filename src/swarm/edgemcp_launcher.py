@@ -272,6 +272,55 @@ def probe(port: int, timeout: float = 1) -> str | None:
     return identity["browser"] if identity else None
 
 
+def stop_browser(port: int, browser_id: str, timeout: float = 5) -> dict:
+    """Gracefully close one verified browser-level CDP endpoint."""
+    port = _validate_port(port)
+    try:
+        browser_id = str(UUID(browser_id))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ValueError("Expected browser ID must be a UUID") from exc
+    if timeout <= 0:
+        raise ValueError("Stop timeout must be positive")
+
+    identity = probe_identity(port)
+    if identity is None:
+        return {"running": False, "stopped": False}
+    if identity["browser_id"] != browser_id:
+        raise RuntimeError(f"CDP port {port} belongs to a different browser")
+
+    # websocket-client is already a pychrome dependency. Keep it lazy so status and
+    # disabled configurations do not import browser-control dependencies.
+    import websocket
+
+    endpoint = f"ws://127.0.0.1:{port}/devtools/browser/{browser_id}"
+    connection = websocket.create_connection(
+        endpoint,
+        timeout=timeout,
+        suppress_origin=True,
+        http_proxy_host=None,
+    )
+    try:
+        connection.send(json.dumps({"id": 1, "method": "Browser.close", "params": {}}))
+    finally:
+        connection.close()
+
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("Browser stop could not be confirmed; retry status before acting")
+        identity = probe_identity(port, timeout=min(1, remaining))
+        if identity is None:
+            return {"running": False, "stopped": True}
+        if identity["browser_id"] != browser_id:
+            return {
+                "running": False,
+                "stopped": True,
+                "error": "The stopped browser's CDP port now belongs to a different browser",
+            }
+        time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+
+
 def launch(
     port: int,
     *,

@@ -307,13 +307,21 @@ def test_native_remote_browser_lifecycle_controls_and_navigation(
         assert remote.request("close", {"target_id": history_target}) == {"ok": True}
         assert all(tab["id"] != history_target for tab in remote.request("tabs")["tabs"])
 
-        remote.close()
-        assert owned_process.poll() is None
-        edgemcp_launcher._ATTEMPTS.pop(owned_key, None)
-        edgemcp_launcher._READY.discard(owned_key)
+        old_browser_id = state["browser_id"]
+        stopped = remote.stop(uuid4())
+        assert stopped == {"running": False, "stopped": True}
+        owned_process.wait(timeout=10)
+        assert owned_process.poll() is not None
+        assert remote.profile.is_dir()
+        assert marker.read_text(encoding="utf-8") == "personal data"
+
         restarted = RemoteBrowser(home, settings)
-        assert restarted.status()["running"] is True
-        assert restarted.launch(uuid4())["started"] is False
+        relaunched = restarted.launch(uuid4())
+        assert relaunched["running"] is True
+        assert relaunched["started"] is True
+        new_state = restarted._read_state()
+        assert new_state is not None and new_state["browser_id"] != old_browser_id
+        owned_process = edgemcp_launcher._ATTEMPTS[owned_key]
         assert restarted.request("tabs")["tabs"]
         restarted.close()
         assert owned_process.poll() is None

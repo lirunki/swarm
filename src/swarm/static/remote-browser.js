@@ -83,7 +83,7 @@
     }
 
     bind() {
-      listen(this.nodes.launch, 'click', () => void this.launch());
+      listen(this.nodes.launch, 'click', () => void this.toggleLaunch());
       listen(this.nodes['refresh-tabs'], 'click', () => void this.refreshConnection());
       for (const action of ['back', 'forward', 'reload'])
         listen(this.nodes[action], 'click', () => void this.navigate(action));
@@ -131,7 +131,7 @@
       if (source !== this.source || generation !== this.generation) {
         this.lifecycle += 1; this.clearQueue(); this.clearImage();
         this.tabs = []; this.selected = null; this.status = null; this.connectionBlocked = false;
-        this.source = source; this.generation = generation;
+        this.source = source; this.generation = generation; this.lifecycleBusy=false;
       }
       if (state && typeof state === 'object') this.status = state;
       this.render();
@@ -151,7 +151,11 @@
           state.running ? `${this.tabs.length} tab(s)` :
             state.state === 'error' ? `Browser error${state.error ? `: ${state.error}` : ''}` : 'Browser stopped';
       text(this.nodes.status, label);
-      if (this.nodes.launch) this.nodes.launch.disabled = !state?.enabled || !!state?.running;
+      if (this.nodes.launch) {
+        this.nodes.launch.disabled = !!this.lifecycleBusy || (!state?.running && !state?.enabled);
+        this.nodes.launch.textContent = this.lifecycleBusy ? 'Please wait…' : state?.running ? 'Stop browser' : 'Launch browser';
+        this.nodes.launch.classList?.toggle('danger',!!state?.running);
+      }
       const disabled = !state?.running || this.connectionBlocked;
       for (const id of ['back', 'forward', 'reload', 'copy', 'paste', 'new'])
         if (this.nodes[id]) this.nodes[id].disabled = disabled || (id !== 'new' && !this.selected);
@@ -184,7 +188,7 @@
     schedule() {
       if (this.timer !== null) root.clearTimeout(this.timer);
       this.timer = null;
-      if (!this.active || this.disposed || this.paused) return;
+      if (!this.active || this.disposed || this.paused || this.lifecycleBusy || !this.status?.running) return;
       const scope = this.scope();
       this.timer = root.setTimeout(async () => {
         this.timer = null;
@@ -205,9 +209,35 @@
       }
     }
 
+    async toggleLaunch() { return this.status?.running ? this.stop() : this.launch(); }
+
+    async stop() {
+      if(this.disposed || this.lifecycleBusy || !this.status?.running)return false;
+      this.setContext();const scope=this.scope();
+      if(!this.confirm(`Stop the dedicated browser on ${this.ownerName(scope.source)}? All its page tabs will close. Unsaved page work may be lost; the profile is retained.`))return false;
+      if(!this.valid(scope) || !this.status?.running)return false;
+      this.lifecycleBusy=true;this.clearQueue();this.render();
+      if(this.timer!==null)root.clearTimeout(this.timer);this.timer=null;
+      let id,timer;
+      try {
+        id=requestId();
+        const timed=new Promise((_,reject)=>{timer=root.setTimeout(()=>reject(Error(`Stop outcome uncertain. Do not retry blindly. Request ID ${id}`)),REQUEST_TIMEOUT);});
+        const result=await Promise.race([this.call(scope,'stop','POST',{request_id:id}),timed]);
+        if(!this.valid(scope))return false;
+        if(!result || result.running!==false)throw Error(`Stop was not confirmed. Request ID ${id}`);
+        this.tabs=[];this.selected=null;this.clearImage();this.renderTabs();
+        await this.refreshStatus(scope);
+        if(this.valid(scope))await this.onChanged(this.status,{...scope,operation:'browser-stop'});
+        return this.valid(scope);
+      } catch(error) {
+        if(this.valid(scope)){this.connectionBlocked=true;this.toast(`${error?.message||error}. Request ID ${id}`,true);}
+        return false;
+      } finally {root.clearTimeout(timer);if(this.valid(scope)){this.lifecycleBusy=false;this.render();this.schedule();}}
+    }
+
     async launch() {
-      if (this.disposed) return false;
-      this.setContext(); const scope = this.scope();
+      if (this.disposed || this.lifecycleBusy) return false;
+      this.setContext(); const scope = this.scope();this.lifecycleBusy=true;this.render();
       try {
         await this.call(scope, 'launch', 'POST', {request_id: requestId()});
         if (!this.valid(scope)) return false;
@@ -219,7 +249,7 @@
       } catch (error) {
         if (this.valid(scope)) this.toast(error?.message || String(error), true);
         return false;
-      }
+      } finally {if(this.valid(scope)){this.lifecycleBusy=false;this.render();}}
     }
 
     async refreshConnection() {

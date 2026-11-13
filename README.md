@@ -820,9 +820,12 @@ Timeouts are not cancellation and commands are never blindly retried.
 - A screenshot is limited to 8 MiB, a command to 16 KiB, and inserted text to 4096
   characters per request. Clipboard selection is plain text; file uploads/download
   bridging, audio/video streaming, and security-key forwarding are not implemented.
-- The embedded browser remains open when Swarm exits. Close that dedicated browser
-  normally on the owning host when finished. Do not delete its profile while it is
-  running. There is intentionally no new process-killing controller.
+- The embedded browser remains open when Swarm exits or the Browser tab closes.
+  While it is running, **Launch browser** becomes **Stop browser**. Stop asks for
+  confirmation and gracefully closes only the verified dedicated browser and its
+  page tabs; unsaved page work may be lost, but the profile/cookies remain.
+  No PID-based killing is used. A timeout is uncertain and is never automatically
+  retried against a newly launched browser. Do not delete its profile while running.
 - Native Edge/Chromium must be installed. The Python dependency `pychrome` is
   installed with Swarm; importing/running a disabled controller does not attach it.
   Headless mode works on a server with the necessary browser runtime libraries.

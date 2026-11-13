@@ -19,6 +19,7 @@ class FakeRemoteBrowser:
         self.running = False
         self.status_calls = 0
         self.launch_calls = []
+        self.stop_calls = []
         self.request_calls = []
         self.close_calls = 0
 
@@ -35,6 +36,12 @@ class FakeRemoteBrowser:
         self.launch_calls.append(request_id)
         self.running = True
         return {"running": True, "started": True, "browser": "Chromium/Fake"}
+
+    def stop(self, request_id):
+        self.stop_calls.append(request_id)
+        stopped = self.running
+        self.running = False
+        return {"running": False, "stopped": stopped}
 
     def request(self, action, body=None, query=None):
         self.request_calls.append((action, body, query))
@@ -287,6 +294,54 @@ def test_launch_requires_exact_uuid_only_body_and_passes_canonical_id(tmp_path):
     assert fake.launch_calls == [str(UUID(str(request_id).upper()))]
 
 
+def test_stop_requires_exact_uuid_only_body_and_passes_canonical_id(tmp_path):
+    app, fake = app_with_fake(tmp_path)
+    request_id = uuid4()
+    invalid = [
+        {},
+        {"request_id": "not-a-uuid"},
+        {"request_id": str(request_id), "action": "close"},
+    ]
+    with TestClient(app) as client:
+        for body in invalid:
+            assert client.post("/api/browser/stop", json=body).status_code == 400
+        response = client.post(
+            "/api/browser/stop", json={"request_id": str(request_id).upper()}
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"running": False, "stopped": False}
+    assert fake.stop_calls == [str(UUID(str(request_id).upper()))]
+    assert fake.request_calls == []
+
+
+def test_stop_requires_owner_auth_and_same_origin(tmp_path):
+    app, fake = app_with_fake(tmp_path, protected=True)
+    body = {"request_id": str(uuid4())}
+    with TestClient(app, client=("127.0.0.1", 10000)) as client:
+        service = app.state.access.service_file.read_text(encoding="utf-8").strip()
+        assert client.post("/api/browser/stop", json=body).status_code == 401
+        assert client.post(
+            "/api/browser/stop",
+            json=body,
+            headers={"Authorization": "Bearer " + service},
+        ).status_code == 403
+        owner = login(client)
+        assert client.post(
+            "/api/browser/stop",
+            json=body,
+            headers=owner | {"Origin": "https://evil.example"},
+        ).status_code == 403
+        accepted = client.post(
+            "/api/browser/stop",
+            json=body,
+            headers=owner | {"Origin": "http://testserver"},
+        )
+
+    assert accepted.status_code == 200
+    assert fake.stop_calls == [body["request_id"]]
+
+
 def test_launch_request_body_is_bounded_and_must_be_json_object(tmp_path):
     app, fake = app_with_fake(tmp_path)
     with TestClient(app) as client:
@@ -393,10 +448,10 @@ def test_browser_api_keeps_security_headers_and_csp_blob_images(tmp_path):
     assert "frame-ancestors 'none'" in csp
 
 
-def test_app_disposal_detaches_fake_but_stop_api_does_not_exist(tmp_path):
+def test_app_disposal_detaches_fake_without_implicitly_stopping(tmp_path):
     app, fake = app_with_fake(tmp_path)
-    with TestClient(app) as client:
-        response = client.post("/api/browser/stop", json={})
-        assert response.status_code == 400
+    with TestClient(app):
         assert fake.close_calls == 0
+        assert fake.stop_calls == []
     assert fake.close_calls == 1
+    assert fake.stop_calls == []

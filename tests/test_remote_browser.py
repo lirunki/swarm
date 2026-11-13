@@ -19,6 +19,8 @@ class FakeLauncher:
         self.version = None
         self.browser_id = None
         self.next_browser_id = "11111111-1111-4111-8111-111111111111"
+        self.stops = []
+        self.stop_error = None
 
     def probe(self, port):
         identity = self.probe_identity(port)
@@ -43,6 +45,17 @@ class FakeLauncher:
             "browser": self.version,
             "browser_id": self.browser_id,
         }
+
+    def stop_browser(self, port, browser_id, timeout=5):
+        self.stops.append((port, browser_id, timeout))
+        if self.stop_error is not None:
+            raise RuntimeError(self.stop_error)
+        if self.version is not None and self.browser_id != browser_id:
+            raise RuntimeError("CDP port belongs to a different browser")
+        stopped = self.version is not None
+        self.version = None
+        self.browser_id = None
+        return {"running": False, "stopped": stopped}
 
 
 class Domain:
@@ -313,6 +326,39 @@ def test_remote_web_route_validation_is_bounded_and_fixed(harness):
         remote.request("eval", {"target_id": "page-1", "expression": "document.cookie"})
 
 
+def test_stop_helper_sends_browser_close_on_verified_browser_websocket(monkeypatch):
+    browser_id = "88888888-8888-4888-8888-888888888888"
+    identity = {"browser": "Chromium/123", "browser_id": browser_id}
+    probes = iter([identity, None])
+    sent = []
+
+    class Connection:
+        def send(self, payload):
+            sent.append(json.loads(payload))
+
+        def close(self):
+            sent.append("closed")
+
+    connections = []
+
+    def connect(url, **options):
+        connections.append((url, options))
+        return Connection()
+
+    monkeypatch.setattr(edgemcp_launcher, "probe_identity", lambda port, timeout=1: next(probes))
+    import websocket
+    monkeypatch.setattr(websocket, "create_connection", connect)
+
+    assert edgemcp_launcher.stop_browser(49150, browser_id) == {
+        "running": False, "stopped": True,
+    }
+    assert connections == [(
+        f"ws://127.0.0.1:49150/devtools/browser/{browser_id}",
+        {"timeout": 5, "suppress_origin": True, "http_proxy_host": None},
+    )]
+    assert sent == [{"id": 1, "method": "Browser.close", "params": {}}, "closed"]
+
+
 def test_launcher_keeps_one_attempt_and_accepts_chromium(tmp_path, monkeypatch):
     executable = tmp_path / "chromium"
     executable.write_bytes(b"\x7fELFfake")
@@ -355,6 +401,80 @@ def test_launcher_keeps_one_attempt_and_accepts_chromium(tmp_path, monkeypatch):
     assert "--headless=new" in command
     assert "DevToolsActivePort" not in " ".join(command)
     assert options["shell"] is False
+
+
+def test_stop_detaches_controls_and_closes_only_the_owned_browser(harness):
+    remote, launcher, pychrome = harness
+    remote.launch()
+    remote.request("select", {"target_id": "page-1"})
+
+    result = remote.stop("stop-owned")
+
+    assert result == {"running": False, "stopped": True}
+    assert pychrome.tabs["page-1"].stopped is True
+    assert len(launcher.stops) == 1
+    assert launcher.stops[0][1] == "11111111-1111-4111-8111-111111111111"
+    assert remote.profile.exists()
+
+
+def test_stop_uses_owned_state_even_if_configuration_was_disabled(harness):
+    remote, launcher, _ = harness
+    remote.launch()
+    remote.settings["enabled"] = False
+
+    assert remote.status()["running"] is False
+    assert remote.stop("disabled-but-owned") == {"running": False, "stopped": True}
+    assert len(launcher.stops) == 1
+
+
+def test_stop_already_off_is_idempotent_without_dispatch(harness):
+    remote, launcher, _ = harness
+    remote.launch()
+    launcher.version = None
+    launcher.browser_id = None
+
+    first = remote.stop("already-off")
+    again = remote.stop("already-off")
+
+    assert first == again == {"running": False, "stopped": False}
+    assert launcher.stops == []
+
+
+def test_stop_foreign_identity_never_dispatches(harness):
+    remote, launcher, _ = harness
+    remote.launch()
+    launcher.browser_id = "33333333-3333-4333-8333-333333333333"
+
+    with pytest.raises(BrowserError, match="unowned browser"):
+        remote.stop("foreign")
+
+    assert launcher.stops == []
+
+
+def test_stop_receipt_cannot_stop_a_new_browser_on_exact_retry(harness):
+    remote, launcher, _ = harness
+    remote.launch()
+    stopped = remote.stop("stable-stop-request")
+    launcher.version = "Chromium/New"
+    launcher.browser_id = "55555555-5555-4555-8555-555555555555"
+
+    assert remote.stop("stable-stop-request") == stopped
+    assert len(launcher.stops) == 1
+    assert launcher.version == "Chromium/New"
+
+
+def test_uncertain_stop_is_never_automatically_resent(harness):
+    remote, launcher, _ = harness
+    remote.launch()
+    launcher.stop_error = "Browser stop could not be confirmed"
+
+    with pytest.raises(BrowserError, match="could not be confirmed"):
+        remote.stop("uncertain-stop")
+    launcher.stop_error = None
+    with pytest.raises(BrowserError, match="outcome is uncertain"):
+        remote.stop("uncertain-stop")
+
+    assert len(launcher.stops) == 1
 
 
 def test_foreign_browser_identity_refuses_status_launch_and_controls(harness):

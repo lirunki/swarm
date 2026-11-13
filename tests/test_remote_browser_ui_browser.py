@@ -167,6 +167,11 @@ class BrowserUIAPI:
         elif endpoint == "/api/browser/launch":
             assert UUID.fullmatch(body["request_id"])
             assert self.settings[owner]["enabled"]
+            if not self.tabs[owner]:
+                self.tabs[owner] = [
+                    {"id": "tab-relaunched", "title": "New browser", "url": "about:blank"}
+                ]
+                self.selected[owner] = "tab-relaunched"
             self.statuses[owner] = {
                 "enabled": True,
                 "running": True,
@@ -174,6 +179,14 @@ class BrowserUIAPI:
                 "error": None,
             }
             value = {"running": True, "started": True}
+        elif endpoint == "/api/browser/stop":
+            assert list(body) == ["request_id"]
+            assert UUID.fullmatch(body["request_id"])
+            was_running = self.statuses[owner]["running"]
+            self.statuses[owner].update(running=False, state="stopped", error=None)
+            self.tabs[owner] = []
+            self.selected[owner] = None
+            value = {"running": False, "stopped": was_running}
         elif endpoint == "/api/browser/tabs":
             value = {"tabs": copy.deepcopy(self.tabs[owner]), "selected": self.selected[owner]}
         elif endpoint == "/api/browser/select":
@@ -311,8 +324,14 @@ def test_remote_browser_full_ui_flow_is_responsive_and_http_only(static_url, wid
             assert page.evaluate("document.body.scrollWidth <= innerWidth")
             assert api.count("/api/browser/launch", method="POST") == 0
 
+            playwright.expect(page.locator("#browser-launch")).to_have_text("Launch browser")
             page.locator("#browser-launch").click()
             playwright.expect(page.locator("#browser-screen")).to_be_visible()
+            playwright.expect(page.locator("#browser-launch")).to_have_text("Stop browser")
+            launch_button_box = page.locator("#browser-launch").bounding_box()
+            assert launch_button_box
+            assert launch_button_box["x"] >= 0
+            assert launch_button_box["x"] + launch_button_box["width"] <= width
             launch = api.bodies("/api/browser/launch")[-1]
             assert list(launch) == ["request_id"] and UUID.fullmatch(launch["request_id"])
             playwright.expect(page.locator("#browser-interval")).to_have_value("2")
@@ -368,6 +387,30 @@ def test_remote_browser_full_ui_flow_is_responsive_and_http_only(static_url, wid
             assert not any(
                 "/ws/browser" in url.lower() for url in page.evaluate("window.__socketURLs")
             )
+
+            stops = api.count("/api/browser/stop", method="POST")
+            page.once("dialog", lambda dialog: dialog.dismiss())
+            page.locator("#browser-launch").click()
+            playwright.expect(page.locator("#browser-launch")).to_have_text("Stop browser")
+            assert api.count("/api/browser/stop", method="POST") == stops
+
+            page.once("dialog", lambda dialog: dialog.accept())
+            page.locator("#browser-launch").click()
+            playwright.expect(page.locator("#browser-launch")).to_have_text("Launch browser")
+            playwright.expect(page.locator("#browser-status")).to_have_text("Browser stopped")
+            playwright.expect(page.locator("#browser-screen")).to_be_hidden()
+            playwright.expect(page.locator("#browser-tabs button")).to_have_count(0)
+            assert api.count("/api/browser/stop", method="POST") == stops + 1
+            stop = api.bodies("/api/browser/stop")[-1]
+            assert list(stop) == ["request_id"] and UUID.fullmatch(stop["request_id"])
+            assert api.count("/api/browser/launch", method="POST") == 1
+
+            page.locator("#notifications-button").click()
+            page.get_by_role("button", name="Settings", exact=True).click()
+            if section.get_attribute("open") is None:
+                section.locator("summary").click()
+            playwright.expect(section.locator("#browser-enabled")).to_be_enabled()
+            playwright.expect(section.locator("#browser-headless")).to_be_enabled()
             assert not errors
             context.close()
         finally:
@@ -427,6 +470,8 @@ def test_polling_pause_deactivate_close_and_late_owner_results_are_guarded(stati
             context, page, errors, _ = open_page(browser, api, static_url)
             open_browser(page)
             playwright.expect(page.locator("#browser-screen")).to_be_visible()
+            playwright.expect(page.locator("#browser-launch")).to_have_text("Stop browser")
+            playwright.expect(page.locator("#browser-launch")).to_be_enabled()
             page.locator("#browser-interval").fill("0.25")
             page.locator("#browser-interval").dispatch_event("change")
             screenshots = api.count("/api/browser/screenshot")
