@@ -123,9 +123,7 @@ class Controller:
         entries.append(entry)
         agent_limits = self.state.get("agent_limits")
         if isinstance(agent_limits, dict):
-            agent_limits = agent_limits | {
-                "active_managed": count_active_entries(entries)
-            }
+            agent_limits = agent_limits | {"active_managed": count_active_entries(entries)}
         self.state = self.state | {
             "agents": entries,
             "agent_limits": agent_limits,
@@ -186,6 +184,10 @@ class Controller:
         try:
             from .sessions import Sessions
 
+            if agent.parent_id:
+                from .orchestration import reconcile_child_branch
+
+                agent = reconcile_child_branch(self, agent)
             require_not_busy(agent)
             if restart_id is None:
                 require_not_restarting(agent)
@@ -220,6 +222,10 @@ class Controller:
             self.restarts.recover()
             agents, record_errors = self.store.scan_with_errors()
             for agent in agents:
+                if f"{agent.id}.md" not in record_errors and agent.parent_id:
+                    from .orchestration import reconcile_child_branch
+
+                    agent = reconcile_child_branch(self, agent)
                 if restarting(agent):
                     self.restarts.guard(agent)
                     continue
@@ -248,6 +254,15 @@ class Controller:
                     continue
                 if agent.status == Status.dormant:
                     continue
+                if agent.parent_id:
+                    from .orchestration import verify_workspace
+
+                    try:
+                        verify_workspace(agent)
+                    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                        if not self.processes.alive(agent):
+                            self.store.update(agent.id, {"last_error": str(exc)[:4096]})
+                        continue
                 if self.processes.alive(agent):
                     continue  # server restart != reboot; don't inject a duplicate prompt
                 prompt = resume_prompt(agent) if agent.status == Status.running else None
@@ -259,6 +274,10 @@ class Controller:
     ) -> Agent:
         with self.lock:
             agent = self.store.get(agent_id)
+            if agent.parent_id:
+                from .orchestration import reconcile_child_branch
+
+                agent = reconcile_child_branch(self, agent)
             require_not_busy(agent)
             require_not_restarting(agent)
             if not agent.managed:
@@ -505,10 +524,8 @@ class Controller:
             except (OSError, ValueError):
                 notifications = {"count": 0, "revision": None}
                 errors["notifications.json"] = "Notifications could not be read"
-            agent_groups, grouping_settings, agent_groups_error = (
-                self.groups.refresh_with_settings(
-                    agents, records_valid=not record_errors
-                )
+            agent_groups, grouping_settings, agent_groups_error = self.groups.refresh_with_settings(
+                agents, records_valid=not record_errors
             )
             if agent_groups_error:
                 errors["groups.json"] = agent_groups_error

@@ -629,6 +629,27 @@ keyboards without the software keyboard do not show the accessory bar.
 This uses the existing terminal WebSocket/PTY transport, including remote terminals.
 Refresh the page after updating; no backend restart is needed.
 
+### Child branch recovery after controller restart
+
+A child may continue on a newer PR branch in the same worktree. If Git and the
+agent's recorded `branch` both name that newer branch, but the saved launch binding
+still names its initial branch, startup now reconciles that **recorded transition**.
+The original branch and a bounded recovery audit remain in the agent record.
+
+This requires the same registered worktree and Git common directory, a matching
+private session identity/CWD, readable ownership records, and no live or external
+Pi process using that workspace. It never checks out a branch or rewrites history.
+Unrecorded checkout changes, moved worktrees, detached HEAD, shared sessions and
+active maintenance/restart/stop reservations remain blocked for explicit repair.
+
+Recovery preserves status, timers and `auto_resume`: disabled recovery never wakes
+an agent. Previously authorized automatic recovery can proceed after validation.
+Explicit Wake and launch preflight run the same check, so a recorded branch update
+does not need manual launch-binding edits or another restart. Done agents remain
+untouched. A rejected startup launch keeps a visible reason instead of hiding the
+failure. This does not approve a PR, change the goal, or bypass unrelated launch
+guards.
+
 ### Per-Swarm active-agent capacity
 
 Open **bell → Notifications → Settings → Selected Swarm → Active-agent limit**, select

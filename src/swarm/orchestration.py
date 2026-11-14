@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import stat
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path, PureWindowsPath
@@ -89,6 +90,9 @@ def git(folder: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+BRANCH_DRIFT_ERROR = "Child worktree branch changed; refusing to launch"
+
+
 def verify_workspace(agent: Agent) -> None:
     if not agent.parent_id:
         return
@@ -98,7 +102,7 @@ def verify_workspace(agent: Agent) -> None:
         raise RuntimeError("Child worktree path changed; refusing to launch")
     branch = getattr(agent, "spawn_branch", agent.branch)
     if git(folder, "branch", "--show-current") != branch:
-        raise RuntimeError("Child worktree branch changed; refusing to launch")
+        raise RuntimeError(BRANCH_DRIFT_ERROR)
     common = local_path(git(folder, "rev-parse", "--path-format=absolute", "--git-common-dir"))
     if common != local_path(agent.spawn_git_common):
         raise RuntimeError("Child repository identity changed; refusing to launch")
@@ -109,6 +113,151 @@ def verify_workspace(agent: Agent) -> None:
     ]
     if expected not in registered:
         raise RuntimeError("Child worktree is no longer registered")
+
+
+def _session_identity(agent: Agent) -> tuple[Path, str, Path]:
+    if not agent.session_file or not agent.session_id:
+        raise ValueError("Child session identity is incomplete")
+    path = local_path(agent.session_file)
+    info = path.lstat()
+    if path.is_symlink() or not stat.S_ISREG(info.st_mode):
+        raise ValueError("Child session is not a regular file")
+    with path.open(encoding="utf-8") as stream:
+        header = json.loads(stream.readline(65536))
+    if not isinstance(header, dict) or header.get("type") != "session":
+        raise ValueError("Child session header is invalid")
+    if str(header.get("id", "")) != agent.session_id:
+        raise ValueError("Child session ID changed")
+    cwd = header.get("cwd")
+    if not isinstance(cwd, str) or local_path(cwd) != local_path(agent.spawn_workspace):
+        raise ValueError("Child session workspace changed")
+    return path.resolve(), agent.session_id, local_path(agent.spawn_workspace)
+
+
+def reconcile_child_branch(controller: Controller, agent: Agent) -> Agent:
+    """Accept only a stopped child's already-recorded branch transition.
+
+    This repairs launch identity metadata; it never changes Git state or infers identity
+    from the checkout alone. Any failed proof leaves the record untouched.
+    """
+    store = controller.store
+    if (
+        not agent.parent_id
+        or not agent.managed
+        or agent.backend != "pi"
+        or agent.spawn_state != "ready"
+        or not agent.branch
+        or agent.branch == getattr(agent, "spawn_branch", agent.branch)
+    ):
+        return agent
+    try:
+        agents, errors = store.scan_with_errors()
+        if errors:
+            return store.get(agent.id)
+        scanned = next((item for item in agents if item.id == agent.id), None)
+        if scanned is None:
+            return store.get(agent.id)
+        source, session_id, expected = _session_identity(scanned)
+        for other in agents:
+            if other.id == scanned.id:
+                continue
+            other_source = local_path(other.session_file).resolve() if other.session_file else None
+            imported = getattr(other, "import_source", None)
+            if (
+                (other.session_id and other.session_id == session_id)
+                or other_source == source
+                or (
+                    imported
+                    and (
+                        imported.session_id == session_id
+                        or local_path(imported.session_file).resolve() == source
+                    )
+                )
+            ):
+                return store.get(agent.id)
+
+        def repair(current: Agent) -> dict | None:
+            if (
+                current.id != scanned.id
+                or current.session_id != scanned.session_id
+                or current.session_file != scanned.session_file
+                or not current.managed
+                or current.backend != "pi"
+                or not current.parent_id
+                or current.spawn_state != "ready"
+                or current.status == Status.done
+                or busy(current)
+                or getattr(current, "restart_job_id", None)
+                or getattr(current, "stop_pending", False)
+                or getattr(current, "orchestration_stop", None)
+            ):
+                return None
+            current_source, current_session, current_expected = _session_identity(current)
+            if (current_source, current_session, current_expected) != (
+                source,
+                session_id,
+                expected,
+            ):
+                return None
+            folder = local_path(current.folder)
+            if folder != expected or local_path(current.spawn_workspace) != expected:
+                return None
+            if local_path(git(folder, "rev-parse", "--show-toplevel")) != expected:
+                return None
+            common = local_path(
+                git(folder, "rev-parse", "--path-format=absolute", "--git-common-dir")
+            )
+            if not getattr(current, "spawn_git_common", None) or common != local_path(
+                current.spawn_git_common
+            ):
+                return None
+            registered = {
+                local_path(line[9:])
+                for line in git(folder, "worktree", "list", "--porcelain").splitlines()
+                if line.startswith("worktree ")
+            }
+            actual = git(folder, "branch", "--show-current")
+            previous = getattr(current, "spawn_branch", "")
+            if (
+                expected not in registered
+                or not actual
+                or actual != current.branch
+                or actual == previous
+            ):
+                return None
+            if controller.processes.alive(current):
+                return None
+            from .sessions import running_pi_folders
+
+            running = running_pi_folders()
+            if any(value is None or local_path(value) == expected for value in running):
+                return None
+            event = {
+                "previous_branch": previous,
+                "current_branch": actual,
+                "workspace": str(expected),
+                "verified_at": now().isoformat(),
+                "reason": "recorded branch transition",
+            }
+            prior = getattr(current, "workspace_recovery", None)
+            transitions = list(prior.get("transitions", [])) if isinstance(prior, dict) else []
+            recovery = event | {"transitions": (transitions + [event])[-16:]}
+            fields = {
+                "spawn_branch": actual,
+                "original_spawn_branch": getattr(current, "original_spawn_branch", previous),
+                "workspace_recovery": recovery,
+            }
+            if current.last_error == BRANCH_DRIFT_ERROR:
+                fields["last_error"] = None
+            return fields
+
+        repaired = store.transition(agent.id, repair)
+        return repaired if repaired is not None else store.get(agent.id)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+        try:
+            return store.get(agent.id)
+        except (OSError, ValueError):
+            return agent
 
 
 class OwnershipError(ValueError):
