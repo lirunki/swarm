@@ -89,12 +89,12 @@ test('activation lists multiple instances, restores a selection, and never auto-
 
 test('connect revalidates ownership/running and uses instance-scoped viewer HTTP', async () => {
   const t = viewerFixture({source: 'peer/a'}); await activateAndConnect(t);
-  assert.deepEqual(t.calls.slice(0, 5).map(call => [call[0].replace(/&t=\d+$/, '&t=*'), call[1], call[3]]), [
+  assert.deepEqual(t.calls.slice(0, 5).map(call => [call[0], call[1], call[3]]), [
     ['/api/federation/peer%2Fa/proxy/api/browser/instances', 'GET', false],
     ['/api/federation/peer%2Fa/proxy/api/browser/instances', 'GET', false],
     [`/api/federation/peer%2Fa/proxy/api/browser/instances/${A}/tabs`, 'GET', false],
     [`/api/federation/peer%2Fa/proxy/api/browser/instances/${A}/select`, 'POST', false],
-    [`/api/federation/peer%2Fa/proxy/api/browser/instances/${A}/screenshot?target_id=page-a&t=*`, 'GET', true],
+    [`/api/federation/peer%2Fa/proxy/api/browser/instances/${A}/screenshot?target_id=page-a`, 'GET', true],
   ]);
   assert.equal(t.elements['#browser-tabs'].children[0].textContent, '<b>plain</b>');
   assert.equal(t.elements['#browser-tabs'].children[0].children.length, 1, 'page title stays text');

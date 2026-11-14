@@ -425,7 +425,7 @@
       if (this.shotBusy) { this.shotAgain = true; return false; }
       this.shotBusy = true;
       try {
-        const suffix = `screenshot?target_id=${encodeURIComponent(requestedTarget)}&t=${Date.now()}`;
+        const suffix = `screenshot?target_id=${encodeURIComponent(requestedTarget)}`;
         const blob = await this.call(scope, suffix, 'GET', undefined, true);
         if (!this.valid(scope) || requestedTarget !== this.selected || this.pointer) return false;
         if (!(blob instanceof Blob) || blob.type && blob.type !== 'image/png') throw Error('Browser returned an invalid screenshot');

@@ -124,9 +124,7 @@ def test_list_and_all_lifecycle_routes_dispatch_exact_bodies(tmp_path):
         bodies = {}
         for action in ("launch", "add", "rename", "stop", "remove"):
             bodies[action] = lifecycle_body(action)
-            responses[action] = client.post(
-                f"/api/browser/instances/{action}", json=bodies[action]
-            )
+            responses[action] = client.post(f"/api/browser/instances/{action}", json=bodies[action])
 
     assert listed.status_code == 200
     assert [item["id"] for item in listed.json()["browsers"]] == [BROWSER_A, BROWSER_B]
@@ -165,9 +163,7 @@ def test_list_and_all_lifecycle_routes_dispatch_exact_bodies(tmp_path):
         ("copy", {"target_id": "tab-a"}),
     ],
 )
-def test_instance_mutation_allowlist_scopes_path_id_without_body_injection(
-    action, body, tmp_path
-):
+def test_instance_mutation_allowlist_scopes_path_id_without_body_injection(action, body, tmp_path):
     app, fake = app_with_registry(tmp_path)
     with TestClient(app) as client:
         response = client.post(f"/api/browser/instances/{BROWSER_B}/{action}", json=body)
@@ -199,7 +195,11 @@ def test_instance_reads_scope_ids_and_screenshot_is_bounded_png(tmp_path):
     assert screenshot.headers["x-content-type-options"] == "nosniff"
     assert oversized.status_code == 400
     assert "8 mib" in oversized.json()["detail"].lower()
-    assert all(call[1] != BROWSER_B for call in fake.calls if call[0] == "request" and call[2] == "screenshot")
+    assert all(
+        call[1] != BROWSER_B
+        for call in fake.calls
+        if call[0] == "request" and call[2] == "screenshot"
+    )
 
 
 def test_invalid_unknown_ids_actions_and_query_shapes_are_rejected(tmp_path):
@@ -273,9 +273,12 @@ def test_registry_routes_require_operator_auth_and_same_origin(tmp_path):
         owner = login(client)
         crossed = owner | {"Origin": "https://evil.example"}
         assert client.get("/api/browser/instances", headers=crossed).status_code == 403
-        assert client.post(
-            "/api/browser/instances/stop", json=lifecycle_body("stop"), headers=crossed
-        ).status_code == 403
+        assert (
+            client.post(
+                "/api/browser/instances/stop", json=lifecycle_body("stop"), headers=crossed
+            ).status_code
+            == 403
+        )
         accepted = client.get(
             "/api/browser/instances", headers=owner | {"Origin": "http://testserver"}
         )
@@ -316,3 +319,23 @@ def test_legacy_singleton_and_discovery_routes_remain_available(tmp_path):
     assert legacy.status_code == 200
     assert legacy.json() == {"enabled": False, "running": False}
     assert fake.calls == []
+
+
+def test_viewer_screenshot_query_is_accepted_by_the_actual_route(tmp_path):
+    import re
+    from pathlib import Path
+
+    script = (
+        Path(__file__).resolve().parents[1] / "src/swarm/static/remote-browser.js"
+    ).read_text()
+    # Exercise the exact template used by the viewer rather than a hand-built API URL.
+    template = re.search(r"const suffix = `([^`]*screenshot\?[^`]*)`;", script).group(1)
+    query = template.replace("${encodeURIComponent(requestedTarget)}", "tab-a")
+    assert query == "screenshot?target_id=tab-a"
+    app, fake = app_with_registry(tmp_path)
+    with TestClient(app) as client:
+        response = client.get(f"/api/browser/instances/{BROWSER_A}/{query}")
+    assert response.status_code == 200
+    assert response.content == PNG
+    assert response.headers["cache-control"] == "no-store"
+    assert ("request", BROWSER_A, "screenshot", None, {"target_id": "tab-a"}) in fake.calls
