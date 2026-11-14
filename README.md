@@ -775,7 +775,10 @@ needed.
 - **Launch a new browser:** enter a name, choose Auto-discover / an installed
   Edge or Chromium / Custom executable, and choose Headless if no desktop display
   is available. Each launch creates a separate private profile and CDP port.
-- **Add an existing CDP port:** enter a name and the loopback port on that owner.
+- **Add an existing CDP port:** enter a name and a port (`9191`) or explicit IP
+  address (`172.20.0.1:9191`, or `[::1]:9191`). A port alone means the owning
+  server's localhost; an explicit IP is reached from that server, not your browser.
+  DNS names, URLs, credentials, paths and IPv6 zone identifiers are not accepted.
   Swarm verifies and remembers its debugger identity; it does not launch anything.
   Registering exposes that browser's existing tabs/logins to authorized operators,
   so use only a browser you intend to share.
@@ -817,8 +820,8 @@ on a reused port. Queued input for a disconnected/removed instance is discarded.
 Settings lists supported native browser commands, preserving Snap wrapper paths;
 Windows Edge is not silently launched from WSL Python.
 
-**Security:** screenshots are PNGs, not embedded target HTML/JavaScript. CDP remains
-loopback-only. Password-protected owners require operator browser credentials; agent
+**Security:** screenshots are PNGs, not embedded target HTML/JavaScript. Managed CDP remains
+loopback-only; registered external IP endpoints must be explicitly selected. Password-protected owners require operator browser credentials; agent
 service credentials cannot manage or view browsers. Use only trusted loopback/HTTPS
 Swarm deployments. Target browsers retain the owner's network access and credentials.
 No arbitrary CDP/eval endpoint, PID-kill action, automatic clipboard sync, file-transfer

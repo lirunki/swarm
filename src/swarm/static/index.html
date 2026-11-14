@@ -7,31 +7,31 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=browser-registry-1">
+  <link rel="stylesheet" href="/static/app.css?v=cdp-address-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=browser-registry-1"></script>
-  <script defer src="/static/org-chart.js?v=browser-registry-1"></script>
-  <script defer src="/static/relay-settings.js?v=browser-registry-1"></script>
-  <script defer src="/static/terminal-touch.js?v=browser-registry-1"></script>
-  <script defer src="/static/terminal-copy.js?v=browser-registry-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=browser-registry-1"></script>
-  <script defer src="/static/terminal-keys.js?v=browser-registry-1"></script>
-  <script defer src="/static/agent-files.js?v=browser-registry-1"></script>
-  <script defer src="/static/agent-messages.js?v=browser-registry-1"></script>
-  <script defer src="/static/agent-broadcast.js?v=browser-registry-1"></script>
-  <script defer src="/static/auth.js?v=browser-registry-1"></script>
-  <script defer src="/static/fleet-control.js?v=browser-registry-1"></script>
-  <script defer src="/static/system-notifications.js?v=browser-registry-1"></script>
-  <script defer src="/static/notifications.js?v=browser-registry-1"></script>
-  <script defer src="/static/agent-groups.js?v=browser-registry-1"></script>
-  <script defer src="/static/grouping-mode.js?v=browser-registry-1"></script>
-  <script defer src="/static/agent-search.js?v=browser-registry-1"></script>
-  <script defer src="/static/history-archive.js?v=browser-registry-1"></script>
-  <script defer src="/static/agent-limits.js?v=browser-registry-1"></script>
-  <script defer src="/static/terminal-wheel.js?v=browser-registry-1"></script>
-  <script defer src="/static/remote-browser.js?v=browser-registry-1"></script>
-  <script defer src="/static/app.js?v=browser-registry-1"></script>
+  <script defer src="/static/card-views.js?v=cdp-address-1"></script>
+  <script defer src="/static/org-chart.js?v=cdp-address-1"></script>
+  <script defer src="/static/relay-settings.js?v=cdp-address-1"></script>
+  <script defer src="/static/terminal-touch.js?v=cdp-address-1"></script>
+  <script defer src="/static/terminal-copy.js?v=cdp-address-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=cdp-address-1"></script>
+  <script defer src="/static/terminal-keys.js?v=cdp-address-1"></script>
+  <script defer src="/static/agent-files.js?v=cdp-address-1"></script>
+  <script defer src="/static/agent-messages.js?v=cdp-address-1"></script>
+  <script defer src="/static/agent-broadcast.js?v=cdp-address-1"></script>
+  <script defer src="/static/auth.js?v=cdp-address-1"></script>
+  <script defer src="/static/fleet-control.js?v=cdp-address-1"></script>
+  <script defer src="/static/system-notifications.js?v=cdp-address-1"></script>
+  <script defer src="/static/notifications.js?v=cdp-address-1"></script>
+  <script defer src="/static/agent-groups.js?v=cdp-address-1"></script>
+  <script defer src="/static/grouping-mode.js?v=cdp-address-1"></script>
+  <script defer src="/static/agent-search.js?v=cdp-address-1"></script>
+  <script defer src="/static/history-archive.js?v=cdp-address-1"></script>
+  <script defer src="/static/agent-limits.js?v=cdp-address-1"></script>
+  <script defer src="/static/terminal-wheel.js?v=cdp-address-1"></script>
+  <script defer src="/static/remote-browser.js?v=cdp-address-1"></script>
+  <script defer src="/static/app.js?v=cdp-address-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -262,8 +262,8 @@
         <button id="browser-settings-launch" type="button" class="small primary">Launch browser</button>
       </details>
       <details class="browser-add-section"><summary>Add an existing CDP port</summary>
-        <div class="form-columns"><label>Name<input id="browser-existing-name" type="text" maxlength="80" placeholder="Existing browser"></label><label>Local CDP port<input id="browser-existing-port" type="number" min="1" max="65535" step="1" placeholder="9222"></label></div>
-        <p class="hint">Loopback port on this server. Removing unregisters it; Swarm never stops an external browser.</p>
+        <div class="form-columns"><label>Name<input id="browser-existing-name" type="text" maxlength="80" placeholder="Existing browser"></label><label>CDP port or IP:port<input id="browser-existing-port" type="text" maxlength="100" spellcheck="false" placeholder="9191 or 172.20.0.1:9191"></label></div>
+        <p class="hint">A port alone uses this server’s localhost. IP:port is reached from this server. Removing unregisters it; Swarm never stops an external browser.</p>
         <button id="browser-existing-add" type="button" class="small">Add browser</button>
       </details>
     </details>

@@ -5,6 +5,7 @@ import warnings
 from typing import Any
 
 _PATCH_MARKER = "_edgemcp_empty_websocket_eof"
+_START_PATCH_MARKER = "_edgemcp_no_websocket_proxy"
 
 
 def install(pychrome: Any | None = None) -> None:
@@ -45,3 +46,30 @@ def install(pychrome: Any | None = None) -> None:
 
     setattr(_recv_loop, _PATCH_MARKER, True)
     tab_module.Tab._recv_loop = _recv_loop
+
+    current_start = tab_module.Tab.start
+    if getattr(current_start, _START_PATCH_MARKER, False):
+        return
+
+    def start(self):
+        if self._started:
+            return False
+        if not self._websocket_url:
+            raise tab_module.RuntimeException("Already has another client connect to this tab")
+        self._started = True
+        self.status = self.status_started
+        self._stopped.clear()
+        self._ws = tab_module.websocket.create_connection(
+            self._websocket_url,
+            enable_multithread=True,
+            suppress_origin=True,
+            http_proxy_host=None,
+            http_proxy_port=None,
+            http_no_proxy=["*"],
+        )
+        self._recv_th.start()
+        self._handle_event_th.start()
+        return True
+
+    setattr(start, _START_PATCH_MARKER, True)
+    tab_module.Tab.start = start

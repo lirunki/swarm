@@ -12,6 +12,14 @@ import json
 import threading
 import urllib.request
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
+
+from .edgemcp_launcher import (
+    _allowed_advertised_host,
+    _http_authority,
+    _validate_port,
+    canonical_cdp_host,
+)
 
 _CDP_KEYS = {
     "Enter": ("Enter", "Enter", 13, "\r", 0), "Tab": ("Tab", "Tab", 9, "\t", 0),
@@ -49,8 +57,11 @@ def _serialized(function):
 class EdgeBrowser:
     """The existing EdgeMCP selected-tab controls, scoped to one CDP port."""
 
-    def __init__(self, port: int, pychrome_module: Any | None = None):
-        self.port = port
+    def __init__(
+        self, port: int, pychrome_module: Any | None = None, *, host: str = "127.0.0.1"
+    ):
+        self.port = _validate_port(port)
+        self.host = canonical_cdp_host(host)
         self._pychrome = pychrome_module
         self._browser = None
         self._tab = None
@@ -69,8 +80,124 @@ class EdgeBrowser:
 
     def _get_browser(self):
         if self._browser is None:
-            self._browser = self._module().Browser(url=f"http://127.0.0.1:{self.port}")
+            module = self._module()
+            browser_type = module.Browser
+            browser_module = getattr(module, "browser", None)
+            if (
+                browser_module is not None
+                and getattr(browser_module, "Browser", None) is browser_type
+                and hasattr(browser_module, "Tab")
+            ):
+                import requests
+
+                tab_type = browser_module.Tab
+
+                class SessionBrowser(browser_type):
+                    def __init__(browser, url):
+                        super().__init__(url=url)
+                        browser.session = requests.Session()
+                        browser.session.trust_env = False
+
+                    def _request(browser, method, path, **kwargs):
+                        response = browser.session.request(
+                            method, f"{browser.dev_url}{path}", allow_redirects=False,
+                            **kwargs,
+                        )
+                        if not 200 <= response.status_code < 300:
+                            raise requests.HTTPError(
+                                f"Unexpected CDP HTTP status {response.status_code}",
+                                response=response,
+                            )
+                        return response
+
+                    def list_tab(browser, timeout=None):
+                        payload = browser._request("GET", "/json", timeout=timeout).json()
+                        if not isinstance(payload, list):
+                            raise ValueError("Invalid browser target list")
+                        tabs = {}
+                        for metadata in payload:
+                            if not isinstance(metadata, dict) or metadata.get("type") != "page":
+                                continue
+                            target_id = metadata.get("id")
+                            existing = browser._tabs.get(target_id)
+                            tabs[target_id] = (
+                                existing if existing is not None
+                                and existing.status != tab_type.status_stopped
+                                else tab_type(**metadata)
+                            )
+                        browser._tabs = tabs
+                        return list(tabs.values())
+
+                    def new_tab(browser, url=None, timeout=None):
+                        payload = browser._request(
+                            "PUT", f"/json/new?{url or ''}", json=True, timeout=timeout
+                        ).json()
+                        if not isinstance(payload, dict):
+                            raise ValueError("Invalid new browser target")
+                        tab = tab_type(**payload)
+                        browser._tabs[tab.id] = tab
+                        return tab
+
+                    def activate_tab(browser, tab_id, timeout=None):
+                        tab_id = tab_id.id if isinstance(tab_id, tab_type) else tab_id
+                        return browser._request(
+                            "GET", f"/json/activate/{tab_id}", timeout=timeout
+                        ).text
+
+                    def close_tab(browser, tab_id, timeout=None):
+                        tab_id = tab_id.id if isinstance(tab_id, tab_type) else tab_id
+                        tab = browser._tabs.pop(tab_id, None)
+                        if tab is not None and tab.status == tab_type.status_started:
+                            tab.stop()
+                        return browser._request(
+                            "GET", f"/json/close/{tab_id}", timeout=timeout
+                        ).text
+
+                    def version(browser, timeout=None):
+                        payload = browser._request(
+                            "GET", "/json/version", json=True, timeout=timeout
+                        ).json()
+                        if not isinstance(payload, dict):
+                            raise ValueError("Invalid browser version")
+                        return payload
+
+                browser_type = SessionBrowser
+            self._browser = browser_type(
+                url=f"http://{_http_authority(self.host, self.port)}"
+            )
         return self._browser
+
+    def _validated_tabs(self) -> list[Any]:
+        tabs = self._get_browser().list_tab(timeout=5)
+        for tab in tabs:
+            metadata = tab._kwargs if "_kwargs" in vars(tab) else {}
+            websocket = metadata.get("webSocketDebuggerUrl") if isinstance(metadata, dict) else None
+            if websocket is None:
+                continue
+            try:
+                parsed = urlsplit(websocket)
+                expected_path = f"/devtools/page/{tab.id}"
+                valid = (
+                    parsed.scheme == "ws"
+                    and _allowed_advertised_host(parsed.hostname, self.host)
+                    and parsed.port == self.port
+                    and parsed.username is None
+                    and parsed.password is None
+                    and parsed.path == expected_path
+                    and not parsed.query
+                    and not parsed.fragment
+                )
+            except (TypeError, ValueError):
+                valid = False
+            if not valid:
+                raise ValueError("Invalid page websocket URL")
+            rebased = urlunsplit((
+                "ws", _http_authority(self.host, self.port), expected_path, "", ""
+            ))
+            metadata["webSocketDebuggerUrl"] = rebased
+            if hasattr(tab, "_websocket_url"):
+                tab._websocket_url = rebased
+        return tabs
 
     @staticmethod
     def _page(metadata: Any) -> dict | None:
@@ -87,9 +214,16 @@ class EdgeBrowser:
         }
 
     def _list_pages(self) -> list[dict]:
-        """Fetch current target metadata using EdgeMCP's loopback JSON endpoint."""
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(f"http://127.0.0.1:{self.port}/json", timeout=5) as response:
+        """Fetch current target metadata without proxies or redirects."""
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *args, **kwargs):
+                return None
+
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+        endpoint = f"http://{_http_authority(self.host, self.port)}/json"
+        with opener.open(endpoint, timeout=5) as response:
+            if response.geturl() != endpoint:
+                raise ValueError("Redirected browser target list")
             content = response.read(1024 * 1024 + 1)
         if len(content) > 1024 * 1024:
             raise ValueError("Oversized browser target list")
@@ -99,7 +233,7 @@ class EdgeBrowser:
         return [page for target in targets if (page := self._page(target)) is not None]
 
     def _pages(self) -> list[dict]:
-        tabs = self._get_browser().list_tab(timeout=5)
+        tabs = self._validated_tabs()
         try:
             return self._list_pages()
         except (OSError, UnicodeError, ValueError):
@@ -119,7 +253,7 @@ class EdgeBrowser:
             return pages
 
     def _find(self, target_id: str):
-        for tab in self._get_browser().list_tab(timeout=5):
+        for tab in self._validated_tabs():
             if tab.id == target_id:
                 return tab
         raise RuntimeError(f"No page target with id {target_id}")

@@ -6,6 +6,7 @@ retrying a slow launch from creating a second browser.
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import shutil
@@ -44,6 +45,35 @@ def _validate_port(port: int) -> int:
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         raise ValueError("CDP port must be an integer from 1 to 65535")
     return port
+
+
+def canonical_cdp_host(host: str = "127.0.0.1") -> str:
+    """Return one canonical, explicit CDP IP address (with localhost as an alias)."""
+    if host == "localhost":
+        return "127.0.0.1"
+    if not isinstance(host, str) or not host or "%" in host:
+        raise ValueError("CDP host must be an IP address")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError as exc:
+        raise ValueError("CDP host must be an IP address") from exc
+    if address.is_unspecified or address.is_multicast or str(address) == "255.255.255.255":
+        raise ValueError("CDP host must be a unicast IP address")
+    return str(address)
+
+
+def _http_authority(host: str, port: int) -> str:
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
+def _allowed_advertised_host(advertised: str | None, requested: str) -> bool:
+    if advertised == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(advertised or "")
+    except ValueError:
+        return False
+    return str(address) == requested or address.is_loopback
 
 
 def _lexical_absolute(path: str | os.PathLike[str]) -> Path:
@@ -212,23 +242,26 @@ def _find_browser(configured: str | None) -> Path:
     raise RuntimeError("Edge or Chromium was not found; configure a browser executable")
 
 
-def probe_identity(port: int, timeout: float = 1) -> dict[str, str] | None:
+def probe_identity(
+    port: int, timeout: float = 1, host: str = "127.0.0.1"
+) -> dict[str, str] | None:
     """Return validated CDP browser metadata, or None when nothing is listening."""
     _validate_port(port)
+    host = canonical_cdp_host(host)
     try:
-        with socket.create_connection(("127.0.0.1", port), timeout=timeout):
+        with socket.create_connection((host, port), timeout=timeout):
             pass
     except ConnectionRefusedError:
         return None
     except OSError as exc:
-        raise RuntimeError(f"Cannot check local CDP port {port}: {exc}") from exc
+        raise RuntimeError(f"Cannot check CDP endpoint {host}:{port}: {exc}") from exc
 
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *args, **kwargs):
             return None
 
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
-    endpoint = f"http://127.0.0.1:{port}/json/version"
+    endpoint = f"http://{_http_authority(host, port)}/json/version"
     try:
         with opener.open(endpoint, timeout=timeout) as response:
             if response.geturl() != endpoint:
@@ -244,7 +277,7 @@ def probe_identity(port: int, timeout: float = 1) -> dict[str, str] | None:
         browser_id = parsed.path.removeprefix(path_prefix)
         if (
             parsed.scheme != "ws"
-            or parsed.hostname != "127.0.0.1"
+            or not _allowed_advertised_host(parsed.hostname, host)
             or parsed.port != port
             or parsed.username is not None
             or parsed.password is not None

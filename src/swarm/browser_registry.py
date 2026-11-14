@@ -200,7 +200,10 @@ class BrowserRegistry:
         kind = value.get("kind")
         common = {"id", "name", "kind", "executable", "headless", "legacy"}
         expected = common if kind == "managed" else common | {"port", "browser_uuid"}
-        if kind not in {"managed", "external"} or set(value) != expected:
+        allowed = {frozenset(expected)}
+        if kind == "external":
+            allowed.add(frozenset(expected | {"host"}))
+        if kind not in {"managed", "external"} or frozenset(value) not in allowed:
             raise ValueError
         browser_id = cls._canonical_uuid(value["id"], "id")
         name = cls._name(value["name"])
@@ -230,6 +233,7 @@ class BrowserRegistry:
             "executable": None,
             "headless": False,
             "legacy": False,
+            "host": edgemcp_launcher.canonical_cdp_host(value.get("host", "127.0.0.1")),
             "port": port,
             "browser_uuid": cls._canonical_uuid(value["browser_uuid"], "browser_uuid"),
         }
@@ -251,7 +255,15 @@ class BrowserRegistry:
             browsers = [cls._validate_record(item) for item in value["browsers"]]
             ids = [item["id"] for item in browsers]
             names = [item["name"].casefold() for item in browsers]
-            if len(ids) != len(set(ids)) or len(names) != len(set(names)):
+            endpoints = [
+                (item["host"], item["port"])
+                for item in browsers if item["kind"] == "external"
+            ]
+            if (
+                len(ids) != len(set(ids))
+                or len(names) != len(set(names))
+                or len(endpoints) != len(set(endpoints))
+            ):
                 raise ValueError
             receipts = value["receipts"]
             if not isinstance(receipts, list) or len(receipts) > MAX_RECEIPTS:
@@ -425,7 +437,11 @@ class BrowserRegistry:
                         browser_factory=self._browser_factory,
                     )
             else:
-                controls = self._browser_factory(record["port"])
+                host = record["host"]
+                if host == "127.0.0.1":
+                    controls = self._browser_factory(record["port"])
+                else:
+                    controls = self._browser_factory(record["port"], host=host)
                 manager = _ExternalRemoteBrowser(self.home, record["port"], controls)
             self._controls[browser_id] = manager
             if record["legacy"] and self._legacy_manager is manager:
@@ -462,7 +478,10 @@ class BrowserRegistry:
 
     def _external_status(self, record: dict[str, Any]) -> dict[str, Any]:
         try:
-            identity = self._launcher.probe_identity(record["port"], timeout=1)
+            probe_options = {"timeout": 1}
+            if record["host"] != "127.0.0.1":
+                probe_options["host"] = record["host"]
+            identity = self._launcher.probe_identity(record["port"], **probe_options)
             if identity is None:
                 return {"running": False, "state": "stopped", "error": None}
             if identity["browser_id"] != record["browser_uuid"]:
@@ -502,6 +521,7 @@ class BrowserRegistry:
                 manager_lock.release()
         projected = {
             "id": record["id"], "name": record["name"], "kind": record["kind"],
+            "host": record.get("host", "127.0.0.1"),
             "port": port, "running": bool(status["running"]), "state": status["state"],
             "executable": record["executable"], "headless": record["headless"],
             "can_stop": record["kind"] == "managed",
@@ -713,12 +733,17 @@ class BrowserRegistry:
         return self._operation_result(self._finalize_pending(receipt, record), record["id"])
 
     def add_existing(self, body: Any) -> dict[str, Any]:
-        fields = {"revision", "request_id", "name", "port"}
+        old_fields = {"revision", "request_id", "name", "port"}
+        fields = old_fields | {"host"} if isinstance(body, dict) and "host" in body else old_fields
         request, payload_hash = self._request(body, fields)
         name = self._name(request["name"])
         port = request["port"]
         if type(port) is not int or not 1 <= port <= 65535:
             raise BrowserRegistryError("port must be an integer from 1 to 65535")
+        try:
+            host = edgemcp_launcher.canonical_cdp_host(request.get("host", "127.0.0.1"))
+        except ValueError as exc:
+            raise BrowserRegistryError(str(exc)) from exc
         with self._lock():
             state, request, payload_hash, receipt = self._begin(body, fields, "add")
             if receipt is not None:
@@ -729,14 +754,23 @@ class BrowserRegistry:
                     raise BrowserRegistryConflict("Browser instance limit of 16 has been reached")
                 if any(item["name"].casefold() == name.casefold() for item in state["browsers"]):
                     raise BrowserRegistryConflict("Browser instance name is already in use")
+                if any(
+                    item["kind"] == "external"
+                    and item["host"] == host and item["port"] == port
+                    for item in state["browsers"]
+                ):
+                    raise BrowserRegistryConflict("Browser CDP endpoint is already registered")
         if replay is not None:
             return self._operation_result(*replay)
         try:
-            identity = self._launcher.probe_identity(port, timeout=1)
+            probe_options = {"timeout": 1}
+            if host != "127.0.0.1":
+                probe_options["host"] = host
+            identity = self._launcher.probe_identity(port, **probe_options)
         except (RuntimeError, ValueError, OSError) as exc:
             raise BrowserRegistryError(str(exc)) from exc
         if identity is None:
-            raise BrowserRegistryError("No browser CDP endpoint is running on that loopback port")
+            raise BrowserRegistryError("No browser CDP endpoint is running at that host and port")
         browser_uuid = self._canonical_uuid(identity.get("browser_id"), "browser_uuid")
         browser_id = str(uuid5(UUID(request["request_id"]), "browser-instance"))
         with self._lock():
@@ -751,8 +785,15 @@ class BrowserRegistry:
                     raise BrowserRegistryConflict("Browser instance limit of 16 has been reached")
                 if any(item["name"].casefold() == name.casefold() for item in state["browsers"]):
                     raise BrowserRegistryConflict("Browser instance name is already in use")
+                if any(
+                    item["kind"] == "external"
+                    and item["host"] == host and item["port"] == port
+                    for item in state["browsers"]
+                ):
+                    raise BrowserRegistryConflict("Browser CDP endpoint is already registered")
                 record = {
-                    "id": browser_id, "name": name, "kind": "external", "port": port,
+                    "id": browser_id, "name": name, "kind": "external",
+                    "host": host, "port": port,
                     "browser_uuid": browser_uuid, "executable": None, "headless": False,
                     "legacy": False,
                 }

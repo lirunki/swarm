@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const {RemoteBrowserController, BrowserSettingsController, MAX_QUEUE} =
+const {RemoteBrowserController, BrowserSettingsController, parseCDPAddress, MAX_QUEUE} =
   require('../../src/swarm/static/remote-browser.js');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const A = '11111111-1111-4111-8111-111111111111';
@@ -82,7 +82,7 @@ test('activation lists multiple instances, restores a selection, and never auto-
   assert.equal(t.controller.connected, false);
   assert.equal(t.elements['#browser-connect'].textContent, 'Connect');
   assert.deepEqual(t.elements['#browser-instance-select'].children.map(node => node.value), [A, B]);
-  assert.match(t.elements['#browser-instance-select'].children[1].textContent, /external :9222/);
+  assert.match(t.elements['#browser-instance-select'].children[1].textContent, /external 127\.0\.0\.1:9222/);
   assert.equal(t.calls.some(call => call[0].endsWith('/tabs')), false);
   t.controller.deactivate();
 });
@@ -139,6 +139,17 @@ test('stopped or identity-changed selected instance disconnects without changing
   t.setRegistry(registry(5)); assert.equal(await t.controller.connect(), true);
   t.controller.updateInstances(registry(6, [external(A, 'Reused'), external()]));
   assert.equal(t.controller.browserId, A); assert.equal(t.controller.connected, false);
+  t.controller.deactivate();
+});
+
+test('changed host on the selected ID disconnects without retargeting', async () => {
+  const first = external(B, 'Remote', {host: '10.0.0.8'});
+  const t = viewerFixture({registry: registry(3, [first])}); await activateAndConnect(t); t.calls.length = 0;
+  assert.equal(t.controller.updateInstances(registry(4, [external(B, 'Remote', {host: '10.0.0.9'})])), true);
+  assert.equal(t.controller.browserId, B); assert.equal(t.controller.connected, false);
+  assert.equal(t.controller.tabs.length, 0); assert.equal(t.controller.displayed, null);
+  assert.equal(t.calls.length, 0, 'host identity changes never connect or retarget implicitly');
+  assert.match(t.elements['#browser-instance-select'].children[0].textContent, /10\.0\.0\.9:9222/);
   t.controller.deactivate();
 });
 
@@ -236,7 +247,31 @@ test('settings load registry then discovery and renders aliases/XSS as plain tex
   assert.equal(options[1].value, lexical); assert.equal(options[1].textContent, `<img src=x onerror=alert(1)> — ${lexical}`);
   assert.equal(options[1].children.length, 0); assert.equal(options[2].disabled, true);
   const rows = t.elements['#browser-management-list'].children;
-  assert.equal(rows.length, 2); assert.match(rows[1].children[0].textContent, /Existing — external port 9222/);
+  assert.equal(rows.length, 2); assert.match(rows[1].children[0].textContent, /Existing — external port 127\.0\.0\.1:9222/);
+});
+
+test('CDP address parser preserves bare ports and canonicalizes explicit IP hosts', () => {
+  assert.deepEqual(parseCDPAddress('9222'), {port: 9222});
+  assert.deepEqual(parseCDPAddress('127.0.0.1:9333'), {port: 9333, host: '127.0.0.1'});
+  assert.deepEqual(parseCDPAddress('localhost:9333'), {port: 9333, host: '127.0.0.1'});
+  assert.deepEqual(parseCDPAddress('[2001:0db8:0:0::1]:9444'), {port: 9444, host: '2001:db8::1'});
+  for (const value of ['http://127.0.0.1:9222', 'example.test:9222', 'user@127.0.0.1:9222',
+    '127.0.0.1:9222/path', '127.0.0.1:9222?x', '127.0.0.1 :9222', '1.2.3.4:9.5',
+    '0', '65536', '09222', '1.2.3.04:9222', '1.2.3.256:9222', '0.0.0.0:9222',
+    '224.0.0.1:9222', '[::]:9222', '[ff02::1]:9222', '[fe80::1%25eth0]:9222'])
+    assert.equal(parseCDPAddress(value), null, value);
+});
+
+test('registry projection brackets canonical IPv6 and rejects URL/XSS or noncanonical hosts', () => {
+  const t = viewerFixture();
+  assert.equal(t.controller.updateInstances(registry(3, [external(B, 'IPv6', {host: '2001:db8::1'})])), true);
+  assert.match(t.elements['#browser-instance-select'].children[0].textContent, /external \[2001:db8::1\]:9222/);
+  for (const host of ['https://10.0.0.8', '<img src=x onerror=alert(1)>', '010.0.0.8', 'localhost', '2001:0db8::1']) {
+    assert.equal(t.controller.updateInstances(registry(4, [external(B, 'Unsafe', {host})])), false, host);
+    assert.equal(t.controller.registry.revision, 3);
+  }
+  assert.equal(t.elements['#browser-instance-select'].children.some(node => node.textContent.includes('<img')), false);
+  t.controller.deactivate();
 });
 
 test('launch and add snapshot strict fields and post through owner path', async () => {
@@ -256,6 +291,24 @@ test('launch and add snapshot strict fields and post through owner path', async 
   const add = t.calls.find(call => call[0].endsWith('/add'));
   assert.deepEqual(Object.keys(add[2]).sort(), ['name', 'port', 'request_id', 'revision'].sort());
   assert.equal(add[2].name, 'DevTools'); assert.equal(add[2].port, 9333); assert.equal(add[2].revision, 4);
+});
+
+test('explicit IPv4 and IPv6 addresses post canonical host through the owner proxy', async () => {
+  const t = settingsFixture({source: 'peer/a'}); await t.controller.load();
+  t.elements['#browser-existing-name'].value = ' IPv4 owner '; t.elements['#browser-existing-port'].value = '10.0.0.8:9333';
+  t.calls.length = 0; assert.equal(await t.controller.addExisting(), true);
+  let add = t.calls.find(call => call[0].endsWith('/add'));
+  assert.equal(add[0], '/api/federation/peer%2Fa/proxy/api/browser/instances/add');
+  assert.deepEqual({...add[2], request_id: '<uuid>'}, {revision: 3, request_id: '<uuid>', name: 'IPv4 owner', port: 9333, host: '10.0.0.8'});
+
+  t.elements['#browser-existing-name'].value = 'IPv6 owner'; t.elements['#browser-existing-port'].value = '[2001:0db8::1]:9444';
+  t.calls.length = 0; assert.equal(await t.controller.addExisting(), true);
+  add = t.calls.find(call => call[0].endsWith('/add'));
+  assert.deepEqual({...add[2], request_id: '<uuid>'}, {revision: 4, request_id: '<uuid>', name: 'IPv6 owner', port: 9444, host: '2001:db8::1'});
+
+  t.elements['#browser-existing-port'].value = '[::1]@evil.test:9222'; t.calls.length = 0;
+  assert.equal(await t.controller.addExisting(), false); assert.equal(t.calls.length, 0);
+  assert.match(t.elements['#browser-settings-status'].textContent, /port, IPv4:port, or \[IPv6\]:port/);
 });
 
 test('external stop does nothing; external remove is safe; running managed remove is disabled', async () => {

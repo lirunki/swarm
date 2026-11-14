@@ -16,6 +16,51 @@
     return value;
   }
 
+  function parseCDPAddress(value) {
+    if (typeof value !== 'string' || !value || /\s/.test(value)) return null;
+    const portValue = raw => {
+      if (!/^[1-9]\d*$/.test(raw)) return null;
+      const port = Number(raw);
+      return Number.isInteger(port) && port <= 65535 ? port : null;
+    };
+    const bare = portValue(value);
+    if (bare !== null) return {port: bare};
+
+    const ipv6 = /^\[([^\]]+)\]:(.+)$/.exec(value);
+    if (ipv6) {
+      const port = portValue(ipv6[2]), rawHost = ipv6[1];
+      if (port === null || !/^[0-9a-f:.]+$/i.test(rawHost) || !rawHost.includes(':') || rawHost.includes('%')) return null;
+      try {
+        const parsed = new root.URL(`http://[${rawHost}]:${port}`);
+        let host = parsed.hostname;
+        if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
+        host = host.toLowerCase();
+        if (!host.includes(':') || host === '::' || host.startsWith('ff')) return null;
+        return {port, host};
+      } catch { return null; }
+    }
+
+    const hostPort = /^([^:]+):(.+)$/.exec(value);
+    if (!hostPort) return null;
+    const port = portValue(hostPort[2]);
+    if (port === null) return null;
+    if (hostPort[1] === 'localhost') return {port, host: '127.0.0.1'};
+    const octets = hostPort[1].split('.');
+    if (octets.length !== 4 || octets.some(octet => !/^(?:0|[1-9]\d{0,2})$/.test(octet) || Number(octet) > 255)) return null;
+    const numbers = octets.map(Number);
+    if (numbers.every(number => number === 0) || numbers[0] >= 224 && numbers[0] <= 239 || numbers.every(number => number === 255)) return null;
+    return {port, host: numbers.join('.')};
+  }
+
+  function projectedHost(value, port) {
+    if (value === undefined) return '127.0.0.1';
+    if (typeof value !== 'string') return null;
+    const parsed = parseCDPAddress(`${value.includes(':') ? `[${value}]` : value}:${port || 1}`);
+    return parsed?.host === value ? value : null;
+  }
+
+  function cdpAddress(host, port) { return `${host.includes(':') ? `[${host}]` : host}:${port}`; }
+
   function registryProjection(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value) ||
       !Number.isInteger(value.revision) || value.revision < 0 || !Array.isArray(value.browsers) ||
@@ -31,7 +76,9 @@
         !(item.executable === null || typeof item.executable === 'string') ||
         typeof item.headless !== 'boolean' ||
         !(item.error === undefined || typeof item.error === 'string')) return null;
-      browsers.push({id: item.id, name: item.name, kind: item.kind, port: item.port,
+      const host = projectedHost(item.host, item.port);
+      if (host === null) return null;
+      browsers.push({id: item.id, name: item.name, kind: item.kind, host, port: item.port,
         running: item.running, can_stop: item.can_stop, state: item.state,
         executable: item.executable, headless: item.headless, ...(item.error === undefined ? {} : {error: item.error})});
     }
@@ -180,7 +227,7 @@
         for (const browser of this.registry?.browsers || []) {
           const option = doc?.createElement?.('option'); if (!option) break;
           option.value = browser.id;
-          option.textContent = `${browser.name}${browser.kind === 'external' && browser.port ? ` — external :${browser.port}` : ''}${browser.running ? '' : ' — stopped'}`;
+          option.textContent = `${browser.name}${browser.kind === 'external' && browser.port ? ` — external ${cdpAddress(browser.host, browser.port)}` : ''}${browser.running ? '' : ' — stopped'}`;
           nodes.push(option);
         }
         if (host.replaceChildren) host.replaceChildren(...nodes);
@@ -196,7 +243,7 @@
       const oldId = this.browserId, oldBrowser = this.chosen();
       const nextBrowser = projected.browsers.find(item => item.id === oldId) || null;
       const identityChanged = oldBrowser && nextBrowser &&
-        ['kind', 'port', 'executable', 'headless', 'can_stop'].some(field => oldBrowser[field] !== nextBrowser[field]);
+        ['kind', 'host', 'port', 'executable', 'headless', 'can_stop'].some(field => oldBrowser[field] !== nextBrowser[field]);
       if (this.connected && (!oldBrowser || !nextBrowser || !nextBrowser.running || identityChanged)) this.disconnect(false);
       this.registry = projected;
       if (!nextBrowser) {
@@ -677,9 +724,10 @@
       return this.mutate('launch', fields);
     }
     async addExisting() {
-      const fields = {name: this.existingName?.value?.trim?.() || '', port: Number(this.existingPort?.value)};
-      if (!fields.name || !Number.isInteger(fields.port) || fields.port < 1 || fields.port > 65535) { this.error = 'Enter a name and a valid port.'; this.render(); return false; }
-      return this.mutate('add', fields);
+      const name = this.existingName?.value?.trim?.() || '';
+      const address = parseCDPAddress(this.existingPort?.value || '');
+      if (!name || !address) { this.error = 'Enter a name and a valid CDP address: port, IPv4:port, or [IPv6]:port.'; this.render(); return false; }
+      return this.mutate('add', {name, ...address});
     }
     async rename(id) {
       const item = this.registry?.browsers.find(browser => browser.id === id); if (!item || this.saving) return false;
@@ -758,7 +806,7 @@
       for (const item of this.registry?.browsers || []) {
         const row = doc?.createElement?.('div'); if (!row) break; row.className = 'browser-management-row';
         const label = doc?.createElement?.('span');
-        if (label) { label.textContent = `${item.name} — ${item.kind === 'external' ? `external port ${item.port}` : 'managed'} — ${item.running ? 'running' : item.state || 'stopped'}`; row.appendChild?.(label); }
+        if (label) { label.textContent = `${item.name} — ${item.kind === 'external' ? `external port ${cdpAddress(item.host, item.port)}` : 'managed'} — ${item.running ? 'running' : item.state || 'stopped'}`; row.appendChild?.(label); }
         const busy = this.loading || this.saving || this.uncertain;
         const rename = this.makeButton(doc, 'Rename', () => void this.rename(item.id), busy);
         const stop = this.makeButton(doc, 'Stop', () => void this.stop(item.id), busy || item.kind !== 'managed' || !item.running || !item.can_stop, true);
@@ -788,7 +836,7 @@
     }
   }
 
-  const exported = {RemoteBrowserController, BrowserSettingsController, MAX_QUEUE, MAX_TEXT};
+  const exported = {RemoteBrowserController, BrowserSettingsController, parseCDPAddress, MAX_QUEUE, MAX_TEXT};
   root.SwarmRemoteBrowser = exported;
   if (typeof module !== 'undefined' && module.exports) module.exports = exported;
 })(typeof window !== 'undefined' ? window : globalThis);

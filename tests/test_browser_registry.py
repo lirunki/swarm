@@ -21,11 +21,13 @@ class FakeLauncher:
         self.identities = {}
         self.launches = []
         self.stops = []
+        self.probes = []
         self.fail_after_launch = False
         self.fail_after_stop = False
 
-    def probe_identity(self, port, timeout=1):
-        identity = self.identities.get(port)
+    def probe_identity(self, port, timeout=1, host="127.0.0.1"):
+        self.probes.append((host, port, timeout))
+        identity = self.identities.get((host, port), self.identities.get(port))
         return dict(identity) if identity else None
 
     def launch(self, port, **options):
@@ -55,15 +57,19 @@ class FakeLauncher:
 class FakeControls:
     made = []
 
-    def __init__(self, port):
+    def __init__(self, port, *, host="127.0.0.1"):
         self.port = port
+        self.host = host
         self.closed = False
         self.calls = []
         self.__class__.made.append(self)
 
     def tabs(self):
         self.calls.append("tabs")
-        return {"tabs": [], "selected": None, "source_port": self.port}
+        return {
+            "tabs": [], "selected": None, "source_host": self.host,
+            "source_port": self.port,
+        }
 
     def close(self):
         self.closed = True
@@ -144,6 +150,7 @@ def test_external_registration_verifies_owner_on_every_list_and_request(registry
     assert item["kind"] == "external" and item["can_stop"] is False
     assert item["executable"] is None and item["headless"] is False
     assert value.request(browser_id, "tabs")["source_port"] == 9222
+    assert value.request(browser_id, "tabs")["source_host"] == "127.0.0.1"
 
     launcher.identities[9222]["browser_id"] = str(uuid4())
     listed = value.list()["browsers"][0]
@@ -176,6 +183,57 @@ def test_external_port_is_a_strict_loopback_port(registry, port):
     with pytest.raises(BrowserRegistryError, match="port"):
         value.add_existing(operation(0, name="External", port=port))
     assert launcher.launches == [] and launcher.identities == {}
+
+
+def test_external_hosts_are_canonical_and_endpoints_are_host_port_pairs(registry):
+    value, launcher = registry
+    first_uuid, second_uuid = str(uuid4()), str(uuid4())
+    launcher.identities[("10.0.0.8", 9222)] = {
+        "browser": "Chromium/Remote", "browser_id": first_uuid,
+    }
+    launcher.identities[("10.0.0.9", 9222)] = {
+        "browser": "Chromium/Remote", "browser_id": second_uuid,
+    }
+
+    first = value.add_existing(
+        operation(0, name="Remote one", host="10.0.0.8", port=9222)
+    )
+    second = value.add_existing(
+        operation(1, name="Remote two", host="10.0.0.9", port=9222)
+    )
+
+    assert [item["host"] for item in second["browsers"]] == ["10.0.0.8", "10.0.0.9"]
+    assert value.request(first["operation"]["browser_id"], "tabs")["source_host"] == "10.0.0.8"
+    with pytest.raises(BrowserRegistryConflict, match="already registered"):
+        value.add_existing(operation(2, name="Duplicate", host="10.0.0.8", port=9222))
+
+
+def test_legacy_external_record_defaults_host_without_rewriting_file(tmp_path):
+    home = tmp_path / "home"
+    root = home / "remote-browser"
+    root.mkdir(parents=True, mode=0o700)
+    root.chmod(0o700)
+    browser_uuid = str(uuid4())
+    record = {
+        "id": str(uuid4()), "name": "Old external", "kind": "external",
+        "executable": None, "headless": False, "legacy": False,
+        "port": 9222, "browser_uuid": browser_uuid,
+    }
+    content = json.dumps({
+        "version": 1, "revision": 1, "legacy_imported": True,
+        "browsers": [record], "receipts": [],
+    }, separators=(",", ":")) + "\n"
+    path = root / "registry.json"
+    path.write_text(content)
+    path.chmod(0o600)
+    launcher = FakeLauncher()
+    launcher.identities[9222] = {"browser": "Chromium/Old", "browser_id": browser_uuid}
+    value = BrowserRegistry(home, {}, launcher=launcher, browser_factory=FakeControls)
+
+    listed = value.list()
+
+    assert listed["browsers"][0]["host"] == "127.0.0.1"
+    assert path.read_text() == content
 
 
 def test_managed_remove_refuses_running_then_preserves_profile_after_stop(registry):
