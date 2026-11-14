@@ -8,6 +8,10 @@
   const MAX_QUEUE = 32;
   const MAX_TEXT = 4096;
   const REQUEST_TIMEOUT = 20000;
+  const RESIZE_DEBOUNCE = 200;
+  const MIN_VIEWPORT = {width: 320, height: 240};
+  const MAX_VIEWPORT = {width: 3840, height: 2160};
+  const MAX_VIEWPORT_PIXELS = 8294400;
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
   function requestId() {
@@ -118,13 +122,14 @@
     constructor({query = selector => root.document.querySelector(selector), request, api,
       currentSwarm = () => 'local', currentGeneration = () => 0,
       ownerName = source => source === 'local' ? 'Local Swarm' : source,
-      toast = () => {}, confirm = message => root.confirm(message), onChanged = async () => {}} = {}) {
+      toast = () => {}, confirm = message => root.confirm(message), onChanged = async () => {},
+      resizeObserverFactory = typeof root.ResizeObserver === 'function' ? callback => new root.ResizeObserver(callback) : null} = {}) {
       this.query = query; this.request = request || api; this.currentSwarm = currentSwarm;
       this.currentGeneration = currentGeneration; this.ownerName = ownerName;
       this.toast = toast; this.confirm = confirm; this.onChanged = onChanged;
       this.nodes = {};
       for (const id of ['panel', 'owner', 'status', 'connect', 'instance-select', 'refresh-tabs', 'back', 'forward',
-        'reload', 'copy', 'paste', 'url', 'new', 'interval', 'pause', 'tabs', 'screen', 'placeholder'])
+        'reload', 'copy', 'paste', 'url', 'new', 'interval', 'pause', 'fit', 'tabs', 'screen', 'placeholder'])
         this.nodes[id] = query(`#browser-${id}`);
       this.source = currentSwarm(); this.generation = currentGeneration(); this.lifecycle = 0;
       this.active = false; this.disposed = false; this.connected = false; this.paused = false;
@@ -132,7 +137,9 @@
       this.tabs = []; this.selected = null; this.displayed = null;
       this.objectUrl = null; this.timer = null; this.pointer = null; this.shotBusy = false; this.shotAgain = false;
       this.queue = []; this.pending = null; this.selectQueue = Promise.resolve();
-      this.bind(); this.loadInterval(); this.render();
+      this.lastResize = null; this.resizeWanted = false; this.resizeTimer = null;
+      this.resizeObserver = null; this.windowResizeHandler = null;
+      this.bind(); this.bindResize(resizeObserverFactory); this.loadInterval(); this.render();
     }
 
     registryAPI(source = this.source) { return endpoint(source, 'instances'); }
@@ -158,6 +165,7 @@
       listen(this.nodes.url, 'keydown', event => { if (event.key === 'Enter') { event.preventDefault?.(); void this.newTab(); } });
       listen(this.nodes.interval, 'change', () => this.changeInterval());
       listen(this.nodes.pause, 'click', () => { this.paused = !this.paused; this.render(); this.schedule(); if (!this.paused) void this.shot(); });
+      listen(this.nodes.fit, 'click', () => void this.fitToViewport(true));
       listen(this.nodes.screen, 'dragstart', event => event.preventDefault?.());
       listen(this.nodes.screen, 'pointerdown', event => this.pointerDown(event));
       listen(this.nodes.screen, 'pointermove', event => this.pointerMove(event));
@@ -165,6 +173,81 @@
       listen(this.nodes.screen, 'pointercancel', () => this.pointerCancel());
       listen(this.nodes.screen, 'keydown', event => this.keydown(event));
       listen(this.nodes.screen, 'paste', event => this.pasteEvent(event));
+    }
+
+    bindResize(factory) {
+      const container = this.nodes.screen?.parentElement;
+      if (!container) return;
+      if (typeof factory === 'function') {
+        try {
+          const observer = factory(() => this.requestViewportFit());
+          if (observer?.observe) { observer.observe(container); this.resizeObserver = observer; return; }
+        } catch { /* use the window resize fallback */ }
+      }
+      if (typeof root.addEventListener === 'function') {
+        this.windowResizeHandler = () => this.requestViewportFit();
+        root.addEventListener('resize', this.windowResizeHandler);
+      }
+    }
+
+    measureAvailable() {
+      const container = this.nodes.screen?.parentElement;
+      if (!container) return null;
+      let width = Number(container.clientWidth), height = Number(container.clientHeight);
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+      try {
+        const style = root.getComputedStyle?.(container);
+        const padding = name => { const value = Number.parseFloat(style?.[name]); return Number.isFinite(value) ? value : 0; };
+        width -= padding('paddingLeft') + padding('paddingRight');
+        height -= padding('paddingTop') + padding('paddingBottom');
+      } catch { /* detached/test containers may not have computed style */ }
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+      width = Math.min(MAX_VIEWPORT.width, Math.max(MIN_VIEWPORT.width, Math.floor(width)));
+      height = Math.min(MAX_VIEWPORT.height, Math.max(MIN_VIEWPORT.height, Math.floor(height)));
+      if (width * height > MAX_VIEWPORT_PIXELS) {
+        const scale = Math.sqrt(MAX_VIEWPORT_PIXELS / (width * height));
+        width = Math.max(MIN_VIEWPORT.width, Math.floor(width * scale));
+        height = Math.max(MIN_VIEWPORT.height, Math.floor(height * scale));
+      }
+      return {width, height};
+    }
+
+    requestViewportFit() {
+      if (!this.active || !this.connected || !this.selected || this.disposed || !this.valid(this.scope())) return;
+      this.resizeWanted = true;
+      if (this.resizeTimer !== null) root.clearTimeout(this.resizeTimer);
+      this.resizeTimer = root.setTimeout(() => {
+        this.resizeTimer = null;
+        if (this.pointer || this.pending || this.queue.length) return;
+        this.resizeWanted = false; void this.fitToViewport(false);
+      }, RESIZE_DEBOUNCE);
+    }
+
+    resumeViewportFit() {
+      if (this.resizeWanted && this.resizeTimer === null && !this.pointer && !this.pending && !this.queue.length)
+        this.requestViewportFit();
+    }
+
+    async fitToViewport(explicit = false, suppliedScope = this.scope(), requestedTarget = this.selected) {
+      const scope = suppliedScope, target = requestedTarget;
+      if (!target || !this.active || !this.valid(scope) || this.selected !== target || this.pointer) {
+        if (!explicit && target) this.resizeWanted = true;
+        return false;
+      }
+      if (!explicit && (this.pending || this.queue.length)) { this.resizeWanted = true; return false; }
+      const size = this.measureAvailable();
+      if (!size) return false;
+      const key = `${scope.source}\u0000${scope.browser_id}\u0000${target}\u0000${size.width}x${size.height}`;
+      if (!explicit && this.lastResize === key) return false;
+      const body = {target_id: target, width: size.width, height: size.height};
+      return this.enqueue('resize', target, body, async queuedScope => {
+        if (!this.valid(queuedScope) || !this.active || this.selected !== target || this.pointer) return false;
+        await this.call(queuedScope, 'resize', 'POST', body);
+        if (!this.valid(queuedScope) || !this.active || this.selected !== target || this.pointer) return false;
+        this.lastResize = key;
+        await this.shot(queuedScope, target);
+        return true;
+      });
     }
 
     loadInterval() {
@@ -214,6 +297,7 @@
       const disabled = !this.connected || !chosen?.running || this.connectionBlocked;
       for (const id of ['back', 'forward', 'reload', 'copy', 'paste', 'new'])
         if (this.nodes[id]) this.nodes[id].disabled = disabled || (id !== 'new' && !this.selected);
+      if (this.nodes.fit) this.nodes.fit.disabled = disabled || !this.selected;
       if (this.nodes['refresh-tabs']) this.nodes['refresh-tabs'].disabled = !this.registry;
       if (this.nodes.pause) this.nodes.pause.textContent = this.paused ? 'Resume refresh' : 'Pause refresh';
       if (this.nodes.screen) this.nodes.screen.hidden = !this.displayed;
@@ -272,13 +356,21 @@
     disconnect(render = true) {
       this.connected = false; this.lifecycle += 1;
       if (this.timer !== null) root.clearTimeout(this.timer);
-      this.timer = null; this.shotAgain = false; this.pointer = null; this.connectionBlocked = false;
+      if (this.resizeTimer !== null) root.clearTimeout(this.resizeTimer);
+      this.timer = null; this.resizeTimer = null; this.resizeWanted = false; this.lastResize = null;
+      this.shotAgain = false; this.pointer = null; this.connectionBlocked = false;
       this.clearQueue(); this.selectQueue = Promise.resolve(); this.tabs = []; this.selected = null; this.clearImage(); this.renderTabs();
       if (render) this.render(); return true;
     }
 
     deactivate() { this.active = false; this.disconnect(); }
-    dispose() { if (this.disposed) return; this.deactivate(); this.disposed = true; this.clearImage(); }
+    dispose() {
+      if (this.disposed) return;
+      this.deactivate(); this.disposed = true;
+      this.resizeObserver?.disconnect?.(); this.resizeObserver = null;
+      if (this.windowResizeHandler) root.removeEventListener?.('resize', this.windowResizeHandler);
+      this.windowResizeHandler = null; this.clearImage();
+    }
 
     async connect() {
       if (this.disposed || !this.active || this.connected || !this.browserId) return false;
@@ -287,7 +379,7 @@
       if (!this.ownerValid(before) || this.browserId !== wanted || !list) return false;
       const browser = list.browsers.find(item => item.id === wanted);
       if (!browser?.running) { this.render(); return false; }
-      this.connected = true; this.connectionBlocked = false; this.remember(); this.render();
+      this.connected = true; this.connectionBlocked = false; this.lastResize = null; this.remember(); this.render();
       const scope = this.scope();
       const result = await this.loadTabs(scope);
       if (!this.valid(scope) || !result) { if (this.valid(scope)) this.disconnect(); return false; }
@@ -359,7 +451,7 @@
     select(target, suppliedScope) {
       const scope = suppliedScope || this.scope();
       if (!this.tabs.some(tab => tab.id === target) || !this.valid(scope)) return Promise.resolve(false);
-      this.selected = target; this.clearImage(); this.clearQueuedInputs();
+      this.selected = target; this.lastResize = null; this.clearImage(); this.clearQueuedInputs();
       const tab = this.tabs.find(item => item.id === target);
       if (this.nodes.url) this.nodes.url.value = tab?.url || '';
       this.renderTabs(); this.render();
@@ -367,7 +459,9 @@
         if (!this.valid(scope) || !this.active || this.selected !== target) return false;
         await this.call(scope, 'select', 'POST', {target_id: target});
         if (!this.valid(scope) || !this.active || this.selected !== target) return false;
-        await this.shot(scope, target); return this.valid(scope) && this.active && this.selected === target;
+        const fitted = await this.fitToViewport(false, scope, target);
+        if (!fitted && this.valid(scope) && this.active && this.selected === target) await this.shot(scope, target);
+        return this.valid(scope) && this.active && this.selected === target;
       };
       const result = this.selectQueue.catch(() => false).then(task);
       this.selectQueue = result.catch(error => {
@@ -478,14 +572,14 @@
       });
       Promise.race([Promise.resolve().then(() => item.operation(item.scope)), timed]).then(() => {
         if (this.pending !== item) return;
-        root.clearTimeout(timeout); this.pending = null; item.resolve(this.valid(item.scope)); this.pump();
+        root.clearTimeout(timeout); this.pending = null; item.resolve(this.valid(item.scope)); this.pump(); this.resumeViewportFit();
       }).catch(error => {
         if (this.pending !== item) return;
         root.clearTimeout(timeout); this.pending = null; item.resolve(false);
         if (this.valid(item.scope)) this.toast(error?.message || String(error), true);
         if (error?.uncertain) {
           this.connectionBlocked = true; this.clearQueuedInputs(); this.render();
-        } else this.pump();
+        } else { this.pump(); this.resumeViewportFit(); }
       });
     }
 
@@ -519,10 +613,14 @@
         await this.call(scope, moved ? 'drag' : 'click', 'POST', body);
         if (this.valid(scope) && this.selected === gesture.target) await this.shot(scope, gesture.target);
       });
-      this.shotAgain = false;
+      this.shotAgain = false; this.resumeViewportFit();
     }
 
-    pointerCancel() { this.pointer = null; if (this.shotAgain) { this.shotAgain = false; void this.shot(); } }
+    pointerCancel() {
+      this.pointer = null;
+      if (this.shotAgain) { this.shotAgain = false; void this.shot(); }
+      this.resumeViewportFit();
+    }
 
     async sendText(target, value) {
       if (!target || typeof value !== 'string' || !value || value.length > MAX_TEXT) return false;
@@ -663,12 +761,15 @@
     }
     renderDiscoveryOptions() {
       const host = this.executableSelect; if (!host) return;
+      const selected = host.value;
       const doc = host.ownerDocument || root.document, nodes = [];
       const add = (value, label, disabled = false) => { const node = doc?.createElement?.('option'); if (!node) return; node.value = value; node.textContent = label; node.disabled = disabled; nodes.push(node); };
       add('', 'Auto-discover');
       for (const item of this.discovery.browsers) add(item.executable, `${item.name} — ${item.executable}`);
       this.discovery.unavailable.forEach((item, index) => add(`__unavailable_${index}__`, `${item.name} — ${item.reason}`, true));
-      add('__custom__', 'Custom executable'); this.replaceOptions(nodes); this.snapExecutableSelection();
+      add('__custom__', 'Custom executable'); this.replaceOptions(nodes);
+      if (!this.executable && this.discovery.browsers.some(item => item.executable === selected)) host.value = selected;
+      else this.snapExecutableSelection();
     }
 
     async loadDiscovery(source, generation) {
@@ -717,7 +818,12 @@
     }
     openSettings() { return this.load(true); }
 
-    executableValue() { return this.executable?.value?.trim?.() || null; }
+    executableValue() {
+      const manual = this.executable?.value?.trim?.();
+      if (manual) return manual;
+      const selected = this.executableSelect?.value;
+      return this.discovery.browsers.some(item => item.executable === selected) ? selected : null;
+    }
     async launch() {
       const fields = {name: this.instanceName?.value?.trim?.() || '', headless: this.headless ? !!this.headless.checked : true, executable: this.executableValue()};
       if (!fields.name) { this.error = 'Enter an instance name.'; this.render(); return false; }

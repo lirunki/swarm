@@ -21,10 +21,11 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import UUID
 
+from . import paths, wsl_edge
 from .browser_settings import BrowserSettings
 
 _LOCK = threading.Lock()
-_ATTEMPTS: dict[tuple[int, str], subprocess.Popen] = {}
+_ATTEMPTS: dict[tuple[int, str], object] = {}
 _READY: set[tuple[int, str]] = set()
 
 _LINUX_BROWSER_COMMANDS = (
@@ -39,6 +40,12 @@ _WSL_EDGE_PATHS = (
     "/mnt/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
     "/mnt/c/Program Files/Microsoft/Edge/Application/msedge.exe",
 )
+
+
+class DefiniteLaunchFailure(RuntimeError):
+    """The launch is proven not to have left a browser running."""
+
+    definite = True
 
 
 def _validate_port(port: int) -> int:
@@ -135,15 +142,22 @@ def _rooted(root: Path, absolute: str) -> Path:
     return Path(absolute) if root == Path("/") else root / absolute.lstrip("/")
 
 
-def _is_wsl(environ: dict[str, str], root: Path) -> bool:
-    if environ.get("WSL_DISTRO_NAME") or environ.get("WSL_INTEROP"):
+def _wsl_powershell_available(
+    environ: dict[str, str], root: Path, search_path: str | None
+) -> bool:
+    path_value = search_path if search_path is not None else environ.get("PATH")
+    if shutil.which("powershell.exe", path=path_value):
         return True
-    try:
-        return "microsoft" in _rooted(root, "/proc/sys/kernel/osrelease").read_text(
-            encoding="ascii", errors="ignore"
-        ).lower()
-    except OSError:
-        return False
+    for candidate in (
+        "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+        "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/pwsh.exe",
+    ):
+        try:
+            if _rooted(root, candidate).is_file():
+                return True
+        except OSError:
+            pass
+    return False
 
 
 def discover_browsers(
@@ -204,7 +218,8 @@ def discover_browsers(
             for directory in _LINUX_BROWSER_DIRECTORIES:
                 add(name, _rooted(root_path, f"{directory}/{command}"))
 
-    if _is_wsl(environ, root_path):
+    if paths.is_wsl(platform=platform, environ=environ, root=root_path):
+        windows_edge: Path | None = None
         for windows_path in _WSL_EDGE_PATHS:
             candidate = _rooted(root_path, windows_path)
             try:
@@ -212,16 +227,29 @@ def discover_browsers(
             except OSError:
                 exists = False
             if exists:
+                windows_edge = candidate
+                break
+        if windows_edge is not None:
+            if _wsl_powershell_available(environ, root_path, search_path):
+                browsers.append({
+                    "name": "Microsoft Edge via WSL",
+                    "executable": wsl_edge.SENTINEL,
+                    "supported": True,
+                })
+            else:
                 unavailable.append({
                     "name": "Windows Microsoft Edge",
-                    "executable": str(candidate),
+                    "executable": str(windows_edge),
                     "reason": "Use native Windows Swarm or install Edge/Chromium inside WSL.",
                 })
-                break
     return {"browsers": browsers, "unavailable": unavailable}
 
 
-def _find_browser(configured: str | None) -> Path:
+def _find_browser(configured: str | None) -> Path | str:
+    if configured == wsl_edge.SENTINEL:
+        if sys.platform == "linux" and paths.is_wsl():
+            return configured
+        raise RuntimeError("wsl:msedge is available only from WSL on Linux")
     if configured:
         path = _launchable_path(configured)
         if path is None:
@@ -237,8 +265,11 @@ def _find_browser(configured: str | None) -> Path:
         return path
 
     discovery = discover_browsers()
-    if discovery["browsers"]:
-        return Path(str(discovery["browsers"][0]["executable"]))
+    for item in discovery["browsers"]:
+        candidate = str(item["executable"])
+        # WSL Edge is an explicit opt-in and is never the native auto default.
+        if candidate != wsl_edge.SENTINEL:
+            return Path(candidate)
     raise RuntimeError("Edge or Chromium was not found; configure a browser executable")
 
 
@@ -375,6 +406,7 @@ def launch(
         except (ValueError, AttributeError, TypeError) as exc:
             raise ValueError("Expected browser ID must be a UUID") from exc
 
+    launch_started = time.monotonic()
     with _LOCK:
         try:
             identity = probe_identity(port)
@@ -391,6 +423,24 @@ def launch(
                     raise RuntimeError(f"CDP port {port} belongs to a different browser")
             elif key not in _ATTEMPTS:
                 raise RuntimeError(f"CDP port {port} is already occupied by an unowned browser")
+            if executable == wsl_edge.SENTINEL:
+                existing = _ATTEMPTS.get(key)
+                if existing is not None and hasattr(existing, "owns_port"):
+                    owner = existing.owns_port()
+                else:
+                    owner = wsl_edge.owns_port(port, profile_path)
+                if owner is not True:
+                    message = (
+                        f"Windows CDP port {port} belongs to a different process"
+                        if owner is False else
+                        f"Windows CDP port {port} ownership could not be verified"
+                    )
+                    raise wsl_edge.WslEdgeLaunchError(
+                        message,
+                        started=existing is not None,
+                        definite=existing is None,
+                        code="ownership_conflict" if owner is False else "ownership_unknown",
+                    )
             if key in _ATTEMPTS:
                 _READY.add(key)
             return {
@@ -402,39 +452,49 @@ def launch(
             previous = _ATTEMPTS.pop(key, None)
             if previous:
                 previous.poll()
+            if executable == wsl_edge.SENTINEL:
+                wsl_edge.forget(port, profile_path)
 
         process = _ATTEMPTS.get(key)
         started = process is None
         if process is None:
-            browser = _find_browser(executable)
-            profile_path.mkdir(parents=True, exist_ok=True, mode=0o700)
-            if os.name != "nt":
-                profile_path.chmod(0o700)
-            command = [
-                str(browser), f"--remote-debugging-port={port}",
-                "--remote-debugging-address=127.0.0.1", f"--user-data-dir={profile_path}",
-                "--no-first-run", "--no-default-browser-check",
-            ]
-            if headless:
-                command.append("--headless=new")
-            command.append("about:blank")
-            options = dict(
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, shell=False,
-            )
-            if sys.platform == "win32":
-                options["creationflags"] = (
-                    subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            try:
+                browser = _find_browser(executable)
+            except RuntimeError as exc:
+                raise DefiniteLaunchFailure(str(exc)) from exc
+            if browser == wsl_edge.SENTINEL:
+                process = wsl_edge.launch(
+                    port, profile_path, executable=wsl_edge.SENTINEL, headless=headless
                 )
             else:
-                options["start_new_session"] = True
-            try:
-                process = subprocess.Popen(command, **options)
-            except OSError as exc:
-                raise RuntimeError(f"Could not start browser: {exc}") from exc
+                profile_path.mkdir(parents=True, exist_ok=True, mode=0o700)
+                if os.name != "nt":
+                    profile_path.chmod(0o700)
+                command = [
+                    str(browser), f"--remote-debugging-port={port}",
+                    "--remote-debugging-address=127.0.0.1", f"--user-data-dir={profile_path}",
+                    "--no-first-run", "--no-default-browser-check",
+                ]
+                if headless:
+                    command.append("--headless=new")
+                command.append("about:blank")
+                options = dict(
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, shell=False,
+                )
+                if sys.platform == "win32":
+                    options["creationflags"] = (
+                        subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                    )
+                else:
+                    options["start_new_session"] = True
+                try:
+                    process = subprocess.Popen(command, **options)
+                except OSError as exc:
+                    raise DefiniteLaunchFailure(f"Could not start browser: {exc}") from exc
             _ATTEMPTS[key] = process
 
-        deadline = time.monotonic() + timeout
+        deadline = launch_started + timeout
         last_error = None
         while True:
             remaining = deadline - time.monotonic()
@@ -446,6 +506,18 @@ def launch(
                 last_error = str(exc)
                 identity = None
             if identity:
+                if executable == wsl_edge.SENTINEL:
+                    owner = process.owns_port() if hasattr(process, "owns_port") else None
+                    if owner is not True:
+                        message = (
+                            f"Windows CDP port {port} belongs to a different process"
+                            if owner is False else
+                            f"Windows CDP port {port} ownership could not be verified"
+                        )
+                        raise wsl_edge.WslEdgeLaunchError(
+                            message, started=True, definite=False,
+                            code="ownership_conflict" if owner is False else "ownership_unknown",
+                        )
                 _READY.add(key)
                 return {
                     "started": started, "already_running": False,
@@ -453,13 +525,21 @@ def launch(
                     "launch_pid": process.pid,
                 }
             code = process.poll()
-            if code not in (None, 0):
+            if code is not None and (executable == wsl_edge.SENTINEL or code != 0):
                 _ATTEMPTS.pop(key, None)
-                raise RuntimeError(
+                if executable == wsl_edge.SENTINEL:
+                    wsl_edge.forget(port, profile_path)
+                raise DefiniteLaunchFailure(
                     f"Browser exited with code {code} before CDP became ready on port {port}"
                 )
             time.sleep(min(0.1, max(0, deadline - time.monotonic())))
         detail = f" Last probe: {last_error}." if last_error else ""
+        if executable == wsl_edge.SENTINEL:
+            raise RuntimeError(
+                f"Windows Edge launched but WSL cannot reach 127.0.0.1:{port}. "
+                "Enable WSL mirrored networking or a Windows-to-WSL loopback forward. "
+                f"The launch remains pending and will not be repeated in this process.{detail}"
+            )
         raise RuntimeError(
             f"Browser CDP did not become ready on loopback port {port} within {timeout:g}s. "
             f"Launch PID: {process.pid}. The launch may still be running; retries in this "

@@ -284,6 +284,46 @@ def test_pending_launch_recovers_after_restart_without_duplicate_launch(tmp_path
     assert json.loads(first.path.read_text())["receipts"][0]["status"] == "completed"
 
 
+def test_definite_launch_failure_removes_reservation_and_replays_conflict(registry):
+    value, launcher = registry
+    request = operation(0, name="Missing Edge", executable=None, headless=True)
+    browser_id = str(uuid5(UUID(request["request_id"]), "browser-instance"))
+    profile = value.instances / UUID(browser_id).hex / "remote-browser" / "profile"
+    calls = 0
+
+    class DefiniteFailure(RuntimeError):
+        definite = True
+
+    def fail_launch(port, **options):
+        nonlocal calls
+        calls += 1
+        launcher.launches.append((port, options))
+        raise DefiniteFailure("Microsoft Edge was not found on Windows")
+
+    launcher.launch = fail_launch
+    with pytest.raises(BrowserRegistryConflict, match=request["request_id"]):
+        value.launch(request)
+
+    saved = json.loads(value.path.read_text())
+    assert saved["revision"] == 0
+    assert saved["browsers"] == []
+    assert saved["receipts"] == [{
+        "request_id": request["request_id"],
+        "payload_hash": saved["receipts"][0]["payload_hash"],
+        "status": "failed",
+        "action": "launch",
+        "browser_id": browser_id,
+        "revision": 0,
+        "error": "Microsoft Edge was not found on Windows",
+    }]
+    assert profile.is_dir()
+
+    with pytest.raises(BrowserRegistryConflict, match="Microsoft Edge was not found"):
+        value.launch(request)
+    assert calls == 1
+    assert value.list() == {"revision": 0, "browsers": []}
+
+
 def test_uncertain_pending_launch_is_not_resent(registry):
     value, launcher = registry
     launcher.fail_after_launch = True

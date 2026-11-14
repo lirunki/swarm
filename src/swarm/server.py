@@ -620,6 +620,7 @@ def create_app(
             "back",
             "forward",
             "reload",
+            "resize",
             "click",
             "drag",
             "text",
@@ -686,6 +687,7 @@ def create_app(
             "back",
             "forward",
             "reload",
+            "resize",
             "click",
             "drag",
             "text",
@@ -694,6 +696,8 @@ def create_app(
         }:
             raise ValueError("Unknown browser action")
         body = await bounded_json(request, 16 * 1024)
+        if action == "resize":
+            await guard_legacy_browser_mutation()
         result = await asyncio.to_thread(app.state.remote_browser.request, action, body)
         return JSONResponse(result, headers={"Cache-Control": "no-store"})
 

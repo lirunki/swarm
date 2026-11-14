@@ -216,7 +216,14 @@ class RemoteBrowser:
                 )
             except (RuntimeError, ValueError, OSError) as exc:
                 self._last_error = str(exc)
-                raise BrowserError(str(exc)) from exc
+                error = BrowserError(str(exc))
+                # Lifecycle callers must be able to distinguish a launch that is
+                # definitely known not to be running from an ambiguous bridge/I/O
+                # failure.  Preserve only this boolean classification; the wrapped
+                # exception remains the source for internal diagnostics.
+                if hasattr(exc, "definite"):
+                    error.definite = bool(exc.definite)
+                raise error from exc
             try:
                 returned_browser_id = launched.get("browser_id")
                 browser_id = str(UUID(returned_browser_id))
@@ -342,6 +349,27 @@ class RemoteBrowser:
             if body is not None and query is not None:
                 raise ValueError("Supply body or query, not both")
             data = self._payload(query if query is not None else body)
+            allowed = {
+                "tabs", "screenshot", "new", "select", "close", "back", "forward",
+                "reload", "resize", "click", "drag", "text", "key", "copy",
+            }
+            if not isinstance(action, str) or action not in allowed:
+                raise ValueError("Unsupported browser action")
+
+            resize: tuple[str, int, int] | None = None
+            if action == "resize":
+                if set(data) != {"target_id", "width", "height"}:
+                    raise ValueError("resize requires only target_id, width, and height")
+                target = self._target(data)
+                width, height = data.get("width"), data.get("height")
+                if type(width) is not int or not 320 <= width <= 3840:
+                    raise ValueError("width must be an integer from 320 to 3840")
+                if type(height) is not int or not 240 <= height <= 2160:
+                    raise ValueError("height must be an integer from 240 to 2160")
+                if width * height > 8_294_400:
+                    raise ValueError("width times height must not exceed 8294400")
+                resize = (target, width, height)
+
             controls = self._controls()
             if action == "tabs":
                 return controls.tabs()
@@ -362,6 +390,9 @@ class RemoteBrowser:
                 if parsed.username is not None or parsed.password is not None:
                     raise ValueError("url must not contain user information")
                 return controls.new(url)
+
+            if resize is not None:
+                return controls.resize(*resize)
 
             target = self._target(data)
             if action == "select":

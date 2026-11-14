@@ -13,6 +13,37 @@ def cygwin() -> bool:
     return sys.platform == "cygwin"
 
 
+def is_wsl(
+    *,
+    platform: str | None = None,
+    environ: dict[str, str] | None = None,
+    root: str | Path = "/",
+) -> bool:
+    """Detect WSL without treating generic Linux hosts as Windows-capable."""
+    platform = sys.platform if platform is None else platform
+    if platform != "linux":
+        return False
+    environ = os.environ if environ is None else environ
+    if environ.get("WSL_DISTRO_NAME") or environ.get("WSL_INTEROP"):
+        return True
+    root_path = Path(root)
+
+    def rooted(absolute: str) -> Path:
+        return Path(absolute) if root_path == Path("/") else root_path / absolute.lstrip("/")
+
+    if rooted("/proc/sys/fs/binfmt_misc/WSLInterop").exists() or rooted("/run/WSL").exists():
+        return True
+    for release_file in ("/proc/sys/kernel/osrelease", "/proc/version"):
+        try:
+            if "microsoft" in rooted(release_file).read_text(
+                encoding="utf-8", errors="ignore"
+            ).lower():
+                return True
+        except OSError:
+            pass
+    return False
+
+
 def _cygpath(value: str, mode: str) -> str:
     try:
         result = subprocess.run(

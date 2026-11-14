@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from . import paths
 from .store import atomic_write
 
 MAX_PAYLOAD_BYTES = 16 * 1024
@@ -156,6 +157,10 @@ class BrowserSettings:
     def _validate_executable(cls, value: Any) -> str | None:
         if value is None:
             return None
+        if value == "wsl:msedge":
+            if sys.platform == "linux" and paths.is_wsl():
+                return value
+            raise BrowserSettingsError("wsl:msedge is available only from WSL on Linux")
         if not isinstance(value, str) or not value:
             raise BrowserSettingsError("executable must be null or an absolute native path")
         try:

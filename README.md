@@ -796,6 +796,15 @@ needed.
 - **Launch a new browser:** enter a name, choose Auto-discover / an installed
   Edge or Chromium / Custom executable, and choose Headless if no desktop display
   is available. Each launch creates a separate private profile and CDP port.
+- **Microsoft Edge via WSL:** explicitly select this option to launch Windows Edge
+  through PowerShell. Swarm picks the port and a separate profile under
+  `%LOCALAPPDATA%\Swarm\Edge-CDP-<port>-<profile-hash>`; the personal Edge profile
+  is never used. Headless is supported. Native auto-discovery does not select this
+  bridge implicitly. Windows listener/process/profile identity is verified before
+  Swarm claims the browser. WSL must reach Windows localhost (mirrored networking
+  or an existing secured loopback forward); Swarm does not change firewalls or
+  expose CDP. Known pre-launch failures remain removable; uncertain launches are
+  retained for inspection instead of being blindly replayed.
 - **Add an existing CDP port:** enter a name and a port (`9191`) or explicit IP
   address (`172.20.0.1:9191`, or `[::1]:9191`). A port alone means the owning
   server's localhost; an explicit IP is reached from that server, not your browser.
@@ -828,7 +837,14 @@ Both the registry and browser commands belong to the selected server: viewing A
 through B reads and changes A, with operator authentication at both ends.
 
 Page tabs, navigation, click/drag, keyboard input and explicit plain-text Copy/Paste
-retain EdgeMCP behavior. Screenshots refresh every 2 seconds by default, adjustable
+retain EdgeMCP behavior.
+The selected browser automatically fits the viewer's available space when connected
+or resized; **Fit to view** explicitly reapplies the size. Updates are debounced and
+paused during gestures. Viewport bounds are 320×240 through 3840×2160, capped at
+8,294,400 pixels. Headed browsers also receive a window-size request; headless uses
+an exact emulated viewport. Other browser instances are not resized. Multiple viewers
+sharing one page may prefer different sizes; Fit to view restores your local fit.
+ Screenshots refresh every 2 seconds by default, adjustable
 from 0.25–60 seconds. They are **snapshots, not video**; content may move before a
 click. Multiple viewers of one instance share its selected page, so coordinate
 control. Separate instances have independent tabs/profiles and don't block one

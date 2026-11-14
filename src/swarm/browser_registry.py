@@ -271,35 +271,51 @@ class BrowserRegistry:
             clean_receipts = []
             seen = set()
             for receipt in receipts:
-                if not isinstance(receipt, dict) or set(receipt) != {
+                if not isinstance(receipt, dict):
+                    raise ValueError
+                status = receipt.get("status")
+                expected = {
                     "request_id", "payload_hash", "status", "action", "browser_id", "revision"
-                }:
+                }
+                if status == "failed":
+                    expected.add("error")
+                if set(receipt) != expected:
                     raise ValueError
                 request_id = cls._canonical_uuid(receipt["request_id"], "request_id")
                 payload_hash = receipt["payload_hash"]
+                error = receipt.get("error")
                 if (
                     request_id in seen
                     or not isinstance(payload_hash, str)
                     or len(payload_hash) != 64
                     or any(character not in "0123456789abcdef" for character in payload_hash)
-                    or receipt["status"] not in {"pending", "completed"}
+                    or status not in {"pending", "completed", "failed"}
                     or receipt["action"] not in {"launch", "add", "rename", "stop", "remove"}
+                    or (status == "failed" and (
+                        receipt["action"] != "launch"
+                        or not isinstance(error, str)
+                        or not 1 <= len(error) <= 500
+                        or any(unicodedata.category(character).startswith("C") for character in error)
+                    ))
                     or (
                         receipt["revision"] is not None
                         and (type(receipt["revision"]) is not int or receipt["revision"] < 0)
                     )
-                    or (receipt["status"] == "pending") != (receipt["revision"] is None)
+                    or (status == "pending") != (receipt["revision"] is None)
                 ):
                     raise ValueError
                 seen.add(request_id)
-                clean_receipts.append({
+                clean = {
                     "request_id": request_id,
                     "payload_hash": payload_hash,
-                    "status": receipt["status"],
+                    "status": status,
                     "action": receipt["action"],
                     "browser_id": cls._canonical_uuid(receipt["browser_id"], "browser_id"),
                     "revision": receipt["revision"],
-                })
+                }
+                if status == "failed":
+                    clean["error"] = error
+                clean_receipts.append(clean)
             managed_ids = {
                 record["id"] for record in browsers if record["kind"] == "managed"
             }
@@ -597,7 +613,7 @@ class BrowserRegistry:
     def _append_receipt(self, state: dict[str, Any], receipt: dict[str, Any]) -> None:
         if len(state["receipts"]) >= MAX_RECEIPTS:
             for index, previous in enumerate(state["receipts"]):
-                if previous["status"] == "completed":
+                if previous["status"] != "pending":
                     state["receipts"].pop(index)
                     break
             else:
@@ -666,9 +682,48 @@ class BrowserRegistry:
             "Browser operation outcome is uncertain; check status before retrying.", request_id
         )
 
+    @staticmethod
+    def _definite_failure(receipt: dict[str, Any]) -> BrowserRegistryConflict:
+        return BrowserRegistryConflict(
+            f"{receipt['error']} Request ID: {receipt['request_id']}"
+        )
+
+    def _fail_pending_launch(
+        self, expected_receipt: dict[str, Any], expected_record: dict[str, Any], error: str
+    ) -> dict[str, Any]:
+        safe_error = " ".join(error.split())[:500]
+        if not safe_error:
+            safe_error = "Browser could not be started and is not running"
+        with self._lock():
+            state = self._with_legacy(self._read(), persist=True)
+            receipt = next(
+                (item for item in state["receipts"]
+                 if item["request_id"] == expected_receipt["request_id"]),
+                None,
+            )
+            if receipt is None or any(
+                receipt.get(key) != expected_receipt.get(key)
+                for key in ("payload_hash", "status", "action", "browser_id", "revision")
+            ):
+                raise BrowserRegistryConflict("Browser operation receipt changed before failure")
+            record = self._find(state, receipt["browser_id"])
+            if record != expected_record or receipt["action"] != "launch":
+                raise BrowserRegistryConflict("Browser instance changed before launch failure")
+            state["browsers"] = [
+                item for item in state["browsers"] if item["id"] != record["id"]
+            ]
+            receipt["status"] = "failed"
+            receipt["revision"] = state["revision"]
+            receipt["error"] = safe_error
+            self._write(state)
+        self._detach(record["id"])
+        return receipt
+
     def _replay_or_recover(
         self, state: dict[str, Any], receipt: dict[str, Any]
     ) -> dict[str, Any]:
+        if receipt["status"] == "failed":
+            raise self._definite_failure(receipt)
         if receipt["status"] == "pending":
             record = self._find(state, receipt["browser_id"])
             try:
@@ -729,6 +784,9 @@ class BrowserRegistry:
             with self._manager_lock(record["id"]):
                 manager.launch(request["request_id"])
         except (BrowserError, RuntimeError, ValueError, OSError) as exc:
+            if getattr(exc, "definite", False):
+                failed = self._fail_pending_launch(receipt, record, str(exc))
+                raise self._definite_failure(failed) from exc
             raise self._uncertain(request["request_id"]) from exc
         return self._operation_result(self._finalize_pending(receipt, record), record["id"])
 

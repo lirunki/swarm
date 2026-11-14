@@ -67,6 +67,7 @@ class EdgeBrowser:
         self._tab = None
         self._contexts: dict[str, int] = {}
         self._reverse_contexts: dict[int, str] = {}
+        self._viewport: tuple[str, int, int] | None = None
         self._lock = threading.RLock()
 
     def _module(self):
@@ -302,6 +303,7 @@ class EdgeBrowser:
             except Exception:
                 pass
             self._tab = None
+        self._viewport = None
 
     def _target(self, target_id: str):
         if self._tab is None or self._tab.id != target_id:
@@ -341,6 +343,43 @@ class EdgeBrowser:
             format="png", captureBeyondViewport=False, fromSurface=True, _timeout=10
         )
         return base64.b64decode(result["data"], validate=True)
+
+    @_serialized
+    def resize(self, target_id: str, width: int, height: int) -> dict:
+        """Resize the selected browser window and set an exact page viewport."""
+        tab = self._target(target_id)
+        requested = (target_id, width, height)
+        if self._viewport == requested:
+            return {"resized": True, "width": width, "height": height}
+
+        # Window bounds include browser chrome, so this is only a best-effort OS
+        # resize. The Emulation command below is authoritative for layout and PNGs.
+        call_error = getattr(self._module(), "CallMethodException", ())
+        try:
+            window = tab.Browser.getWindowForTarget(targetId=target_id, _timeout=5)
+        except call_error:
+            window = None
+        window_id = window.get("windowId") if isinstance(window, dict) else None
+        if type(window_id) is int:
+            try:
+                tab.Browser.setWindowBounds(
+                    windowId=window_id, bounds={"windowState": "normal"}, _timeout=5
+                )
+            except call_error:
+                pass
+            try:
+                tab.Browser.setWindowBounds(
+                    windowId=window_id, bounds={"width": width, "height": height},
+                    _timeout=5,
+                )
+            except call_error:
+                pass
+
+        tab.Emulation.setDeviceMetricsOverride(
+            width=width, height=height, deviceScaleFactor=1, mobile=False, _timeout=5
+        )
+        self._viewport = requested
+        return {"resized": True, "width": width, "height": height}
 
     @_serialized
     def click(self, target_id: str, x_ratio: float, y_ratio: float) -> dict:

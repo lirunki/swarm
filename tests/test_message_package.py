@@ -50,6 +50,7 @@ def test_wheel_includes_mailbox_extension_and_messages_ui(tmp_path):
             "swarm/remote_browser.py",
             "swarm/edgemcp_browser.py",
             "swarm/edgemcp_launcher.py",
+            "swarm/wsl_edge.py",
             "swarm/pychrome_compat.py",
             "swarm/static/terminal-wheel.js",
             "swarm/static/agent-limits.js",

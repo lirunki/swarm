@@ -6,6 +6,7 @@ const path = require('node:path');
 const {RemoteBrowserController, BrowserSettingsController, parseCDPAddress, MAX_QUEUE} =
   require('../../src/swarm/static/remote-browser.js');
 const tick = () => new Promise(resolve => setImmediate(resolve));
+const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
 const C = '33333333-3333-4333-8333-333333333333';
@@ -14,7 +15,8 @@ class Element {
   constructor() {
     this.value = ''; this.textContent = ''; this.disabled = false; this.hidden = false;
     this.checked = false; this.events = new Map(); this.children = []; this.attributes = new Map();
-    this.classList = {toggle() {}}; this.dataset = {};
+    this.classList = {toggle() {}}; this.dataset = {}; this.clientWidth = 0; this.clientHeight = 0;
+    this.parentElement = null;
   }
   addEventListener(name, callback) { this.events.set(name, callback); }
   dispatch(name, event = {}) { return this.events.get(name)?.({preventDefault() {}, stopPropagation() {}, ...event, target: this, currentTarget: this}); }
@@ -28,7 +30,7 @@ class Element {
 }
 
 const VIEW_IDS = ['panel', 'owner', 'status', 'connect', 'instance-select', 'refresh-tabs', 'back', 'forward',
-  'reload', 'copy', 'paste', 'url', 'new', 'interval', 'pause', 'tabs', 'screen', 'placeholder'];
+  'reload', 'copy', 'paste', 'url', 'new', 'interval', 'pause', 'fit', 'tabs', 'screen', 'placeholder'];
 const SETTINGS_IDS = ['settings-owner', 'settings-status', 'headless', 'executable-select', 'executable-manual',
   'executable-custom', 'discovery-status', 'instance-name', 'management-list', 'settings-launch',
   'existing-name', 'existing-port', 'existing-add', 'management-refresh'];
@@ -49,7 +51,9 @@ function external(id = B, name = 'Existing', extra = {}) {
 function registry(revision = 3, browsers = [managed(), external()]) { return {revision, browsers}; }
 
 function viewerFixture(options = {}) {
-  const elements = nodes(), calls = [], toasts = [];
+  const elements = nodes(), calls = [], toasts = [], viewport = new Element();
+  viewport.clientWidth = options.viewport?.width || 0; viewport.clientHeight = options.viewport?.height || 0;
+  elements['#browser-screen'].parentElement = viewport;
   let source = options.source || 'local', generation = 1, list = options.registry || registry();
   let tabs = [{id: 'page-a', title: '<b>plain</b>', url: 'https://a.test/'}];
   const request = async (url, method = 'GET', body, binary = false) => {
@@ -62,8 +66,9 @@ function viewerFixture(options = {}) {
   };
   const controller = new RemoteBrowserController({query: selector => elements[selector] || null, request,
     currentSwarm: () => source, currentGeneration: () => generation,
-    ownerName: value => value === 'local' ? 'Local' : `Peer ${value}`, toast: (...args) => toasts.push(args)});
-  return {controller, elements, calls, toasts, setRegistry(value) { list = value; }, switchSource(value) {
+    ownerName: value => value === 'local' ? 'Local' : `Peer ${value}`, toast: (...args) => toasts.push(args),
+    resizeObserverFactory: options.resizeObserverFactory});
+  return {controller, elements, viewport, calls, toasts, setRegistry(value) { list = value; }, switchSource(value) {
     source = value; generation += 1; controller.setContext();
   }};
 }
@@ -211,8 +216,110 @@ test('refresh means registry while disconnected and tabs while connected', async
   t.controller.deactivate();
 });
 
+test('first selection fits the padded rendering space before its first screenshot', async () => {
+  const previous = globalThis.getComputedStyle;
+  globalThis.getComputedStyle = () => ({paddingLeft: '11px', paddingRight: '13px', paddingTop: '17px', paddingBottom: '19px'});
+  try {
+    const t = viewerFixture({viewport: {width: 1024, height: 736}}); await activateAndConnect(t);
+    assert.deepEqual(t.calls.slice(2).map(call => [call[0], call[1], call[2], call[3]]), [
+      [`/api/browser/instances/${A}/tabs`, 'GET', undefined, false],
+      [`/api/browser/instances/${A}/select`, 'POST', {target_id: 'page-a'}, false],
+      [`/api/browser/instances/${A}/resize`, 'POST', {target_id: 'page-a', width: 1000, height: 700}, false],
+      [`/api/browser/instances/${A}/screenshot?target_id=page-a`, 'GET', undefined, true],
+    ]);
+    assert.deepEqual(t.controller.measureAvailable(), {width: 1000, height: 700});
+    t.controller.deactivate();
+  } finally { globalThis.getComputedStyle = previous; }
+});
+
+test('fit clamps dimensions, rejects unavailable sizes, and the optional button uses the same queue', async () => {
+  const t = viewerFixture({viewport: {width: 100, height: 100}}); await activateAndConnect(t);
+  let resize = t.calls.find(call => call[0].endsWith('/resize'));
+  assert.deepEqual(resize[2], {target_id: 'page-a', width: 320, height: 240});
+
+  t.viewport.clientWidth = 9000; t.viewport.clientHeight = 9000;
+  assert.equal(await t.controller.fitToViewport(true), true);
+  resize = t.calls.filter(call => call[0].endsWith('/resize')).at(-1);
+  assert.deepEqual(resize[2], {target_id: 'page-a', width: 3840, height: 2160});
+
+  t.viewport.clientWidth = Number.NaN; t.viewport.clientHeight = 600;
+  const before = t.calls.length;
+  assert.equal(await t.controller.fitToViewport(true), false); assert.equal(t.calls.length, before);
+  t.viewport.clientWidth = 800; t.viewport.clientHeight = 600;
+  t.elements['#browser-fit'].dispatch('click'); await tick(); await tick();
+  resize = t.calls.filter(call => call[0].endsWith('/resize')).at(-1);
+  assert.deepEqual(resize[2], {target_id: 'page-a', width: 800, height: 600});
+  t.controller.deactivate();
+});
+
+test('ResizeObserver fitting is debounced, deduplicated, and captures only after resize', async () => {
+  let changed, observed, disconnected = false;
+  const t = viewerFixture({viewport: {width: 800, height: 600}, resizeObserverFactory: callback => {
+    changed = callback; return {observe(node) { observed = node; }, disconnect() { disconnected = true; }};
+  }});
+  assert.equal(observed, t.viewport); await activateAndConnect(t); t.calls.length = 0;
+
+  changed(); changed(); changed(); await wait(230); await tick();
+  assert.equal(t.calls.length, 0, 'same rendering size does not create a scrollbar resize loop');
+
+  t.viewport.clientWidth = 901; t.viewport.clientHeight = 701;
+  changed(); changed(); await wait(230); await tick(); await tick();
+  assert.deepEqual(t.calls.map(call => [call[0], call[1], call[2], call[3]]), [
+    [`/api/browser/instances/${A}/resize`, 'POST', {target_id: 'page-a', width: 901, height: 701}, false],
+    [`/api/browser/instances/${A}/screenshot?target_id=page-a`, 'GET', undefined, true],
+  ]);
+  t.controller.dispose(); assert.equal(disconnected, true);
+});
+
+test('queued fit rechecks owner and instance scope before resize dispatch', async () => {
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const t = viewerFixture({viewport: {width: 800, height: 600}, request: async url => {
+    if (url.endsWith('/instances')) return registry();
+    if (url.endsWith('/tabs')) return {tabs: [{id: 'page-a', title: 'A', url: 'https://a'}], selected: 'page-a'};
+    if (url.includes('/screenshot?')) return new Blob(['png'], {type: 'image/png'});
+    if (url.endsWith('/text')) return blocked;
+    return {ok: true};
+  }});
+  await activateAndConnect(t); t.calls.length = 0;
+  const typing = t.controller.sendText('page-a', 'x'); await tick();
+  t.viewport.clientWidth = 900;
+  const fitting = t.controller.fitToViewport(true); await tick();
+  t.switchSource('peer/b'); release({ok: true});
+  assert.equal(await fitting, false); assert.equal(await typing, false); await tick();
+  assert.equal(t.calls.some(call => call[0].endsWith('/resize')), false);
+  t.controller.dispose();
+});
+
+test('automatic fit waits for pointer and queue stability and ignores disconnected or stale owners', async () => {
+  let changed;
+  const t = viewerFixture({viewport: {width: 800, height: 600}, resizeObserverFactory: callback => {
+    changed = callback; return {observe() {}, disconnect() {}};
+  }});
+  await activateAndConnect(t); t.calls.length = 0;
+  t.elements['#browser-screen'].dispatch('pointerdown', {button: 0, pointerId: 7, clientX: 20, clientY: 30});
+  t.viewport.clientWidth = 900; changed(); await wait(230);
+  assert.equal(t.calls.some(call => call[0].endsWith('/resize')), false, 'viewport does not move during a gesture');
+  t.elements['#browser-screen'].dispatch('pointerup', {button: 0, pointerId: 7, clientX: 20, clientY: 30});
+  await wait(230); await tick(); await tick();
+  const actions = t.calls.filter(call => /\/(click|resize)$|\/screenshot\?/.test(call[0])).map(call => call[0]);
+  assert.deepEqual(actions, [
+    `/api/browser/instances/${A}/click`, `/api/browser/instances/${A}/screenshot?target_id=page-a`,
+    `/api/browser/instances/${A}/resize`, `/api/browser/instances/${A}/screenshot?target_id=page-a`,
+  ]);
+
+  t.calls.length = 0; t.controller.disconnect(); changed(); await wait(230);
+  assert.equal(t.calls.length, 0);
+  await t.controller.connect(); t.calls.length = 0; t.switchSource('peer/b'); changed(); await wait(230);
+  assert.equal(t.calls.length, 0, 'old-owner observer events cannot dispatch');
+  t.controller.dispose();
+});
+
 function settingsFixture(options = {}) {
   const elements = nodes(), calls = [], changed = [], toasts = [];
+  if (options.noManualExecutable) {
+    delete elements['#browser-executable-manual']; delete elements['#browser-executable-custom'];
+  }
   let source = options.source || 'local', generation = 1, list = options.registry || registry();
   const discovery = options.discovery || {browsers: [], unavailable: []};
   const request = async (url, method = 'GET', body) => {
@@ -248,6 +355,35 @@ test('settings load registry then discovery and renders aliases/XSS as plain tex
   assert.equal(options[1].children.length, 0); assert.equal(options[2].disabled, true);
   const rows = t.elements['#browser-management-list'].children;
   assert.equal(rows.length, 2); assert.match(rows[1].children[0].textContent, /Existing — external port 127\.0\.0\.1:9222/);
+});
+
+test('WSL discovery sentinels remain selectable and post unchanged without custom path fields', async () => {
+  const t = settingsFixture({discovery: {browsers: [
+    {name: 'Windows Edge', executable: 'wsl:msedge', supported: true},
+  ], unavailable: []}});
+  await t.controller.load();
+  const option = t.elements['#browser-executable-select'].children[1];
+  assert.equal(option.value, 'wsl:msedge'); assert.match(option.textContent, /Windows Edge/);
+  t.elements['#browser-executable-select'].value = 'wsl:msedge';
+  t.elements['#browser-executable-select'].dispatch('change');
+  assert.equal(t.elements['#browser-executable-manual'].value, 'wsl:msedge');
+  assert.equal(t.elements['#browser-executable-custom'].hidden, true);
+  t.elements['#browser-instance-name'].value = 'WSL Edge'; t.calls.length = 0;
+  assert.equal(await t.controller.launch(), true);
+  const launch = t.calls.find(call => call[0].endsWith('/launch'));
+  assert.deepEqual({...launch[2], request_id: '<uuid>'}, {
+    revision: 3, request_id: '<uuid>', name: 'WSL Edge', headless: true, executable: 'wsl:msedge',
+  });
+
+  const minimal = settingsFixture({noManualExecutable: true, discovery: {browsers: [
+    {name: 'Windows Edge', executable: 'wsl:msedge', supported: true},
+  ], unavailable: []}});
+  await minimal.controller.load();
+  minimal.elements['#browser-executable-select'].value = 'wsl:msedge';
+  minimal.elements['#browser-executable-select'].dispatch('change');
+  minimal.elements['#browser-instance-name'].value = 'Minimal WSL Edge'; minimal.calls.length = 0;
+  assert.equal(await minimal.controller.launch(), true);
+  assert.equal(minimal.calls.find(call => call[0].endsWith('/launch'))[2].executable, 'wsl:msedge');
 });
 
 test('CDP address parser preserves bare ports and canonicalizes explicit IP hosts', () => {
