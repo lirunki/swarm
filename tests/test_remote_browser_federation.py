@@ -15,6 +15,8 @@ from swarm.server import create_app
 
 MESH_KEY = "remote-browser-federation-key-0123456789"
 PNG = b"\x89PNG\r\n\x1a\n" + b"federated-browser-pixel" * 95_326
+BROWSER_A = "04aa79a2-26de-4b2d-b1ef-2c2eafdcc4a1"
+BROWSER_B = "239f94a4-a089-465c-9a7a-f0d66b769559"
 
 
 class FakeRemoteBrowser:
@@ -43,6 +45,40 @@ class FakeRemoteBrowser:
             assert body == {"target_id": "page1", "x_ratio": 0.25, "y_ratio": 0.75}
             return {"clicked": True}
         raise AssertionError(f"unexpected browser action: {action}")
+
+
+class FakeBrowserRegistry:
+    """Federation boundary fake; no browser is launched or probed."""
+
+    def __init__(self):
+        self.calls = []
+
+    def close(self):
+        pass
+
+    def list(self):
+        self.calls.append(("list",))
+        return {
+            "revision": 4,
+            "browsers": [
+                {"id": BROWSER_A, "name": "Managed A", "running": True},
+                {"id": BROWSER_B, "name": "External B", "running": True},
+            ],
+        }
+
+    def add_existing(self, body):
+        self.calls.append(("add_existing", body))
+        return {"revision": 5, "operation": {"browser_id": BROWSER_B}}
+
+    def request(self, browser_id, action, body=None, query=None):
+        self.calls.append(("request", browser_id, action, body, query))
+        if browser_id not in {BROWSER_A, BROWSER_B}:
+            raise ValueError("Browser instance was not found")
+        if action == "tabs":
+            return {"tabs": [{"id": f"tab-{browser_id}", "browser_id": browser_id}]}
+        if action == "screenshot":
+            return PNG
+        return {"browser_id": browser_id, "action": action}
 
 
 @contextmanager
@@ -239,6 +275,126 @@ def test_protected_remote_browser_routes_use_existing_federated_rpc(tmp_path):
                 "request",
                 "click",
                 {"target_id": "page1", "x_ratio": 0.25, "y_ratio": 0.75},
+                None,
+            ),
+        ]
+
+
+def test_multi_instance_browser_registry_routes_federate_to_destination_only(tmp_path):
+    with ExitStack() as stack:
+        relay_port = stack.enter_context(running_server(create_relay_app([MESH_KEY])))
+        probes = [socket.socket(), socket.socket()]
+        for probe in probes:
+            probe.bind(("127.0.0.1", 0))
+        port_a, port_b = [probe.getsockname()[1] for probe in probes]
+        for probe in probes:
+            probe.close()
+
+        apps = []
+        registries = []
+        for node, port in (("alpha", port_a), ("beta", port_b)):
+            root = tmp_path / node
+            root.mkdir()
+            app = create_app(
+                root / "home",
+                recover=False,
+                api_url=f"http://127.0.0.1:{port}",
+                password_file=password_file(root, f"{node}-browser-password"),
+                federation_config=FederationConfig(
+                    f"ws://127.0.0.1:{relay_port}/v1/connect",
+                    node,
+                    node.title(),
+                    MESH_KEY,
+                    f"http://127.0.0.1:{port}",
+                ),
+            )
+            registry = FakeBrowserRegistry()
+            app.state.browser_registry = registry
+            apps.append(app)
+            registries.append(registry)
+            stack.enter_context(running_server(app, port))
+
+        app_a, _app_b = apps
+        registry_a, registry_b = registries
+        base = f"http://127.0.0.1:{port_a}"
+        prefix = "/api/federation/beta/proxy/api/browser/instances"
+        local_headers = {"Authorization": login(base, "alpha-browser-password")}
+
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            status, value, _ = json_request(base, "/api/federation/nodes", headers=local_headers)
+            if status == 200 and any(
+                node["id"] == "beta" and node["state_ready"] for node in value["nodes"]
+            ):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("protected relay peer did not become ready")
+
+        remote_token = login(
+            base,
+            "beta-browser-password",
+            local_headers,
+            path="/api/federation/beta/proxy/api/auth/login",
+        )
+        remote_headers = local_headers | {"X-Swarm-Authorization": remote_token}
+
+        status, listed, _ = json_request(base, prefix, headers=remote_headers)
+        assert status == 200
+        assert [item["id"] for item in listed["browsers"]] == [BROWSER_A, BROWSER_B]
+
+        add_body = {
+            "revision": 4,
+            "request_id": "6cadf343-e1fb-47d8-9940-f7b212a7e342",
+            "name": "Loopback external",
+            "port": 9222,
+        }
+        status, added, _ = json_request(
+            base, prefix + "/add", "POST", add_body, remote_headers
+        )
+        assert status == 200
+        assert added["operation"]["browser_id"] == BROWSER_B
+
+        status, tabs_a, _ = json_request(
+            base, f"{prefix}/{BROWSER_A}/tabs", headers=remote_headers
+        )
+        assert status == 200
+        status, tabs_b, _ = json_request(
+            base, f"{prefix}/{BROWSER_B}/tabs", headers=remote_headers
+        )
+        assert status == 200
+        assert tabs_a["tabs"][0]["browser_id"] == BROWSER_A
+        assert tabs_b["tabs"][0]["browser_id"] == BROWSER_B
+
+        status, clicked, _ = json_request(
+            base,
+            f"{prefix}/{BROWSER_B}/click",
+            "POST",
+            {"target_id": "tab-b", "x_ratio": 0.5, "y_ratio": 0.5},
+            remote_headers,
+        )
+        assert status == 200
+        assert clicked == {"browser_id": BROWSER_B, "action": "click"}
+
+        # Local service credentials remain forbidden on browser-prefixed gateway paths.
+        local_service = app_a.state.access.service_file.read_text(encoding="utf-8").strip()
+        denied_headers = {
+            "Authorization": "Bearer " + local_service,
+            "X-Swarm-Authorization": remote_token,
+        }
+        assert request(base, prefix, headers=denied_headers)[0] == 403
+
+        assert registry_a.calls == []
+        assert registry_b.calls == [
+            ("list",),
+            ("add_existing", add_body),
+            ("request", BROWSER_A, "tabs", None, {}),
+            ("request", BROWSER_B, "tabs", None, {}),
+            (
+                "request",
+                BROWSER_B,
+                "click",
+                {"target_id": "tab-b", "x_ratio": 0.5, "y_ratio": 0.5},
                 None,
             ),
         ]

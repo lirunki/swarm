@@ -16,13 +16,26 @@
     return value;
   }
 
-  function projection(value) {
-    return value && typeof value === 'object' && !Array.isArray(value) &&
-      Number.isInteger(value.revision) && value.revision >= 0 &&
-      typeof value.enabled === 'boolean' && typeof value.headless === 'boolean' &&
-      (value.executable === null || typeof value.executable === 'string')
-      ? {revision: value.revision, enabled: value.enabled, headless: value.headless, executable: value.executable}
-      : null;
+  function registryProjection(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      !Number.isInteger(value.revision) || value.revision < 0 || !Array.isArray(value.browsers) ||
+      value.browsers.length > 256) return null;
+    const browsers = [];
+    for (const item of value.browsers) {
+      if (!item || typeof item !== 'object' || Array.isArray(item) || !UUID.test(item.id || '') ||
+        typeof item.name !== 'string' || !item.name || item.name.length > 80 || /[\u0000-\u001f\u007f]/.test(item.name) ||
+        !['managed', 'external'].includes(item.kind) ||
+        !(item.port === null || Number.isInteger(item.port) && item.port >= 1 && item.port <= 65535) ||
+        typeof item.running !== 'boolean' || typeof item.can_stop !== 'boolean' ||
+        typeof item.state !== 'string' || item.state.length > 120 ||
+        !(item.executable === null || typeof item.executable === 'string') ||
+        typeof item.headless !== 'boolean' ||
+        !(item.error === undefined || typeof item.error === 'string')) return null;
+      browsers.push({id: item.id, name: item.name, kind: item.kind, port: item.port,
+        running: item.running, can_stop: item.can_stop, state: item.state,
+        executable: item.executable, headless: item.headless, ...(item.error === undefined ? {} : {error: item.error})});
+    }
+    return {revision: value.revision, browsers};
   }
 
   function discoveryProjection(value) {
@@ -63,40 +76,41 @@
       this.currentGeneration = currentGeneration; this.ownerName = ownerName;
       this.toast = toast; this.confirm = confirm; this.onChanged = onChanged;
       this.nodes = {};
-      for (const id of ['panel', 'owner', 'status', 'launch', 'refresh-tabs', 'back', 'forward',
+      for (const id of ['panel', 'owner', 'status', 'connect', 'instance-select', 'refresh-tabs', 'back', 'forward',
         'reload', 'copy', 'paste', 'url', 'new', 'interval', 'pause', 'tabs', 'screen', 'placeholder'])
         this.nodes[id] = query(`#browser-${id}`);
       this.source = currentSwarm(); this.generation = currentGeneration(); this.lifecycle = 0;
-      this.active = false; this.disposed = false; this.paused = false; this.connectionBlocked = false;
-      this.status = null; this.tabs = []; this.selected = null; this.displayed = null;
+      this.active = false; this.disposed = false; this.connected = false; this.paused = false;
+      this.connectionBlocked = false; this.registry = null; this.status = null; this.browserId = null;
+      this.tabs = []; this.selected = null; this.displayed = null;
       this.objectUrl = null; this.timer = null; this.pointer = null; this.shotBusy = false; this.shotAgain = false;
       this.queue = []; this.pending = null; this.selectQueue = Promise.resolve();
       this.bind(); this.loadInterval(); this.render();
     }
 
-    absoluteAPI(suffix, source = this.source) { return endpoint(source, suffix); }
-    scope() { return {source: this.source, generation: this.generation, lifecycle: this.lifecycle}; }
-    valid(scope) {
+    registryAPI(source = this.source) { return endpoint(source, 'instances'); }
+    absoluteAPI(suffix, source = this.source, browserId = this.browserId) {
+      if (!UUID.test(browserId || '')) throw Error('Select a browser instance');
+      return endpoint(source, `instances/${encodeURIComponent(browserId)}/${suffix}`);
+    }
+    scope() { return {source: this.source, generation: this.generation, lifecycle: this.lifecycle, browser_id: this.browserId}; }
+    ownerValid(scope) {
       return !this.disposed && scope.source === this.source && scope.generation === this.generation &&
         scope.lifecycle === this.lifecycle && scope.source === this.currentSwarm() &&
         scope.generation === this.currentGeneration();
     }
+    valid(scope) { return this.ownerValid(scope) && scope.browser_id === this.browserId && this.connected; }
 
     bind() {
-      listen(this.nodes.launch, 'click', () => void this.toggleLaunch());
+      listen(this.nodes.connect, 'click', () => void (this.connected ? this.disconnect() : this.connect()));
+      listen(this.nodes['instance-select'], 'change', () => this.changeInstance());
       listen(this.nodes['refresh-tabs'], 'click', () => void this.refreshConnection());
-      for (const action of ['back', 'forward', 'reload'])
-        listen(this.nodes[action], 'click', () => void this.navigate(action));
-      listen(this.nodes.copy, 'click', () => void this.copy());
-      listen(this.nodes.paste, 'click', () => void this.paste());
+      for (const action of ['back', 'forward', 'reload']) listen(this.nodes[action], 'click', () => void this.navigate(action));
+      listen(this.nodes.copy, 'click', () => void this.copy()); listen(this.nodes.paste, 'click', () => void this.paste());
       listen(this.nodes.new, 'click', () => void this.newTab());
-      listen(this.nodes.url, 'keydown', event => {
-        if (event.key === 'Enter') { event.preventDefault?.(); void this.newTab(); }
-      });
+      listen(this.nodes.url, 'keydown', event => { if (event.key === 'Enter') { event.preventDefault?.(); void this.newTab(); } });
       listen(this.nodes.interval, 'change', () => this.changeInterval());
-      listen(this.nodes.pause, 'click', () => {
-        this.paused = !this.paused; this.render(); this.schedule(); if (!this.paused) void this.shot();
-      });
+      listen(this.nodes.pause, 'click', () => { this.paused = !this.paused; this.render(); this.schedule(); if (!this.paused) void this.shot(); });
       listen(this.nodes.screen, 'dragstart', event => event.preventDefault?.());
       listen(this.nodes.screen, 'pointerdown', event => this.pointerDown(event));
       listen(this.nodes.screen, 'pointermove', event => this.pointerMove(event));
@@ -111,15 +125,13 @@
       try { value = Number(root.localStorage?.getItem('swarm.remoteBrowserInterval') || 2); } catch { /* unavailable */ }
       if (!Number.isFinite(value) || value < .25 || value > 60) value = 2;
       this.interval = value;
-      if (this.nodes.interval) {
-        this.nodes.interval.min = '.25'; this.nodes.interval.max = '60';
-        this.nodes.interval.step = '.25'; this.nodes.interval.value = String(value);
-      }
+      if (this.nodes.interval) { this.nodes.interval.min = '.25'; this.nodes.interval.max = '60'; this.nodes.interval.step = '.25'; this.nodes.interval.value = String(value); }
     }
-
+    storageKey(source = this.source) { return `swarm.remoteBrowserInstance.${source}`; }
+    remembered(source = this.source) { try { const id = root.localStorage?.getItem(this.storageKey(source)); return UUID.test(id || '') ? id : null; } catch { return null; } }
+    remember() { try { if (this.browserId) root.localStorage?.setItem(this.storageKey(), this.browserId); } catch { /* unavailable */ } }
     changeInterval() {
-      let value = Number(this.nodes.interval?.value);
-      if (!Number.isFinite(value)) value = 2;
+      let value = Number(this.nodes.interval?.value); if (!Number.isFinite(value)) value = 2;
       value = Math.min(60, Math.max(.25, value)); this.interval = value;
       if (this.nodes.interval) this.nodes.interval.value = String(value);
       try { root.localStorage?.setItem('swarm.remoteBrowserInterval', String(value)); } catch { /* unavailable */ }
@@ -129,134 +141,130 @@
     setContext(state) {
       const source = this.currentSwarm(), generation = this.currentGeneration();
       if (source !== this.source || generation !== this.generation) {
-        this.lifecycle += 1; this.clearQueue(); this.clearImage();
-        this.tabs = []; this.selected = null; this.status = null; this.connectionBlocked = false;
-        this.source = source; this.generation = generation; this.lifecycleBusy=false;
+        this.disconnect(false); this.lifecycle += 1; this.source = source; this.generation = generation;
+        this.registry = null; this.status = null; this.browserId = null; this.renderInstances();
       }
-      if (state && typeof state === 'object') this.status = state;
-      this.render();
+      const projected = registryProjection(state);
+      if (projected) this.updateInstances(projected);
+      else this.render();
     }
 
     async call(scope, suffix, method = 'GET', body, binary = false) {
       if (!this.valid(scope)) return null;
       if (typeof this.request !== 'function') throw Error('Authenticated browser request function is unavailable');
-      return this.request(this.absoluteAPI(suffix, scope.source), method, body, binary);
+      return this.request(this.absoluteAPI(suffix, scope.source, scope.browser_id), method, body, binary);
     }
 
+    chosen() { return this.registry?.browsers.find(item => item.id === this.browserId) || null; }
     render() {
       text(this.nodes.owner, `Owning server: ${this.ownerName(this.source)}`);
-      const state = this.status;
+      const chosen = this.chosen(); this.status = this.registry;
       const label = this.connectionBlocked ? 'Browser controls paused after an uncertain request; refresh tabs to continue' :
-        !state ? 'Browser status unavailable' : state.enabled === false ? 'Remote browser disabled' :
-          state.running ? `${this.tabs.length} tab(s)` :
-            state.state === 'error' ? `Browser error${state.error ? `: ${state.error}` : ''}` : 'Browser stopped';
+        !this.registry ? 'Browser instances unavailable' : !chosen ? 'Select a browser instance' :
+          !chosen.running ? `${chosen.name}: stopped` : !this.connected ? `${chosen.name}: running — connect to view` : `${chosen.name}: ${this.tabs.length} tab(s)`;
       text(this.nodes.status, label);
-      if (this.nodes.launch) {
-        this.nodes.launch.disabled = !!this.lifecycleBusy || (!state?.running && !state?.enabled);
-        this.nodes.launch.textContent = this.lifecycleBusy ? 'Please wait…' : state?.running ? 'Stop browser' : 'Launch browser';
-        this.nodes.launch.classList?.toggle('danger',!!state?.running);
-      }
-      const disabled = !state?.running || this.connectionBlocked;
+      if (this.nodes.connect) { this.nodes.connect.disabled = !chosen?.running; this.nodes.connect.textContent = this.connected ? 'Disconnect' : 'Connect'; }
+      const disabled = !this.connected || !chosen?.running || this.connectionBlocked;
       for (const id of ['back', 'forward', 'reload', 'copy', 'paste', 'new'])
         if (this.nodes[id]) this.nodes[id].disabled = disabled || (id !== 'new' && !this.selected);
-      if (this.nodes['refresh-tabs']) this.nodes['refresh-tabs'].disabled = !state?.running;
+      if (this.nodes['refresh-tabs']) this.nodes['refresh-tabs'].disabled = !this.registry;
       if (this.nodes.pause) this.nodes.pause.textContent = this.paused ? 'Resume refresh' : 'Pause refresh';
       if (this.nodes.screen) this.nodes.screen.hidden = !this.displayed;
-      text(this.nodes.placeholder, this.displayed ? '' : state?.running ? 'Waiting for browser screenshot…' : label);
+      text(this.nodes.placeholder, this.displayed ? '' : this.connected ? 'Waiting for browser screenshot…' : label);
+    }
+
+    renderInstances() {
+      const host = this.nodes['instance-select'];
+      if (host) {
+        const doc = host.ownerDocument || root.document, nodes = [];
+        for (const browser of this.registry?.browsers || []) {
+          const option = doc?.createElement?.('option'); if (!option) break;
+          option.value = browser.id;
+          option.textContent = `${browser.name}${browser.kind === 'external' && browser.port ? ` — external :${browser.port}` : ''}${browser.running ? '' : ' — stopped'}`;
+          nodes.push(option);
+        }
+        if (host.replaceChildren) host.replaceChildren(...nodes);
+        else { while (host.firstChild) host.removeChild(host.firstChild); for (const node of nodes) host.appendChild?.(node); }
+        host.value = this.browserId || '';
+      }
+      this.render();
+    }
+
+    updateInstances(value) {
+      const projected = registryProjection(value); if (!projected) return false;
+      if (this.registry && projected.revision < this.registry.revision) return false;
+      const oldId = this.browserId, oldBrowser = this.chosen();
+      const nextBrowser = projected.browsers.find(item => item.id === oldId) || null;
+      const identityChanged = oldBrowser && nextBrowser &&
+        ['kind', 'port', 'executable', 'headless', 'can_stop'].some(field => oldBrowser[field] !== nextBrowser[field]);
+      if (this.connected && (!oldBrowser || !nextBrowser || !nextBrowser.running || identityChanged)) this.disconnect(false);
+      this.registry = projected;
+      if (!nextBrowser) {
+        const remembered = this.remembered();
+        this.browserId = projected.browsers.some(item => item.id === remembered) ? remembered : projected.browsers[0]?.id || null;
+      }
+      this.renderInstances(); return true;
+    }
+
+    async refreshInstances(silent = false, suppliedScope = this.scope()) {
+      const scope = suppliedScope;
+      try {
+        const value = registryProjection(await this.request(this.registryAPI(scope.source), 'GET'));
+        if (!this.ownerValid(scope)) return null;
+        if (!value) throw Error('Owning server returned malformed browser instances');
+        return this.updateInstances(value) ? value : this.registry;
+      } catch (error) { if (this.ownerValid(scope) && !silent) this.toast(error?.message || String(error), true); return null; }
     }
 
     async activate() {
       if (this.disposed) return false;
-      this.active = true; this.setContext(); const scope = this.scope();
-      const state = await this.refreshStatus(scope);
-      if (this.valid(scope) && this.active && state?.running) await this.loadTabs(scope);
+      this.active = true; this.setContext(); this.disconnect(false); const scope = this.scope();
+      await this.refreshInstances(false, scope); this.render(); return this.ownerValid(scope);
+    }
+
+    disconnect(render = true) {
+      this.connected = false; this.lifecycle += 1;
+      if (this.timer !== null) root.clearTimeout(this.timer);
+      this.timer = null; this.shotAgain = false; this.pointer = null; this.connectionBlocked = false;
+      this.clearQueue(); this.selectQueue = Promise.resolve(); this.tabs = []; this.selected = null; this.clearImage(); this.renderTabs();
+      if (render) this.render(); return true;
+    }
+
+    deactivate() { this.active = false; this.disconnect(); }
+    dispose() { if (this.disposed) return; this.deactivate(); this.disposed = true; this.clearImage(); }
+
+    async connect() {
+      if (this.disposed || !this.active || this.connected || !this.browserId) return false;
+      const wanted = this.browserId, before = this.scope();
+      const list = await this.refreshInstances(false, before);
+      if (!this.ownerValid(before) || this.browserId !== wanted || !list) return false;
+      const browser = list.browsers.find(item => item.id === wanted);
+      if (!browser?.running) { this.render(); return false; }
+      this.connected = true; this.connectionBlocked = false; this.remember(); this.render();
+      const scope = this.scope();
+      const result = await this.loadTabs(scope);
+      if (!this.valid(scope) || !result) { if (this.valid(scope)) this.disconnect(); return false; }
       this.schedule(); return true;
     }
 
-    deactivate() {
-      this.active = false; this.lifecycle += 1;
-      if (this.timer !== null) root.clearTimeout(this.timer);
-      this.timer = null; this.shotAgain = false; this.pointer = null;
-      this.clearQueue();
-    }
-
-    dispose() {
-      if (this.disposed) return;
-      this.deactivate(); this.disposed = true; this.clearImage();
+    changeInstance() {
+      const value = this.nodes['instance-select']?.value || null;
+      if (value === this.browserId) return;
+      this.disconnect(false); this.browserId = this.registry?.browsers.some(item => item.id === value) ? value : null;
+      this.remember(); this.renderInstances();
     }
 
     schedule() {
-      if (this.timer !== null) root.clearTimeout(this.timer);
-      this.timer = null;
-      if (!this.active || this.disposed || this.paused || this.lifecycleBusy || !this.status?.running) return;
+      if (this.timer !== null) root.clearTimeout(this.timer); this.timer = null;
+      if (!this.active || !this.connected || this.disposed || this.paused || !this.chosen()?.running) return;
       const scope = this.scope();
-      this.timer = root.setTimeout(async () => {
-        this.timer = null;
-        if (this.valid(scope) && this.active) await this.shot(scope);
-        if (this.valid(scope) && this.active) this.schedule();
-      }, this.interval * 1000);
-    }
-
-    async refreshStatus(scope = this.scope()) {
-      try {
-        const value = await this.call(scope, 'status');
-        if (!this.valid(scope)) return null;
-        this.status = value && typeof value === 'object' ? value : null; this.render();
-        return this.status;
-      } catch (error) {
-        if (this.valid(scope)) { this.status = null; this.render(); this.toast(error?.message || String(error), true); }
-        return null;
-      }
-    }
-
-    async toggleLaunch() { return this.status?.running ? this.stop() : this.launch(); }
-
-    async stop() {
-      if(this.disposed || this.lifecycleBusy || !this.status?.running)return false;
-      this.setContext();const scope=this.scope();
-      if(!this.confirm(`Stop the dedicated browser on ${this.ownerName(scope.source)}? All its page tabs will close. Unsaved page work may be lost; the profile is retained.`))return false;
-      if(!this.valid(scope) || !this.status?.running)return false;
-      this.lifecycleBusy=true;this.clearQueue();this.render();
-      if(this.timer!==null)root.clearTimeout(this.timer);this.timer=null;
-      let id,timer;
-      try {
-        id=requestId();
-        const timed=new Promise((_,reject)=>{timer=root.setTimeout(()=>reject(Error(`Stop outcome uncertain. Do not retry blindly. Request ID ${id}`)),REQUEST_TIMEOUT);});
-        const result=await Promise.race([this.call(scope,'stop','POST',{request_id:id}),timed]);
-        if(!this.valid(scope))return false;
-        if(!result || result.running!==false)throw Error(`Stop was not confirmed. Request ID ${id}`);
-        this.tabs=[];this.selected=null;this.clearImage();this.renderTabs();
-        await this.refreshStatus(scope);
-        if(this.valid(scope))await this.onChanged(this.status,{...scope,operation:'browser-stop'});
-        return this.valid(scope);
-      } catch(error) {
-        if(this.valid(scope)){this.connectionBlocked=true;this.toast(`${error?.message||error}. Request ID ${id}`,true);}
-        return false;
-      } finally {root.clearTimeout(timer);if(this.valid(scope)){this.lifecycleBusy=false;this.render();this.schedule();}}
-    }
-
-    async launch() {
-      if (this.disposed || this.lifecycleBusy) return false;
-      this.setContext(); const scope = this.scope();this.lifecycleBusy=true;this.render();
-      try {
-        await this.call(scope, 'launch', 'POST', {request_id: requestId()});
-        if (!this.valid(scope)) return false;
-        await this.refreshStatus(scope);
-        if (!this.valid(scope) || !this.status?.running) return false;
-        await this.loadTabs(scope);
-        if (this.valid(scope)) await this.onChanged(this.status, {...scope, operation: 'browser-launch'});
-        return this.valid(scope);
-      } catch (error) {
-        if (this.valid(scope)) this.toast(error?.message || String(error), true);
-        return false;
-      } finally {if(this.valid(scope)){this.lifecycleBusy=false;this.render();}}
+      this.timer = root.setTimeout(async () => { this.timer = null; if (this.valid(scope) && this.active && this.connected) await this.shot(scope); if (this.valid(scope) && this.active && this.connected) this.schedule(); }, this.interval * 1000);
     }
 
     async refreshConnection() {
-      this.connectionBlocked = false; this.clearQueue(); this.render();
-      const scope = this.scope();
-      const state = await this.refreshStatus(scope);
-      if (this.valid(scope) && state?.running) await this.loadTabs(scope);
+      this.connectionBlocked = false; this.clearQueue(); const scope = this.scope();
+      if (!this.connected) { await this.refreshInstances(false, scope); return !!this.registry; }
+      return this.loadTabs(scope);
     }
 
     normalizeTabs(value) {
@@ -401,7 +409,7 @@
     }
 
     enqueue(name, target, body, operation) {
-      if (!target || this.connectionBlocked || this.disposed) return Promise.resolve(false);
+      if (!target || !this.active || !this.connected || this.connectionBlocked || this.disposed) return Promise.resolve(false);
       if (this.queue.length + (this.pending ? 1 : 0) >= MAX_QUEUE) {
         this.toast('Browser command queue is full', true); return Promise.resolve(false);
       }
@@ -535,181 +543,247 @@
     constructor({query = selector => root.document.querySelector(selector), request, api,
       currentSwarm = () => 'local', currentGeneration = () => 0,
       ownerName = source => source === 'local' ? 'Local Swarm' : source,
-      onChanged = async () => {}, toast = () => {}} = {}) {
-      this.request = request || api; this.currentSwarm = currentSwarm; this.currentGeneration = currentGeneration;
-      this.ownerName = ownerName; this.onChanged = onChanged; this.toast = toast;
-      this.owner = query('#browser-settings-owner'); this.enabled = query('#browser-enabled');
-      this.headless = query('#browser-headless'); this.executable = query('#browser-executable');
-      this.executableSelect = query('#browser-executable-select');
-      this.customExecutable = query('#browser-executable-custom'); this.customMode = false;
-      this.discoveryStatus = query('#browser-discovery-status');
-      this.save = query('#browser-settings-save'); this.status = query('#browser-settings-status');
-      this.source = currentSwarm(); this.generation = currentGeneration(); this.settings = null;
-      this.discovery = {browsers: [], unavailable: []}; this.discoveryLoading = false;
-      this.discoveryError = ''; this.discoveryOperation = 0;
-      this.dirty = new Set(); this.loading = false; this.saving = false; this.running = false; this.operation = 0; this.error = '';
+      onChanged = async () => {}, toast = () => {}, confirm = message => root.confirm(message),
+      prompt = (message, value) => root.prompt(message, value)} = {}) {
+      this.query = query; this.request = request || api; this.currentSwarm = currentSwarm;
+      this.currentGeneration = currentGeneration; this.ownerName = ownerName; this.onChanged = onChanged;
+      this.toast = toast; this.confirm = confirm; this.prompt = prompt;
+      this.owner = query('#browser-settings-owner'); this.status = query('#browser-settings-status');
+      this.headless = query('#browser-headless'); this.executableSelect = query('#browser-executable-select');
+      this.executable = query('#browser-executable-manual') || query('#browser-executable');
+      this.customExecutable = query('#browser-executable-custom'); this.discoveryStatus = query('#browser-discovery-status');
+      this.instanceName = query('#browser-instance-name'); this.list = query('#browser-management-list');
+      this.launchButton = query('#browser-settings-launch'); this.existingName = query('#browser-existing-name');
+      this.existingPort = query('#browser-existing-port'); this.addButton = query('#browser-existing-add');
+      this.refreshButton = query('#browser-management-refresh');
+      this.source = currentSwarm(); this.generation = currentGeneration(); this.registry = null;
+      this.settings = null; // Compatibility: parent code historically inspected this field.
+      this.discovery = {browsers: [], unavailable: []}; this.discoveryLoading = false; this.discoveryError = '';
+      this.loading = false; this.saving = false; this.running = false; this.operation = 0;
+      this.discoveryOperation = 0; this.error = ''; this.uncertain = false; this.operationIds = [];
+      this.customMode = false;
       if (this.headless) this.headless.checked = true;
-      if (this.executable) this.executable.placeholder = 'Custom executable';
-      for (const [node, field] of [[this.enabled, 'enabled'], [this.headless, 'headless']])
-        listen(node, 'input', () => { this.dirty.add(field); this.render(); });
-      listen(this.executable, 'input', () => {
-        this.dirty.add('executable'); this.snapExecutableSelection(); this.render();
-      });
+      if (this.instanceName) this.instanceName.value ||= '';
       listen(this.executableSelect, 'change', () => this.selectExecutable());
-      listen(this.save, 'click', () => void this.saveSettings()); this.render();
+      listen(this.executable, 'input', () => { this.customMode = true; this.snapExecutableSelection(); this.render(); });
+      listen(this.launchButton, 'click', () => void this.launch());
+      listen(this.addButton, 'click', () => void this.addExisting());
+      listen(this.refreshButton, 'click', () => void this.load(true));
+      this.render();
     }
 
-    absoluteAPI(source = this.source) { return endpoint(source, 'settings'); }
+    absoluteAPI(source = this.source) { return endpoint(source, 'instances'); }
     absoluteDiscoveryAPI(source = this.source) { return endpoint(source, 'discovery'); }
     valid(source, generation, operation = this.operation) {
-      return source === this.currentSwarm() && generation === this.currentGeneration() && operation === this.operation;
+      return source === this.source && generation === this.generation && source === this.currentSwarm() &&
+        generation === this.currentGeneration() && operation === this.operation;
     }
-    validDiscovery(source, generation, operation) {
-      return source === this.source && generation === this.generation &&
-        source === this.currentSwarm() && generation === this.currentGeneration() &&
-        operation === this.discoveryOperation;
-    }
+    validDiscovery(source, generation, operation) { return this.valid(source, generation) && operation === this.discoveryOperation; }
 
-    setContext(state) {
+    setContext(value) {
       const source = this.currentSwarm(), generation = this.currentGeneration();
       if (source !== this.source || generation !== this.generation) {
-        this.source = source; this.generation = generation; this.settings = null;
-        this.discovery = {browsers: [], unavailable: []}; this.discoveryLoading = false;
-        this.discoveryError = ''; this.discoveryOperation += 1;
-        this.dirty.clear(); this.error = ''; this.operation += 1; this.customMode = false;
-        this.loading = false; this.saving = false; this.running = false;
+        this.source = source; this.generation = generation; this.operation += 1; this.discoveryOperation += 1;
+        this.registry = null; this.settings = null; this.discovery = {browsers: [], unavailable: []};
+        this.discoveryLoading = false; this.discoveryError = ''; this.loading = false; this.saving = false;
+        this.running = false; this.error = ''; this.uncertain = false; this.operationIds = []; this.customMode = false;
       }
-      if (state && typeof state.running === 'boolean') this.running = state.running;
-      const value = projection(state?.settings || state);
-      if (value) this.apply(value, false); else this.render();
+      const projected = registryProjection(value?.registry || value);
+      if (projected) this.apply(projected); else this.render();
     }
-
-    updateSettings(state) { this.setContext(state); }
-
-    apply(value, resetDirty) {
-      const old = this.settings; this.settings = value;
-      if (resetDirty) { this.dirty.clear(); this.customMode = false; }
-      if (this.enabled && (!this.dirty.has('enabled') || !old)) this.enabled.checked = value.enabled;
-      if (this.headless && (!this.dirty.has('headless') || !old)) this.headless.checked = value.headless;
-      if (this.executable && (!this.dirty.has('executable') || !old)) this.executable.value = value.executable || '';
-      this.snapExecutableSelection(); this.render();
+    updateSettings(value) { this.setContext(value); }
+    apply(value) {
+      if (this.registry && value.revision < this.registry.revision) return this.registry;
+      this.registry = value; this.settings = value; this.render(); return value;
     }
 
     selectExecutable() {
       const value = this.executableSelect?.value;
       if (value === '__custom__') { this.customMode = true; this.render(); this.executable?.focus?.(); return; }
       if (value !== '' && !this.discovery.browsers.some(item => item.executable === value)) return;
-      this.customMode = false;
-      if (this.executable) this.executable.value = value || '';
-      this.dirty.add('executable'); this.render();
+      this.customMode = false; if (this.executable) this.executable.value = value || ''; this.render();
     }
-
     snapExecutableSelection() {
       if (!this.executableSelect) return;
       const value = this.executable?.value || '';
       this.executableSelect.value = this.customMode ? '__custom__' : !value ? '' :
         this.discovery.browsers.some(item => item.executable === value) ? value : '__custom__';
     }
-
     replaceOptions(nodes) {
       const host = this.executableSelect; if (!host) return;
       if (host.replaceChildren) host.replaceChildren(...nodes);
       else { while (host.firstChild) host.removeChild(host.firstChild); for (const node of nodes) host.appendChild?.(node); }
     }
-
     renderDiscoveryOptions() {
       const host = this.executableSelect; if (!host) return;
-      const doc = host.ownerDocument || root.document, options = [];
-      const option = (value, label, disabled = false) => {
-        const node = doc?.createElement?.('option'); if (!node) return;
-        node.value = value; node.textContent = label; node.disabled = disabled; options.push(node);
-      };
-      option('', 'Auto-discover');
-      for (const item of this.discovery.browsers) option(item.executable, `${item.name} — ${item.executable}`);
-      for (let index = 0; index < this.discovery.unavailable.length; index += 1) {
-        const item = this.discovery.unavailable[index];
-        option(`__unavailable_${index}__`, `${item.name} — ${item.reason}`, true);
-      }
-      option('__custom__', 'Custom executable');
-      this.replaceOptions(options); this.snapExecutableSelection();
+      const doc = host.ownerDocument || root.document, nodes = [];
+      const add = (value, label, disabled = false) => { const node = doc?.createElement?.('option'); if (!node) return; node.value = value; node.textContent = label; node.disabled = disabled; nodes.push(node); };
+      add('', 'Auto-discover');
+      for (const item of this.discovery.browsers) add(item.executable, `${item.name} — ${item.executable}`);
+      this.discovery.unavailable.forEach((item, index) => add(`__unavailable_${index}__`, `${item.name} — ${item.reason}`, true));
+      add('__custom__', 'Custom executable'); this.replaceOptions(nodes); this.snapExecutableSelection();
     }
 
     async loadDiscovery(source, generation) {
       if (!this.executableSelect) return null;
-      const operation = ++this.discoveryOperation;
-      this.discoveryLoading = true; this.discoveryError = ''; this.discovery = {browsers: [], unavailable: []}; this.render();
+      const operation = ++this.discoveryOperation; this.discoveryLoading = true; this.discoveryError = '';
+      this.discovery = {browsers: [], unavailable: []}; this.render();
       try {
         const value = discoveryProjection(await this.request(this.absoluteDiscoveryAPI(source), 'GET'));
         if (!this.validDiscovery(source, generation, operation)) return null;
         if (!value) throw Error('Owning server returned malformed browser discovery');
         this.discovery = value; return value;
       } catch (error) {
-        if (this.validDiscovery(source, generation, operation)) {
-          this.discoveryError = error?.status === 404 ?
-            'Browser discovery is unavailable on this controller. Leave Auto-discover selected or enter a custom executable.' :
-            `Cannot discover installed browsers: ${error?.message || error}. Leave Auto-discover selected or enter a custom executable.`;
-        }
+        if (this.validDiscovery(source, generation, operation)) this.discoveryError = error?.status === 404 ?
+          'Browser discovery is unavailable. You can enter a custom executable.' :
+          `Cannot discover installed browsers: ${error?.message || error}. You can enter a custom executable.`;
         return null;
-      } finally {
-        if (this.validDiscovery(source, generation, operation)) { this.discoveryLoading = false; this.render(); }
-      }
+      } finally { if (this.validDiscovery(source, generation, operation)) { this.discoveryLoading = false; this.render(); } }
     }
 
-    async load() {
-      this.setContext(); const source = this.source, generation = this.generation, operation = ++this.operation;
-      this.loading = true; this.error = ''; this.dirty.clear(); this.render();
-      let value = null;
-      try {
-        value = projection(await this.request(this.absoluteAPI(source), 'GET'));
-        if (!this.valid(source, generation, operation)) return null;
-        if (!value) throw Error('Owning server returned malformed browser settings');
-        this.apply(value, true);
-      } catch (error) {
-        if (this.valid(source, generation, operation)) this.error = `Cannot load browser settings: ${error?.message || error}`;
-        return null;
-      } finally { if (this.valid(source, generation, operation)) { this.loading = false; this.render(); } }
-      if (this.valid(source, generation, operation) && this.executableSelect) await this.loadDiscovery(source, generation);
+    async timedRequest(path, method = 'GET', body) {
+      let timer;
+      const timed = new Promise((_, reject) => { timer = root.setTimeout(() => reject(Object.assign(Error('Browser registry request timed out'), {timeout: true})), REQUEST_TIMEOUT); });
+      try { return await Promise.race([this.request(path, method, body), timed]); }
+      finally { root.clearTimeout(timer); }
+    }
+
+    async fetchRegistry(source, generation, operation) {
+      const value = registryProjection(await this.timedRequest(this.absoluteAPI(source), 'GET'));
+      if (!this.valid(source, generation, operation)) return null;
+      if (!value) throw Error('Owning server returned malformed browser instances');
       return value;
     }
 
-    openSettings() { return this.load(); }
-
-    async saveSettings() {
-      this.setContext();
-      if (this.loading || this.saving || this.running || !this.settings || !this.dirty.size) return false;
-      const source = this.source, generation = this.generation, operation = ++this.operation;
-      const body = {revision: this.settings.revision, request_id: requestId(), enabled: !!this.enabled?.checked,
-        headless: !!this.headless?.checked, executable: this.executable?.value?.trim?.() || null};
-      this.saving = true; this.error = ''; this.render();
+    async load(explicit = true) {
+      this.setContext(); const source = this.source, generation = this.generation, operation = ++this.operation;
+      this.loading = true; this.error = ''; this.render();
+      let value = null;
       try {
-        const value = projection(await this.request(this.absoluteAPI(source), 'POST', body));
+        value = await this.fetchRegistry(source, generation, operation);
+        if (value) { this.apply(value); if (explicit) this.uncertain = false; }
+      }
+      catch (error) { if (this.valid(source, generation, operation)) this.error = `Cannot load browser instances: ${error?.message || error}`; }
+      finally { if (this.valid(source, generation, operation)) { this.loading = false; this.render(); } }
+      if (value && this.valid(source, generation, operation)) await this.loadDiscovery(source, generation);
+      return value;
+    }
+    openSettings() { return this.load(true); }
+
+    executableValue() { return this.executable?.value?.trim?.() || null; }
+    async launch() {
+      const fields = {name: this.instanceName?.value?.trim?.() || '', headless: this.headless ? !!this.headless.checked : true, executable: this.executableValue()};
+      if (!fields.name) { this.error = 'Enter an instance name.'; this.render(); return false; }
+      return this.mutate('launch', fields);
+    }
+    async addExisting() {
+      const fields = {name: this.existingName?.value?.trim?.() || '', port: Number(this.existingPort?.value)};
+      if (!fields.name || !Number.isInteger(fields.port) || fields.port < 1 || fields.port > 65535) { this.error = 'Enter a name and a valid port.'; this.render(); return false; }
+      return this.mutate('add', fields);
+    }
+    async rename(id) {
+      const item = this.registry?.browsers.find(browser => browser.id === id); if (!item || this.saving) return false;
+      const name = this.prompt(`Rename browser instance “${item.name}”`, item.name);
+      if (name === null) return false; const clean = String(name).trim(); if (!clean || clean === item.name) return false;
+      return this.mutate('rename', {id: item.id, name: clean});
+    }
+    async stop(id) {
+      const item = this.registry?.browsers.find(browser => browser.id === id);
+      if (!item || item.kind !== 'managed' || !item.running || !item.can_stop || this.saving) return false;
+      const fields = {id: item.id};
+      if (!this.confirm(`Stop managed browser “${item.name}”? Its tabs will close; its profile is retained.`)) return false;
+      return this.mutate('stop', fields);
+    }
+    async remove(id) {
+      const item = this.registry?.browsers.find(browser => browser.id === id);
+      if (!item || item.kind === 'managed' && (item.running || item.state !== 'stopped') || this.saving) return false;
+      const fields = {id: item.id};
+      if (!this.confirm(`Remove browser entry “${item.name}”?`)) return false;
+      return this.mutate('remove', fields);
+    }
+
+    async mutate(action, fields) {
+      this.setContext();
+      if (this.loading || this.saving || this.uncertain || !this.registry) return false;
+      const source = this.source, generation = this.generation, operation = ++this.operation;
+      const knownRevision = this.registry.revision, request_id = requestId();
+      const snapshot = Object.freeze({...fields}); this.saving = true; this.error = ''; this.render();
+      let posted = false;
+      try {
+        const fresh = await this.fetchRegistry(source, generation, operation);
+        if (!fresh) return false;
+        if (fresh.revision !== knownRevision || this.registry?.revision !== knownRevision) {
+          this.apply(fresh); this.error = 'Browser instances changed. Review the refreshed list and try again.'; return false;
+        }
+        this.apply(fresh);
+        const current = snapshot.id ? fresh.browsers.find(item => item.id === snapshot.id) : null;
+        const staleLifecycle = action === 'stop' && (!current || current.kind !== 'managed' || !current.running || !current.can_stop) ||
+          action === 'remove' && (!current || current.kind === 'managed' && (current.running || current.state !== 'stopped')) ||
+          action === 'rename' && !current;
+        if (staleLifecycle) { this.error = 'Browser state changed. Review the refreshed list and try again.'; return false; }
+        const body = {revision: knownRevision, request_id, ...snapshot};
+        posted = true;
+        const response = await this.timedRequest(`${this.absoluteAPI(source)}/${action}`, 'POST', body);
         if (!this.valid(source, generation, operation)) return false;
-        if (!value) throw Error('Owning server returned malformed browser settings');
-        this.apply(value, true); await this.onChanged(value, {source, generation, operation: 'browser-settings'}); return true;
+        const value = registryProjection(response), operationId = response?.operation?.browser_id;
+        const created = action === 'launch' || action === 'add';
+        if (!value || value.revision < knownRevision + 1 || !UUID.test(operationId || '') ||
+          snapshot.id && operationId !== snapshot.id || created && !value.browsers.some(item => item.id === operationId))
+          throw Error(`Owning server did not acknowledge ${action}. Request ID ${request_id}`);
+        this.operationIds.push(operationId); this.apply(value);
+        await this.onChanged(value, {source, generation, operation: `browser-${action}`, request_id, browser_id: operationId});
+        return this.valid(source, generation, operation);
       } catch (error) {
-        if (this.valid(source, generation, operation)) { this.error = error?.message || String(error); this.toast(this.error, true); }
+        if (this.valid(source, generation, operation)) {
+          const status = error?.status;
+          const definitive = Number.isInteger(status) && status >= 400 && status < 500 && status !== 408;
+          const reportsUncertain = error?.uncertain === true || /outcome uncertain|Request ID:/i.test(error?.message || '');
+          const uncertain = posted && (reportsUncertain || !definitive);
+          const detail = error?.message || String(error);
+          this.error = uncertain ? `${detail}. Outcome uncertain; do not retry. Request ID ${request_id}` : detail;
+          if (uncertain) this.uncertain = true; this.toast(this.error, true);
+        }
         return false;
       } finally { if (this.valid(source, generation, operation)) { this.saving = false; this.render(); } }
     }
 
+    makeButton(doc, label, callback, disabled = false, danger = false) {
+      const button = doc?.createElement?.('button'); if (!button) return null;
+      button.type = 'button'; button.textContent = label; button.disabled = disabled; if (danger) button.className = 'danger';
+      listen(button, 'click', callback); return button;
+    }
+    renderList() {
+      const host = this.list; if (!host) return;
+      const doc = host.ownerDocument || root.document, rows = [];
+      for (const item of this.registry?.browsers || []) {
+        const row = doc?.createElement?.('div'); if (!row) break; row.className = 'browser-management-row';
+        const label = doc?.createElement?.('span');
+        if (label) { label.textContent = `${item.name} — ${item.kind === 'external' ? `external port ${item.port}` : 'managed'} — ${item.running ? 'running' : item.state || 'stopped'}`; row.appendChild?.(label); }
+        const busy = this.loading || this.saving || this.uncertain;
+        const rename = this.makeButton(doc, 'Rename', () => void this.rename(item.id), busy);
+        const stop = this.makeButton(doc, 'Stop', () => void this.stop(item.id), busy || item.kind !== 'managed' || !item.running || !item.can_stop, true);
+        const remove = this.makeButton(doc, 'Remove', () => void this.remove(item.id), busy || item.kind === 'managed' && (item.running || item.state !== 'stopped'), true);
+        for (const button of [rename, stop, remove]) if (button) row.appendChild?.(button);
+        rows.push(row);
+      }
+      if (host.replaceChildren) host.replaceChildren(...rows);
+      else { while (host.firstChild) host.removeChild(host.firstChild); for (const row of rows) host.appendChild?.(row); }
+    }
     render() {
-      text(this.owner, `Owning server: ${this.ownerName(this.source)}`);
-      const blocked = this.loading || this.saving || !this.settings;
-      if (this.enabled) this.enabled.disabled = blocked || this.running;
-      if (this.headless) this.headless.disabled = blocked || this.running;
-      if (this.executable) { this.executable.disabled = blocked || this.running; this.executable.placeholder = 'Custom executable'; }
-      if (this.executableSelect) this.executableSelect.disabled = blocked || this.running;
-      this.renderDiscoveryOptions();
+      text(this.owner, `Owning server: ${this.ownerName(this.source)}`); this.renderDiscoveryOptions(); this.renderList();
+      const blocked = this.loading || this.saving || this.uncertain;
+      for (const node of [this.headless, this.executableSelect, this.executable, this.instanceName, this.existingName, this.existingPort]) if (node) node.disabled = blocked;
+      if (this.launchButton) { this.launchButton.disabled = blocked || !this.registry; this.launchButton.textContent = this.saving ? 'Please wait…' : 'Launch browser'; }
+      if (this.addButton) this.addButton.disabled = blocked || !this.registry;
+      if (this.refreshButton) this.refreshButton.disabled = this.loading || this.saving;
       if (this.customExecutable) this.customExecutable.hidden = this.executableSelect?.value !== '__custom__';
-      if (this.save) { this.save.disabled = blocked || this.running || !this.dirty.size; this.save.textContent = this.saving ? 'Saving…' : 'Save browser settings'; }
-      if (this.status) this.status.textContent = this.loading ? 'Loading browser settings…' : this.saving ? 'Saving browser settings…' : this.error ||
-        (this.running ? 'Browser settings cannot be changed while the browser is running.' : this.settings ?
-          'Browser launch is opt-in. Saving settings never launches the browser.' : 'Browser settings have not been loaded.');
+      if (this.status) this.status.textContent = this.loading ? 'Loading browser instances…' : this.saving ? 'Updating browser instances…' : this.error ||
+        (this.uncertain ? 'A request outcome is uncertain. Inspect the server, then explicitly refresh before another change.' :
+          this.registry ? `${this.registry.browsers.length} browser instance(s).` : 'Browser instances have not been loaded.');
       if (this.discoveryStatus) {
         const unavailable = this.discovery.unavailable.map(item => `${item.name} is unavailable: ${item.reason}`).join(' ');
         this.discoveryStatus.textContent = this.discoveryLoading ? 'Discovering installed browsers…' : this.discoveryError ||
-          [this.discovery.browsers.length ? `${this.discovery.browsers.length} installed browser option(s) found.` :
-            'No installed browser options were discovered.', unavailable].filter(Boolean).join(' ');
+          [this.discovery.browsers.length ? `${this.discovery.browsers.length} installed browser option(s) found.` : 'No installed browser options were discovered.', unavailable].filter(Boolean).join(' ');
       }
     }
   }

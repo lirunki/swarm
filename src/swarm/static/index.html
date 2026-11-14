@@ -7,31 +7,31 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=browser-stop-1">
+  <link rel="stylesheet" href="/static/app.css?v=browser-registry-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=browser-stop-1"></script>
-  <script defer src="/static/org-chart.js?v=browser-stop-1"></script>
-  <script defer src="/static/relay-settings.js?v=browser-stop-1"></script>
-  <script defer src="/static/terminal-touch.js?v=browser-stop-1"></script>
-  <script defer src="/static/terminal-copy.js?v=browser-stop-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=browser-stop-1"></script>
-  <script defer src="/static/terminal-keys.js?v=browser-stop-1"></script>
-  <script defer src="/static/agent-files.js?v=browser-stop-1"></script>
-  <script defer src="/static/agent-messages.js?v=browser-stop-1"></script>
-  <script defer src="/static/agent-broadcast.js?v=browser-stop-1"></script>
-  <script defer src="/static/auth.js?v=browser-stop-1"></script>
-  <script defer src="/static/fleet-control.js?v=browser-stop-1"></script>
-  <script defer src="/static/system-notifications.js?v=browser-stop-1"></script>
-  <script defer src="/static/notifications.js?v=browser-stop-1"></script>
-  <script defer src="/static/agent-groups.js?v=browser-stop-1"></script>
-  <script defer src="/static/grouping-mode.js?v=browser-stop-1"></script>
-  <script defer src="/static/agent-search.js?v=browser-stop-1"></script>
-  <script defer src="/static/history-archive.js?v=browser-stop-1"></script>
-  <script defer src="/static/agent-limits.js?v=browser-stop-1"></script>
-  <script defer src="/static/terminal-wheel.js?v=browser-stop-1"></script>
-  <script defer src="/static/remote-browser.js?v=browser-stop-1"></script>
-  <script defer src="/static/app.js?v=browser-stop-1"></script>
+  <script defer src="/static/card-views.js?v=browser-registry-1"></script>
+  <script defer src="/static/org-chart.js?v=browser-registry-1"></script>
+  <script defer src="/static/relay-settings.js?v=browser-registry-1"></script>
+  <script defer src="/static/terminal-touch.js?v=browser-registry-1"></script>
+  <script defer src="/static/terminal-copy.js?v=browser-registry-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=browser-registry-1"></script>
+  <script defer src="/static/terminal-keys.js?v=browser-registry-1"></script>
+  <script defer src="/static/agent-files.js?v=browser-registry-1"></script>
+  <script defer src="/static/agent-messages.js?v=browser-registry-1"></script>
+  <script defer src="/static/agent-broadcast.js?v=browser-registry-1"></script>
+  <script defer src="/static/auth.js?v=browser-registry-1"></script>
+  <script defer src="/static/fleet-control.js?v=browser-registry-1"></script>
+  <script defer src="/static/system-notifications.js?v=browser-registry-1"></script>
+  <script defer src="/static/notifications.js?v=browser-registry-1"></script>
+  <script defer src="/static/agent-groups.js?v=browser-registry-1"></script>
+  <script defer src="/static/grouping-mode.js?v=browser-registry-1"></script>
+  <script defer src="/static/agent-search.js?v=browser-registry-1"></script>
+  <script defer src="/static/history-archive.js?v=browser-registry-1"></script>
+  <script defer src="/static/agent-limits.js?v=browser-registry-1"></script>
+  <script defer src="/static/terminal-wheel.js?v=browser-registry-1"></script>
+  <script defer src="/static/remote-browser.js?v=browser-registry-1"></script>
+  <script defer src="/static/app.js?v=browser-registry-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -81,7 +81,7 @@
     <header class="browser-toolbar">
       <div class="browser-heading"><strong>Browser</strong><span id="browser-owner" class="hint"></span><span id="browser-status" class="hint" role="status" aria-live="polite">Browser status unavailable</span></div>
       <div class="browser-actions">
-        <button id="browser-launch" type="button" class="small primary" disabled>Launch browser</button>
+        <select id="browser-instance-select" aria-label="Browser instance"><option value="">Select a browser</option></select><button id="browser-connect" type="button" class="small primary" disabled>Connect</button>
         <button id="browser-refresh-tabs" type="button" class="small" disabled>Refresh tabs</button>
         <button id="browser-back" type="button" class="small" aria-label="Back" disabled>Back</button>
         <button id="browser-forward" type="button" class="small" aria-label="Forward" disabled>Forward</button>
@@ -248,16 +248,24 @@
     </section>
     </section>
     <details id="browser-settings-section" class="settings-section browser-settings-section">
-      <summary><span>Remote browser</span><span class="settings-scope">Selected Swarm</span></summary>
-      <p id="browser-settings-owner" class="hint">Owning server: Local Swarm</p>
-      <label class="checkbox"><input id="browser-enabled" type="checkbox" disabled>Enable remote browser launches</label>
-      <label class="checkbox"><input id="browser-headless" type="checkbox" checked disabled>Run headless</label>
-      <label for="browser-executable-select">Browser executable <span class="hint">optional</span><select id="browser-executable-select" disabled><option value="">Auto</option><option value="__custom__">Custom</option></select></label>
-      <label id="browser-executable-custom" for="browser-executable" hidden>Custom executable<input id="browser-executable" type="text" spellcheck="false" placeholder="/path/to/Edge-or-Chromium" disabled></label>
-      <p id="browser-discovery-status" class="hint" role="status" aria-live="polite">Auto discovers Microsoft Edge or Chromium on the owning server. Choose Custom to enter a path.</p>
-      <p class="hint">Settings are shared; saving never launches a browser.</p>
-      <p id="browser-settings-status" class="hint" role="status" aria-live="polite">Browser settings have not been loaded.</p>
-      <button id="browser-settings-save" type="button" class="small" disabled>Save browser settings</button>
+      <summary><span>Browsers</span><span class="settings-scope">Selected Swarm</span></summary>
+      <p id="browser-settings-owner" class="hint"></p>
+      <div class="browser-management-head"><h4>Registered browsers</h4><button id="browser-management-refresh" type="button" class="small">Refresh list</button></div>
+      <div id="browser-management-list"></div>
+      <p id="browser-settings-status" class="hint" role="status" aria-live="polite"></p>
+      <details class="browser-add-section" open><summary>Launch a new browser</summary>
+        <label>Name<input id="browser-instance-name" type="text" maxlength="80" placeholder="Work browser"></label>
+        <label>Browser<select id="browser-executable-select"><option value="">Auto-discover</option><option value="__custom__">Custom executable</option></select></label>
+        <label id="browser-executable-custom" hidden>Executable<input id="browser-executable" type="text" maxlength="4096" placeholder="Absolute executable path"></label>
+        <label class="checkbox"><input id="browser-headless" type="checkbox" checked>Run headless</label>
+        <p id="browser-discovery-status" class="hint"></p>
+        <button id="browser-settings-launch" type="button" class="small primary">Launch browser</button>
+      </details>
+      <details class="browser-add-section"><summary>Add an existing CDP port</summary>
+        <div class="form-columns"><label>Name<input id="browser-existing-name" type="text" maxlength="80" placeholder="Existing browser"></label><label>Local CDP port<input id="browser-existing-port" type="number" min="1" max="65535" step="1" placeholder="9222"></label></div>
+        <p class="hint">Loopback port on this server. Removing unregisters it; Swarm never stops an external browser.</p>
+        <button id="browser-existing-add" type="button" class="small">Add browser</button>
+      </details>
     </details>
     <section class="settings-section settings-client-section" aria-labelledby="settings-client-title">
       <div class="settings-section-heading"><h3 id="settings-client-title">Terminal</h3><span class="settings-scope">This browser</span></div>

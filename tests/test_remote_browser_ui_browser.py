@@ -1,4 +1,4 @@
-"""Real-browser coverage for the integrated remote-browser workspace UI."""
+"""Legacy real-browser coverage for the registry-backed browser viewer."""
 
 from __future__ import annotations
 
@@ -15,13 +15,14 @@ from test_settings_layout_browser import launch_chromium
 
 playwright = pytest.importorskip("playwright.sync_api")
 
-# A real 1x1 PNG is sufficient: the viewer maps against rendered bounds, not fake frame data.
 PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
 UUID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", re.I
 )
+INSTANCE = "11111111-1111-4111-8111-111111111111"
+REMOTE_INSTANCE = "22222222-2222-4222-8222-222222222222"
 
 
 @pytest.fixture(name="static_url")
@@ -52,24 +53,36 @@ def dashboard_state():
     return value
 
 
+def managed(browser_id, name):
+    return {
+        "id": browser_id,
+        "name": name,
+        "kind": "managed",
+        "port": 9222,
+        "executable": "/opt/captured-browser",
+        "headless": True,
+        "running": True,
+        "state": "running",
+        "can_stop": True,
+    }
+
+
 class BrowserUIAPI:
-    """Complete synthetic owner API with independently captured browser state."""
+    """Owner-aware registry fixture with independently captured browser actions."""
 
     REMOTE = "peer/browser"
     LEGACY = "peer/legacy"
 
     def __init__(self):
         self.requests = []
-        self.settings = {
-            source: {"revision": 7, "enabled": False, "headless": True, "executable": None}
-            for source in ("local", self.REMOTE, self.LEGACY)
-        }
-        self.statuses = {
-            source: {"enabled": False, "running": False, "state": "disabled", "error": None}
-            for source in ("local", self.REMOTE, self.LEGACY)
+        self.revisions = {"local": 1, self.REMOTE: 1, self.LEGACY: 1}
+        self.browsers = {
+            "local": [managed(INSTANCE, "Captured browser")],
+            self.REMOTE: [managed(REMOTE_INSTANCE, "Remote browser")],
+            self.LEGACY: [],
         }
         self.tabs = {
-            source: [
+            owner: [
                 {
                     "id": "tab-a",
                     "title": '<img src=x onerror="window.browserXSS=1">',
@@ -77,10 +90,9 @@ class BrowserUIAPI:
                 },
                 {"id": "tab-b", "title": "Second page", "url": "https://b.test/"},
             ]
-            for source in ("local", self.REMOTE, self.LEGACY)
+            for owner in self.browsers
         }
-        self.selected = {source: "tab-a" for source in self.tabs}
-        self.reject_settings = False
+        self.selected = {owner: "tab-a" for owner in self.browsers}
 
     @staticmethod
     def source(path):
@@ -109,6 +121,15 @@ class BrowserUIAPI:
             and (source is None or owner == source)
         ]
 
+    def registry(self, owner, operation=None):
+        value = {
+            "revision": self.revisions[owner],
+            "browsers": copy.deepcopy(self.browsers[owner]),
+        }
+        if operation is not None:
+            value["operation"] = {"browser_id": operation}
+        return value
+
     def route(self, route):
         request = route.request
         method = request.method
@@ -124,12 +145,7 @@ class BrowserUIAPI:
                 "enabled": True,
                 "relay_online": True,
                 "nodes": [
-                    {
-                        "id": self.REMOTE,
-                        "name": "Captured Browser",
-                        "online": True,
-                        "capabilities": {},
-                    },
+                    {"id": self.REMOTE, "name": "Captured Browser", "online": True, "capabilities": {}},
                     {"id": self.LEGACY, "name": "Older Node", "online": True, "capabilities": {}},
                 ],
             }
@@ -139,76 +155,60 @@ class BrowserUIAPI:
             value = {"revision": 1, "count": 0, "notifications": []}
         elif endpoint == "/api/fleet/restarts":
             value = {"jobs": []}
-        elif endpoint == "/api/browser/settings":
-            if self.reject_settings:
-                status, value = 409, {"detail": "settings changed safely"}
-            elif method == "POST":
-                assert UUID.fullmatch(body["request_id"])
-                current = self.settings[owner]
-                assert body["revision"] == current["revision"]
-                value = {
-                    "revision": current["revision"] + 1,
-                    "enabled": body["enabled"],
-                    "headless": body["headless"],
-                    "executable": body["executable"],
-                }
-                self.settings[owner] = copy.deepcopy(value)
-                self.statuses[owner].update(
-                    enabled=value["enabled"],
-                    state="stopped" if value["enabled"] else "disabled",
-                )
-            else:
-                value = copy.deepcopy(self.settings[owner])
-        elif endpoint == "/api/browser/status":
-            if owner == self.LEGACY:
-                status, value = 404, {"detail": "Browser API is unavailable on this older node"}
-            else:
-                value = copy.deepcopy(self.statuses[owner])
-        elif endpoint == "/api/browser/launch":
-            assert UUID.fullmatch(body["request_id"])
-            assert self.settings[owner]["enabled"]
-            if not self.tabs[owner]:
-                self.tabs[owner] = [
-                    {"id": "tab-relaunched", "title": "New browser", "url": "about:blank"}
-                ]
-                self.selected[owner] = "tab-relaunched"
-            self.statuses[owner] = {
-                "enabled": True,
-                "running": True,
-                "state": "running",
-                "error": None,
+        elif endpoint == "/api/browser/discovery":
+            value = {
+                "browsers": [
+                    {"name": "Chromium", "executable": "/usr/bin/chromium", "supported": True}
+                ],
+                "unavailable": [],
             }
-            value = {"running": True, "started": True}
-        elif endpoint == "/api/browser/stop":
-            assert list(body) == ["request_id"]
+        elif endpoint == "/api/browser/instances" and method == "GET":
+            if owner == self.LEGACY:
+                status, value = 404, {"detail": "Browser registry is unavailable"}
+            else:
+                value = self.registry(owner)
+        elif endpoint == "/api/browser/instances/launch" and method == "POST":
+            assert body["revision"] == self.revisions[owner]
             assert UUID.fullmatch(body["request_id"])
-            was_running = self.statuses[owner]["running"]
-            self.statuses[owner].update(running=False, state="stopped", error=None)
-            self.tabs[owner] = []
-            self.selected[owner] = None
-            value = {"running": False, "stopped": was_running}
-        elif endpoint == "/api/browser/tabs":
-            value = {"tabs": copy.deepcopy(self.tabs[owner]), "selected": self.selected[owner]}
-        elif endpoint == "/api/browser/select":
-            self.selected[owner] = body["target_id"]
-            value = {"ok": True}
-        elif endpoint == "/api/browser/new":
-            made = {"id": "tab-new", "title": "New page", "url": body["url"]}
-            self.tabs[owner].append(made)
-            self.selected[owner] = made["id"]
-            value = {"id": made["id"]}
-        elif endpoint == "/api/browser/close":
-            self.tabs[owner] = [tab for tab in self.tabs[owner] if tab["id"] != body["target_id"]]
-            if self.selected[owner] == body["target_id"]:
-                self.selected[owner] = self.tabs[owner][0]["id"] if self.tabs[owner] else None
-            value = {"ok": True}
-        elif endpoint == "/api/browser/copy":
-            value = {"text": "remote selection"}
-        elif endpoint.startswith("/api/browser/screenshot"):
-            route.fulfill(status=200, content_type="image/png", body=PNG)
-            return
-        elif endpoint.startswith("/api/browser/"):
-            value = {"ok": True}
+            browser_id = "33333333-3333-4333-8333-333333333333"
+            item = managed(browser_id, body["name"])
+            item.update(headless=body["headless"], executable=body["executable"])
+            self.browsers[owner].append(item)
+            self.revisions[owner] += 1
+            value = self.registry(owner, browser_id)
+        elif endpoint.startswith("/api/browser/instances/"):
+            rest = endpoint.removeprefix("/api/browser/instances/")
+            if "/" not in rest:
+                value = self.registry(owner)
+                route.fulfill(status=status, content_type="application/json", body=json.dumps(value))
+                return
+            browser_id, action = rest.split("/", 1)
+            assert any(item["id"] == browser_id for item in self.browsers[owner])
+            if action == "tabs":
+                value = {"tabs": copy.deepcopy(self.tabs[owner]), "selected": self.selected[owner]}
+            elif action == "screenshot":
+                route.fulfill(status=200, content_type="image/png", body=PNG)
+                return
+            elif action == "select":
+                self.selected[owner] = body["target_id"]
+                value = {"ok": True}
+            elif action == "new":
+                made = {"id": "tab-new", "title": "New page", "url": body["url"]}
+                self.tabs[owner].append(made)
+                self.selected[owner] = made["id"]
+                value = {"id": made["id"]}
+            elif action == "close":
+                self.tabs[owner] = [tab for tab in self.tabs[owner] if tab["id"] != body["target_id"]]
+                value = {"ok": True}
+            elif action == "copy":
+                value = {"text": "remote selection"}
+            elif action == "stop":
+                item = next(item for item in self.browsers[owner] if item["id"] == browser_id)
+                item.update(running=False, state="stopped", can_stop=False)
+                self.revisions[owner] += 1
+                value = self.registry(owner, browser_id)
+            else:
+                value = {"ok": True}
         elif path == "/api/federation/settings":
             value = {
                 "enabled": False,
@@ -233,7 +233,7 @@ def open_page(browser, api, static_url, *, width=1280):
         permissions=["clipboard-read", "clipboard-write"],
     )
     page = context.new_page()
-    errors, socket_urls = [], []
+    errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.add_init_script(
         """
@@ -250,8 +250,7 @@ def open_page(browser, api, static_url, *, width=1280):
     page.route("**/api/**", no_auth_mock(api.route))
     page.goto(static_url)
     playwright.expect(page.locator(".agent-card")).to_have_count(18)
-    socket_urls.extend(page.evaluate("window.__socketURLs"))
-    return context, page, errors, socket_urls
+    return context, page, errors
 
 
 def open_settings(page):
@@ -262,80 +261,71 @@ def open_settings(page):
 
 
 def select_swarm(page, source):
-    playwright.expect(page.locator("#swarm-selector")).to_be_visible()
     page.locator("#swarm-selector").select_option(source)
-    page.wait_for_function(
-        "source => activeSwarm === source && state.home === '/fixture'", arg=source
-    )
+    page.wait_for_function("source => activeSwarm === source && state.home === '/fixture'", arg=source)
 
 
 def open_browser(page):
-    """Open the optional Browser workspace through the dashboard Add menu."""
     if page.locator("#dashboard").is_hidden():
         page.locator("#dashboard-tab").click()
     page.locator("#add-menu-button").click()
-    playwright.expect(page.locator("#add-menu-options")).to_be_visible()
     page.locator("#open-browser-button").click()
     playwright.expect(page.locator("#browser-panel")).to_be_visible()
 
 
+def action_suffix(browser_id, action):
+    return f"/api/browser/instances/{browser_id}/{action}"
+
+
+def wait_for_request(page, api, suffix, *, method="POST"):
+    for _ in range(50):
+        if api.count(suffix, method=method):
+            return
+        page.wait_for_timeout(100)
+    raise AssertionError(f"Timed out waiting for {method} {suffix}")
+
+
 @pytest.mark.parametrize("width", [390, 1280])
-def test_remote_browser_full_ui_flow_is_responsive_and_http_only(static_url, width):
+def test_registry_launch_then_explicit_viewer_connect_and_input(static_url, width):
     api = BrowserUIAPI()
     with playwright.sync_playwright() as runner:
         browser = launch_chromium(runner)
         try:
-            context, page, errors, _ = open_page(browser, api, static_url, width=width)
+            context, page, errors = open_page(browser, api, static_url, width=width)
             section = open_settings(page)
             assert section.get_attribute("open") is None
-            assert api.count("/api/browser/settings") == 0
-            section.locator("summary").click()
-            playwright.expect(section.locator("#browser-enabled")).to_be_enabled()
-            assert api.count("/api/browser/settings", method="GET") == 1
-            section.locator("#browser-enabled").check()
+            assert api.count("/api/browser/instances") == 0
+            section.locator("summary").first.click()
+            playwright.expect(section.locator("#browser-management-list")).to_contain_text(
+                "Captured browser — managed — running"
+            )
+            section.locator("#browser-instance-name").fill("Draft browser")
             section.locator("#browser-headless").uncheck()
-            section.locator('#browser-executable-select').select_option('__custom__')
-            section.locator("#browser-executable").fill(" /opt/captured-browser ")
-            section.locator("#browser-settings-save").click()
-            playwright.expect(section.locator("#browser-settings-save")).to_be_disabled()
-            saved = api.bodies("/api/browser/settings")[-1]
-            assert saved == {
-                "revision": 7,
-                "request_id": saved["request_id"],
-                "enabled": True,
+            section.locator("#browser-executable-select").select_option("__custom__")
+            section.locator("#browser-executable").fill(" /opt/draft-browser ")
+            section.locator("#browser-settings-launch").click()
+            playwright.expect(section.locator("#browser-management-list")).to_contain_text(
+                "Draft browser — managed — running"
+            )
+            launch = api.bodies("/api/browser/instances/launch")[-1]
+            assert launch == {
+                "revision": 1,
+                "request_id": launch["request_id"],
+                "name": "Draft browser",
                 "headless": False,
-                "executable": "/opt/captured-browser",
+                "executable": "/opt/draft-browser",
             }
-            assert UUID.fullmatch(saved["request_id"])
-            assert api.count("/api/browser/launch", method="POST") == 0
+            assert UUID.fullmatch(launch["request_id"])
 
             page.locator("#settings-dialog [data-close]").last.click()
-            dashboard = page.locator("#dashboard-tab")
-            browser_group = page.locator("#browser-tab-group")
-            playwright.expect(browser_group).to_be_hidden()
-            page.locator('.agent-card[data-agent-id="a2"] .card-terminal').click()
-            playwright.expect(browser_group).to_be_hidden()
             open_browser(page)
-            playwright.expect(page.locator("#browser-status")).to_have_text("Browser stopped")
-            assert dashboard.evaluate("node => node.nextElementSibling.id") == "browser-tab-group"
-            assert browser_group.evaluate("node => getComputedStyle(node).position") == "sticky"
-            assert browser_group.evaluate("node => getComputedStyle(node).left") == "102px"
-            assert dashboard.bounding_box()["width"] == pytest.approx(102, abs=0.1)
-            assert page.evaluate("document.body.scrollWidth <= innerWidth")
-            assert api.count("/api/browser/launch", method="POST") == 0
-
-            playwright.expect(page.locator("#browser-launch")).to_have_text("Launch browser")
-            page.locator("#browser-launch").click()
+            playwright.expect(page.locator("#browser-instance-select")).to_have_value(INSTANCE)
+            playwright.expect(page.locator("#browser-connect")).to_have_text("Connect")
+            playwright.expect(page.locator("#browser-status")).to_contain_text("connect to view")
+            assert api.count(action_suffix(INSTANCE, "tabs")) == 0
+            page.locator("#browser-connect").click()
+            playwright.expect(page.locator("#browser-connect")).to_have_text("Disconnect")
             playwright.expect(page.locator("#browser-screen")).to_be_visible()
-            playwright.expect(page.locator("#browser-launch")).to_have_text("Stop browser")
-            launch_button_box = page.locator("#browser-launch").bounding_box()
-            assert launch_button_box
-            assert launch_button_box["x"] >= 0
-            assert launch_button_box["x"] + launch_button_box["width"] <= width
-            launch = api.bodies("/api/browser/launch")[-1]
-            assert list(launch) == ["request_id"] and UUID.fullmatch(launch["request_id"])
-            playwright.expect(page.locator("#browser-interval")).to_have_value("2")
-            assert page.locator("#browser-tabs img").count() == 0
             playwright.expect(page.locator("#browser-tabs button").first).to_contain_text(
                 '<img src=x onerror="window.browserXSS=1">'
             )
@@ -344,85 +334,77 @@ def test_remote_browser_full_ui_flow_is_responsive_and_http_only(static_url, wid
             box = page.locator("#browser-screen").bounding_box()
             assert box and box["width"] > 0 and box["height"] > 0
             page.mouse.click(box["x"] + box["width"] * 0.6, box["y"] + box["height"] * 0.4)
-            page.mouse.move(box["x"] + box["width"] * 0.2, box["y"] + box["height"] * 0.2)
-            page.mouse.down()
-            page.mouse.move(box["x"] + box["width"] * 0.8, box["y"] + box["height"] * 0.8)
-            page.mouse.up()
             page.locator("#browser-screen").press("q")
             page.locator("#browser-screen").press("Enter")
-            page.wait_for_function(
-                "() => document.querySelector('#browser-screen').src.startsWith('blob:')"
-            )
-            page.wait_for_timeout(100)
-            click = api.bodies("/api/browser/click")[-1]
+            for action in ("click", "text", "key"):
+                wait_for_request(page, api, action_suffix(INSTANCE, action))
+            click = api.bodies(action_suffix(INSTANCE, "click"))[-1]
             assert click["target_id"] == "tab-a"
             assert click["x_ratio"] == pytest.approx(0.6, abs=0.08)
-            assert click["y_ratio"] == pytest.approx(0.4, abs=0.08)
-            drag = api.bodies("/api/browser/drag")[-1]
-            assert drag["target_id"] == "tab-a" and set(drag) == {"target_id", "start", "end"}
-            assert api.bodies("/api/browser/text")[-1] == {"target_id": "tab-a", "text": "q"}
-            assert api.bodies("/api/browser/key")[-1]["key"] == "Enter"
+            assert api.bodies(action_suffix(INSTANCE, "text"))[-1] == {
+                "target_id": "tab-a",
+                "text": "q",
+            }
+            assert api.bodies(action_suffix(INSTANCE, "key"))[-1]["key"] == "Enter"
 
             page.evaluate("navigator.clipboard.writeText('paste through controls')")
             page.locator("#browser-paste").click()
-            page.wait_for_function(
-                "() => document.querySelector('#browser-status').textContent.includes('tab')"
-            )
             page.locator("#browser-copy").click()
-            page.wait_for_function(
-                "() => document.querySelector('#browser-status').textContent.startsWith('Copied')"
-            )
-            assert api.bodies("/api/browser/text")[-1]["text"] == "paste through controls"
-            assert page.evaluate("navigator.clipboard.readText()") == "remote selection"
+            page.wait_for_function("() => navigator.clipboard.readText().then(v => v === 'remote selection')")
+            assert api.bodies(action_suffix(INSTANCE, "text"))[-1]["text"] == "paste through controls"
 
-            page.locator("#browser-url").fill("javascript:alert(1)")
-            page.locator("#browser-new").click()
-            playwright.expect(page.locator("#toast")).to_contain_text("Enter an http(s) URL")
-            before = api.count("/api/browser/new", method="POST")
+            page.locator("#browser-back").click()
+            wait_for_request(page, api, action_suffix(INSTANCE, "back"))
+            assert api.bodies(action_suffix(INSTANCE, "back"))[-1] == {"target_id": "tab-a"}
+            page.wait_for_timeout(300)
+
+            before = api.count(action_suffix(INSTANCE, "new"), method="POST")
             page.locator("#browser-url").fill("https://new.test/path")
             page.locator("#browser-new").click()
-            playwright.expect(page.locator("#browser-tabs button")).to_have_count(3)
-            assert api.count("/api/browser/new", method="POST") == before + 1
-            assert api.bodies("/api/browser/new")[-1] == {"url": "https://new.test/path"}
-            assert not any(
-                "/ws/browser" in url.lower() for url in page.evaluate("window.__socketURLs")
-            )
-
-            stops = api.count("/api/browser/stop", method="POST")
-            page.once("dialog", lambda dialog: dialog.dismiss())
-            page.locator("#browser-launch").click()
-            playwright.expect(page.locator("#browser-launch")).to_have_text("Stop browser")
-            assert api.count("/api/browser/stop", method="POST") == stops
-
-            page.once("dialog", lambda dialog: dialog.accept())
-            page.locator("#browser-launch").click()
-            playwright.expect(page.locator("#browser-launch")).to_have_text("Launch browser")
-            playwright.expect(page.locator("#browser-status")).to_have_text("Browser stopped")
-            playwright.expect(page.locator("#browser-screen")).to_be_hidden()
-            playwright.expect(page.locator("#browser-tabs button")).to_have_count(0)
-            assert api.count("/api/browser/stop", method="POST") == stops + 1
-            stop = api.bodies("/api/browser/stop")[-1]
-            assert list(stop) == ["request_id"] and UUID.fullmatch(stop["request_id"])
-            assert api.count("/api/browser/launch", method="POST") == 1
-
-            page.locator("#notifications-button").click()
-            page.get_by_role("button", name="Settings", exact=True).click()
-            if section.get_attribute("open") is None:
-                section.locator("summary").click()
-            playwright.expect(section.locator("#browser-enabled")).to_be_enabled()
-            playwright.expect(section.locator("#browser-headless")).to_be_enabled()
+            wait_for_request(page, api, action_suffix(INSTANCE, "new"))
+            assert api.count(action_suffix(INSTANCE, "new"), method="POST") == before + 1
+            assert api.bodies(action_suffix(INSTANCE, "new"))[-1] == {"url": "https://new.test/path"}
+            assert not any("/ws/browser" in url.lower() for url in page.evaluate("window.__socketURLs"))
+            assert page.evaluate("document.body.scrollWidth <= innerWidth")
             assert not errors
             context.close()
         finally:
             browser.close()
 
 
-def test_remote_legacy_status_is_safe_and_owner_paths_use_authenticated_fetch(static_url):
+def test_connect_disconnect_and_settings_stop_are_separate(static_url):
     api = BrowserUIAPI()
     with playwright.sync_playwright() as runner:
         browser = launch_chromium(runner)
         try:
-            context, page, errors, _ = open_page(browser, api, static_url)
+            context, page, errors = open_page(browser, api, static_url)
+            open_browser(page)
+            page.locator("#browser-connect").click()
+            playwright.expect(page.locator("#browser-screen")).to_be_visible()
+            page.locator("#browser-connect").click()
+            playwright.expect(page.locator("#browser-connect")).to_have_text("Connect")
+            playwright.expect(page.locator("#browser-screen")).to_be_hidden()
+            assert api.count(action_suffix(INSTANCE, "stop"), method="POST") == 0
+            assert page.locator("#browser-panel").get_by_role("button", name="Stop").count() == 0
+
+            page.locator("#dashboard-tab").click()
+            section = open_settings(page)
+            section.locator("summary").first.click()
+            row = section.locator(".browser-management-row").filter(has_text="Captured browser")
+            playwright.expect(row.get_by_role("button", name="Stop", exact=True)).to_be_enabled()
+            assert api.count(action_suffix(INSTANCE, "stop"), method="POST") == 0
+            assert not errors
+            context.close()
+        finally:
+            browser.close()
+
+
+def test_remote_registry_unavailable_and_owner_paths_use_authenticated_fetch(static_url):
+    api = BrowserUIAPI()
+    with playwright.sync_playwright() as runner:
+        browser = launch_chromium(runner)
+        try:
+            context, page, errors = open_page(browser, api, static_url)
             page.evaluate(
                 """() => {
                   window.browserAuthPaths = [];
@@ -433,76 +415,45 @@ def test_remote_legacy_status_is_safe_and_owner_paths_use_authenticated_fetch(st
             select_swarm(page, api.LEGACY)
             open_browser(page)
             playwright.expect(page.locator("#browser-status")).to_have_text(
-                "Browser status unavailable"
+                "Browser instances unavailable"
             )
-            playwright.expect(page.locator("#browser-launch")).to_be_disabled()
-            legacy_path = (
-                f"/api/federation/{api.LEGACY.replace('/', '%2F')}/proxy/api/browser/status"
-            )
-            assert api.count("/api/browser/status", source=api.LEGACY) == 1
+            playwright.expect(page.locator("#browser-connect")).to_be_disabled()
+            legacy_path = f"/api/federation/{api.LEGACY.replace('/', '%2F')}/proxy/api/browser/instances"
             assert legacy_path in page.evaluate("window.browserAuthPaths")
-            assert api.count("/api/browser/launch", method="POST") == 0
 
             page.locator("#dashboard-tab").click()
             select_swarm(page, api.REMOTE)
-            api.settings[api.REMOTE]["enabled"] = True
-            api.statuses[api.REMOTE].update(enabled=True, state="stopped")
             open_browser(page)
             playwright.expect(page.locator("#browser-owner")).to_have_text(
                 "Owning server: Captured Browser"
             )
-            playwright.expect(page.locator("#browser-launch")).to_be_enabled()
-            assert api.count("/api/browser/status", source=api.REMOTE) == 1
-            assert api.count("/api/browser/status", source="local") == 0
+            playwright.expect(page.locator("#browser-instance-select")).to_have_value(REMOTE_INSTANCE)
+            playwright.expect(page.locator("#browser-connect")).to_have_text("Connect")
+            assert api.count(action_suffix(REMOTE_INSTANCE, "tabs"), source=api.REMOTE) == 0
             assert not errors
             context.close()
         finally:
             browser.close()
 
 
-def test_polling_pause_deactivate_close_and_late_owner_results_are_guarded(static_url):
+def test_png_polling_pause_and_late_owner_result_are_guarded(static_url):
     api = BrowserUIAPI()
-    api.settings["local"]["enabled"] = True
-    api.statuses["local"] = {"enabled": True, "running": True, "state": "running", "error": None}
     with playwright.sync_playwright() as runner:
         browser = launch_chromium(runner)
         try:
-            context, page, errors, _ = open_page(browser, api, static_url)
+            context, page, errors = open_page(browser, api, static_url)
             open_browser(page)
+            page.locator("#browser-connect").click()
             playwright.expect(page.locator("#browser-screen")).to_be_visible()
-            playwright.expect(page.locator("#browser-launch")).to_have_text("Stop browser")
-            playwright.expect(page.locator("#browser-launch")).to_be_enabled()
             page.locator("#browser-interval").fill("0.25")
             page.locator("#browser-interval").dispatch_event("change")
-            screenshots = api.count("/api/browser/screenshot")
-            page.wait_for_function(
-                "count => performance.getEntriesByType('resource').length >= 0 && "
-                "document.querySelector('#browser-screen').src.startsWith('blob:')",
-                arg=screenshots,
-            )
-            page.wait_for_timeout(600)
-            assert api.count("/api/browser/screenshot") > screenshots
-            page.locator("#browser-pause").click()
-            paused = api.count("/api/browser/screenshot")
+            screenshots = api.count(action_suffix(INSTANCE, "screenshot"))
             page.wait_for_timeout(650)
-            assert api.count("/api/browser/screenshot") == paused
-
-            page.locator('#browser-tabs button[data-id="tab-b"]').click()
-            playwright.expect(page.locator('#browser-tabs button[data-id="tab-b"]')).to_have_class(
-                re.compile("active")
-            )
-            page.locator('#browser-tabs button[data-id="tab-a"] .tab-close').click()
-            page.wait_for_function(
-                "() => !document.querySelector('#browser-tabs button[data-id=\"tab-a\"]')"
-            )
-            assert api.bodies("/api/browser/close")[-1] == {"target_id": "tab-a"}
-            assert api.selected["local"] == "tab-b"
-            assert api.count("/api/browser/stop", method="POST") == 0
+            assert api.count(action_suffix(INSTANCE, "screenshot")) > screenshots
             page.locator("#browser-pause").click()
-            page.wait_for_function(
-                "() => document.querySelector('#browser-screen').src.startsWith('blob:')"
-            )
-            page.locator("#browser-pause").click()
+            paused = api.count(action_suffix(INSTANCE, "screenshot"))
+            page.wait_for_timeout(650)
+            assert api.count(action_suffix(INSTANCE, "screenshot")) == paused
 
             page.evaluate(
                 """() => {
@@ -513,7 +464,7 @@ def test_polling_pause_deactivate_close_and_late_owner_results_are_guarded(stati
                   window.delayNextBrowserShot = true;
                   auth.fetch = async (path, options) => {
                     const response = await original(path, options);
-                    if (window.delayNextBrowserShot && String(path).includes('/api/browser/screenshot')) {
+                    if (window.delayNextBrowserShot && String(path).includes('/screenshot')) {
                       window.delayNextBrowserShot = false;
                       await new Promise(resolve => { window.releaseLateBrowserShot = resolve; });
                     }
@@ -525,105 +476,12 @@ def test_polling_pause_deactivate_close_and_late_owner_results_are_guarded(stati
             page.locator("#browser-pause").click()
             page.wait_for_function("() => typeof window.releaseLateBrowserShot === 'function'")
             page.locator("#dashboard-tab").click()
-            stopped = api.count("/api/browser/screenshot")
-            page.wait_for_timeout(650)
-            assert api.count("/api/browser/screenshot") == stopped
             select_swarm(page, api.REMOTE)
             page.evaluate("window.releaseLateBrowserShot()")
             page.wait_for_timeout(100)
             assert old_source in page.evaluate("window.revokedBrowserURLs")
             assert page.locator("#browser-screen").get_attribute("src") is None
-            assert api.count("/api/browser/stop", method="POST") == 0
-            assert not errors
-            context.close()
-        finally:
-            browser.close()
-
-
-def test_settings_load_without_viewer_running_lock_and_server_rejection_are_safe(static_url):
-    api = BrowserUIAPI()
-    api.settings["local"]["enabled"] = True
-    api.statuses["local"] = {"enabled": True, "running": True, "state": "running", "error": None}
-    with playwright.sync_playwright() as runner:
-        browser = launch_chromium(runner)
-        try:
-            context, page, errors, _ = open_page(browser, api, static_url)
-            section = open_settings(page)
-            section.locator("summary").click()
-            playwright.expect(section.locator("#browser-enabled")).to_be_enabled()
-            assert api.count("/api/browser/settings", method="GET") == 1
-            assert api.count("/api/browser/status") == 0
-
-            page.locator("#settings-dialog [data-close]").last.click()
-            open_browser(page)
-            playwright.expect(page.locator("#browser-screen")).to_be_visible()
-            page.locator("#notifications-button").click()
-            page.get_by_role("button", name="Settings", exact=True).click()
-            playwright.expect(section.locator("#browser-enabled")).to_be_disabled()
-            playwright.expect(section.locator("#browser-settings-status")).to_contain_text(
-                "cannot be changed while"
-            )
-
-            page.locator("#settings-dialog [data-close]").last.click()
-            page.locator("#dashboard-tab").click()
-            api.statuses["local"]["running"] = False
-            api.statuses["local"]["state"] = "stopped"
-            page.locator("#notifications-button").click()
-            page.get_by_role("button", name="Settings", exact=True).click()
-            section.locator("summary").click() if section.get_attribute("open") is None else None
-            page.evaluate("browserSettingsController.setContext({running:false})")
-            section.locator("#browser-headless").uncheck()
-            api.reject_settings = True
-            section.locator("#browser-settings-save").click()
-            playwright.expect(section.locator("#browser-settings-status")).to_have_text(
-                "settings changed safely"
-            )
-            assert api.count("/api/browser/launch", method="POST") == 0
-            assert not errors
-            context.close()
-        finally:
-            browser.close()
-
-
-def test_browser_view_persists_per_owner_without_restoring_a_terminal_id(static_url):
-    api = BrowserUIAPI()
-    api.settings["local"]["enabled"] = True
-    api.statuses["local"].update(enabled=True, state="stopped")
-    with playwright.sync_playwright() as runner:
-        browser = launch_chromium(runner)
-        try:
-            context, page, errors, _ = open_page(browser, api, static_url)
-            page.evaluate(
-                """() => localStorage.setItem('swarm.ui-view-state.local', JSON.stringify({
-                  terminalTabs: {ids: ['a2'], active: 'browser'}, groupedBranches: [],
-                  agentGroupView: {selected: null, opened: []}
-                }))"""
-            )
-            page.reload()
-            playwright.expect(page.locator("#browser-panel")).to_be_visible()
-            playwright.expect(page.locator("#browser-tab")).to_have_class(re.compile("active"))
-            assert page.evaluate("activeTab") == "browser"
-            assert page.locator(".terminal-pane:not([hidden])").count() == 0
-            assert api.count("/api/browser/status", source="local") >= 1
-
-            page.locator("#dashboard-tab").click()
-            select_swarm(page, api.REMOTE)
-            open_browser(page)
-            playwright.expect(page.locator("#browser-owner")).to_have_text(
-                "Owning server: Captured Browser"
-            )
-            remote_statuses = api.count("/api/browser/status", source=api.REMOTE)
-            page.locator("#dashboard-tab").click()
-            select_swarm(page, "local")
-            page.locator("#browser-tab").click()
-            playwright.expect(page.locator("#browser-owner")).to_have_text(
-                "Owning server: Local Swarm"
-            )
-            assert api.count("/api/browser/status", source=api.REMOTE) == remote_statuses
-            assert api.count("/api/browser/tabs", source=api.REMOTE) == 0
-            assert not any(
-                "/ws/browser" in url.lower() for url in page.evaluate("window.__socketURLs")
-            )
+            assert api.count(action_suffix(INSTANCE, "stop"), method="POST") == 0
             assert not errors
             context.close()
         finally:

@@ -23,11 +23,11 @@ class Element {
 
 test('Browser tab, screenshot-only viewer, settings, and controller asset are present', () => {
   assert.match(html, /id="tabs"[\s\S]*id="dashboard-tab"[\s\S]*<span id="browser-tab-group" class="tab-group" hidden>[\s\S]*id="browser-tab"[\s\S]*id="browser-tab-close"/);
-  for (const id of ['browser-panel', 'browser-owner', 'browser-status', 'browser-launch', 'browser-refresh-tabs',
+  for (const id of ['browser-panel', 'browser-owner', 'browser-status', 'browser-connect', 'browser-instance-select', 'browser-refresh-tabs',
     'browser-back', 'browser-forward', 'browser-reload', 'browser-copy', 'browser-paste', 'browser-url',
     'browser-new', 'browser-interval', 'browser-pause', 'browser-tabs', 'browser-screen', 'browser-placeholder',
-    'browser-settings-section', 'browser-settings-owner', 'browser-enabled', 'browser-headless',
-    'browser-executable', 'browser-settings-save', 'browser-settings-status']) assert.match(html, new RegExp(`id="${id}"`));
+    'browser-settings-section', 'browser-settings-owner', 'browser-management-list', 'browser-instance-name', 'browser-existing-port', 'browser-headless',
+    'browser-executable', 'browser-settings-launch', 'browser-existing-add', 'browser-settings-status']) assert.match(html, new RegExp(`id="${id}"`));
   assert.match(html, /Screenshots, not video/);
   assert.doesNotMatch(html.slice(html.indexOf('id="browser-panel"'), html.indexOf('id="group-context-menu"')), /<iframe|<video/i);
   assert.ok(html.indexOf('/static/remote-browser.js?') < html.indexOf('/static/app.js?'));

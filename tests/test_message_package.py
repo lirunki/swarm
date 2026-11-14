@@ -46,6 +46,7 @@ def test_wheel_includes_mailbox_extension_and_messages_ui(tmp_path):
             "swarm/static/agent-groups.js",
             "swarm/static/remote-browser.js",
             "swarm/browser_settings.py",
+            "swarm/browser_registry.py",
             "swarm/remote_browser.py",
             "swarm/edgemcp_browser.py",
             "swarm/edgemcp_launcher.py",

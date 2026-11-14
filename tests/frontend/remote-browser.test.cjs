@@ -6,542 +6,375 @@ const path = require('node:path');
 const {RemoteBrowserController, BrowserSettingsController, MAX_QUEUE} =
   require('../../src/swarm/static/remote-browser.js');
 const tick = () => new Promise(resolve => setImmediate(resolve));
+const A = '11111111-1111-4111-8111-111111111111';
+const B = '22222222-2222-4222-8222-222222222222';
+const C = '33333333-3333-4333-8333-333333333333';
 
 class Element {
   constructor() {
     this.value = ''; this.textContent = ''; this.disabled = false; this.hidden = false;
     this.checked = false; this.events = new Map(); this.children = []; this.attributes = new Map();
-    this._dataset = {};
+    this.classList = {toggle() {}}; this.dataset = {};
   }
-  get dataset() { return this._dataset; }
   addEventListener(name, callback) { this.events.set(name, callback); }
-  dispatch(name, event = {}) { return this.events.get(name)?.({preventDefault() {}, stopPropagation() {}, ...event, target: this}); }
+  dispatch(name, event = {}) { return this.events.get(name)?.({preventDefault() {}, stopPropagation() {}, ...event, target: this, currentTarget: this}); }
   appendChild(node) { this.children.push(node); this.firstChild = this.children[0]; }
   removeChild(node) { this.children.splice(this.children.indexOf(node), 1); this.firstChild = this.children[0]; }
   replaceChildren(...nodes) { this.children = nodes; this.firstChild = nodes[0]; }
   setAttribute(name, value) { this.attributes.set(name, value); }
   removeAttribute(name) { this.attributes.delete(name); if (name === 'src') this.src = ''; }
   getBoundingClientRect() { return {left: 10, top: 20, width: 200, height: 100}; }
-  setPointerCapture() {}
-  releasePointerCapture() {}
-  focus() { this.focused = true; }
+  setPointerCapture() {} releasePointerCapture() {} focus() { this.focused = true; }
 }
 
-const IDS = ['panel', 'owner', 'status', 'launch', 'refresh-tabs', 'back', 'forward', 'reload',
-  'copy', 'paste', 'url', 'new', 'interval', 'pause', 'tabs', 'screen', 'placeholder'];
-const SETTINGS_IDS = ['settings-owner', 'enabled', 'headless', 'executable', 'settings-save', 'settings-status'];
-
+const VIEW_IDS = ['panel', 'owner', 'status', 'connect', 'instance-select', 'refresh-tabs', 'back', 'forward',
+  'reload', 'copy', 'paste', 'url', 'new', 'interval', 'pause', 'tabs', 'screen', 'placeholder'];
+const SETTINGS_IDS = ['settings-owner', 'settings-status', 'headless', 'executable-select', 'executable-manual',
+  'executable-custom', 'discovery-status', 'instance-name', 'management-list', 'settings-launch',
+  'existing-name', 'existing-port', 'existing-add', 'management-refresh'];
 function nodes() {
-  const result = Object.fromEntries([...IDS, ...SETTINGS_IDS].map(id => [`#browser-${id}`, new Element()]));
-  const ownerDocument = {createElement: () => { const node = new Element(); node.ownerDocument = ownerDocument; return node; }};
-  for (const node of Object.values(result)) node.ownerDocument = ownerDocument;
+  const result = Object.fromEntries([...VIEW_IDS, ...SETTINGS_IDS].map(id => [`#browser-${id}`, new Element()]));
+  const doc = {createElement: () => { const node = new Element(); node.ownerDocument = doc; return node; }};
+  Object.values(result).forEach(node => { node.ownerDocument = doc; });
   return result;
 }
+function managed(id = A, name = 'Main', extra = {}) {
+  return {id, name, kind: 'managed', port: null, running: true, can_stop: true,
+    state: 'running', executable: '/opt/edge', headless: true, ...extra};
+}
+function external(id = B, name = 'Existing', extra = {}) {
+  return {id, name, kind: 'external', port: 9222, running: true, can_stop: false,
+    state: 'running', executable: null, headless: true, ...extra};
+}
+function registry(revision = 3, browsers = [managed(), external()]) { return {revision, browsers}; }
 
-function fixture(options = {}) {
-  const elements = nodes(), calls = [], toasts = [], changes = [];
-  let source = options.source || 'local', generation = 1;
-  let status = options.status || {enabled: true, running: true, state: 'running'};
-  let tabs = options.tabs || [{id: 'tab-a', title: '<b>safe title</b>', url: 'https://a.test/'}];
-  let selected = options.selected || tabs[0]?.id || null;
+function viewerFixture(options = {}) {
+  const elements = nodes(), calls = [], toasts = [];
+  let source = options.source || 'local', generation = 1, list = options.registry || registry();
+  let tabs = [{id: 'page-a', title: '<b>plain</b>', url: 'https://a.test/'}];
   const request = async (url, method = 'GET', body, binary = false) => {
     calls.push([url, method, body, binary]);
-    if (options.request) return options.request(url, method, body, binary, {status, tabs, selected});
-    if (url.endsWith('/launch')) { status = {enabled: true, running: true, state: 'running'}; return {ok: true}; }
-    if (url.endsWith('/status')) return {...status};
-    if (url.endsWith('/tabs')) return {tabs: tabs.map(tab => ({...tab})), selected};
-    if (url.includes('/screenshot?')) return new Blob(['png'], {type: 'image/png'});
-    if (url.endsWith('/select')) { selected = body.target_id; return {ok: true}; }
-    if (url.endsWith('/new')) { const made = {id: 'tab-new', title: 'New', url: body.url}; tabs.push(made); selected = made.id; return {id: made.id}; }
-    if (url.endsWith('/close')) { tabs = tabs.filter(tab => tab.id !== body.target_id); selected = tabs[0]?.id || null; return {ok: true}; }
-    if (url.endsWith('/copy')) return {text: 'remote selection'};
+    if (options.request) return options.request(url, method, body, binary);
+    if (/\/instances$/.test(url)) return structuredClone(list);
+    if (/\/tabs$/.test(url)) return {tabs, selected: tabs[0]?.id || null};
+    if (/\/screenshot\?/.test(url)) return new Blob(['png'], {type: 'image/png'});
     return {ok: true};
   };
   const controller = new RemoteBrowserController({query: selector => elements[selector] || null, request,
     currentSwarm: () => source, currentGeneration: () => generation,
-    ownerName: value => value === 'local' ? 'Local' : `Peer ${value}`,
-    toast: (...args) => toasts.push(args), confirm: options.confirm || (() => true),
-    onChanged: async (...args) => changes.push(args)});
-  return {controller, elements, calls, toasts, changes,
-    setStatus(value) { status = value; }, setTabs(value, active) { tabs = value; selected = active; },
-    switchSource(value) { source = value; generation += 1; controller.setContext(); }};
-}
-
-async function activate(t) {
-  assert.equal(await t.controller.activate(), true);
-  assert.deepEqual(t.calls.slice(0, 4).map(call => [call[0].replace(/&t=\d+$/, '&t=*'), call[1], call[3]]), [
-    ['/api/browser/status', 'GET', false],
-    ['/api/browser/tabs', 'GET', false],
-    ['/api/browser/select', 'POST', false],
-    ['/api/browser/screenshot?target_id=tab-a&t=*', 'GET', true],
-  ]);
-}
-
-test('activate uses status, tabs, select, and binary screenshot HTTP only', async () => {
-  const t = fixture();
-  await activate(t);
-  assert.equal(t.controller.selected, 'tab-a');
-  assert.equal(t.controller.displayed, 'tab-a');
-  assert.equal(t.elements['#browser-screen'].hidden, false);
-  assert.equal(t.elements['#browser-tabs'].children[0].textContent, '<b>safe title</b>');
-  assert.equal(t.elements['#browser-tabs'].children[0].children.length, 1, 'close control is a node, not page HTML');
-  assert.equal(t.calls.some(call => /^wss?:|\/ws\//i.test(call[0])), false);
-  t.controller.deactivate();
-});
-
-test('stopped activation never launches; launch is explicit and has request_id', async () => {
-  const t = fixture({status: {enabled: true, running: false, state: 'stopped'}});
-  await t.controller.activate();
-  assert.deepEqual(t.calls.map(call => call.slice(0, 2)), [['/api/browser/status', 'GET']]);
-  assert.equal(t.calls.some(call => call[0].endsWith('/launch')), false);
-  assert.equal(await t.controller.launch(), true);
-  const launch = t.calls.find(call => call[0].endsWith('/launch'));
-  assert.equal(launch[1], 'POST'); assert.match(launch[2].request_id, /^[0-9a-f-]{36}$/i);
-  assert.equal(t.calls.some(call => call[0].endsWith('/stop')), false);
-  t.controller.deactivate();
-});
-
-test('owner endpoint and generation are captured and stale late UI results are ignored', async () => {
-  let resolveStatus;
-  const pending = new Promise(resolve => { resolveStatus = resolve; });
-  const t = fixture({source: 'peer/a', request: async url => url.endsWith('/status') ? pending : {tabs: [], selected: null}});
-  const activation = t.controller.activate();
-  assert.equal(t.calls[0][0], '/api/federation/peer%2Fa/proxy/api/browser/status');
-  t.switchSource('peer/b');
-  resolveStatus({enabled: true, running: true, state: 'running'});
-  await activation;
-  assert.equal(t.controller.source, 'peer/b');
-  assert.equal(t.controller.status, null, 'late peer/a status did not alter peer/b UI');
-  assert.equal(t.calls.length, 1, 'late status did not trigger old-owner tabs or screenshot');
-  t.controller.deactivate();
-});
-
-test('launch control toggles labels and a dismissed stop confirmation sends no mutation', async () => {
-  const confirmations = [];
-  const t = fixture({confirm: message => { confirmations.push(message); return false; }});
-  await activate(t);
-  assert.equal(t.elements['#browser-launch'].textContent, 'Stop browser');
-  t.calls.length = 0;
-  assert.equal(await t.controller.toggleLaunch(), false);
-  assert.equal(confirmations.length, 1);
-  assert.match(confirmations[0], /tabs will close.*profile is retained/i);
-  assert.equal(t.calls.some(call => call[1] === 'POST'), false);
-  assert.equal(t.elements['#browser-launch'].textContent, 'Stop browser');
-  t.controller.deactivate();
-});
-
-test('accepted stop captures owner, posts one UUID, blocks double click, clears polling and never launches', async () => {
-  let releaseStop, running = true, screenshots = 0;
-  const stopped = new Promise(resolve => { releaseStop = resolve; });
-  const tabs = [{id: 'tab-a', title: 'A', url: 'https://a.test/'}];
-  const t = fixture({source: 'peer/a', request: async (url, method, body) => {
-    if (url.endsWith('/status')) return {enabled: true, running, state: running ? 'running' : 'stopped'};
-    if (url.endsWith('/tabs')) return {tabs, selected: 'tab-a'};
-    if (url.endsWith('/select')) return {ok: true};
-    if (url.includes('/screenshot?')) { screenshots += 1; return new Blob(['png'], {type: 'image/png'}); }
-    if (url.endsWith('/stop')) { await stopped; running = false; return {running: false, stopped: true}; }
-    throw Error(`unexpected request ${method} ${url} ${JSON.stringify(body)}`);
-  }});
-  assert.equal(await t.controller.activate(), true);
-  assert.equal(t.elements['#browser-launch'].textContent, 'Stop browser');
-  assert.equal(t.controller.displayed, 'tab-a');
-  assert.notEqual(t.controller.timer, null, 'running viewer has a screenshot poll scheduled');
-  t.calls.length = 0;
-
-  const first = t.controller.toggleLaunch(); await tick();
-  const second = await t.controller.toggleLaunch();
-  const stopCalls = t.calls.filter(call => call[0].endsWith('/stop'));
-  const timerWasCleared = t.controller.timer === null;
-  releaseStop();
-  const firstResult = await first;
-  assert.equal(second, false);
-  assert.equal(stopCalls.length, 1, 'an in-flight stop suppresses a double click');
-  assert.deepEqual(stopCalls[0].slice(0, 2), [
-    '/api/federation/peer%2Fa/proxy/api/browser/stop', 'POST',
-  ]);
-  assert.deepEqual(Object.keys(stopCalls[0][2]), ['request_id']);
-  assert.match(stopCalls[0][2].request_id,
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
-  assert.equal(timerWasCleared, true, 'stop immediately cancels screenshot polling');
-
-  assert.equal(firstResult, true);
-  assert.equal(t.calls.filter(call => call[0].endsWith('/stop')).length, 1);
-  assert.equal(t.calls.some(call => call[0].endsWith('/launch')), false, 'stop is never implemented as launch retry');
-  assert.equal(t.controller.displayed, null);
-  assert.equal(t.elements['#browser-screen'].src || '', '');
-  assert.equal(t.elements['#browser-tabs'].children.length, 0);
-  assert.equal(t.elements['#browser-launch'].textContent, 'Launch browser');
-  const afterStop = screenshots; await new Promise(resolve => setTimeout(resolve, 25));
-  assert.equal(screenshots, afterStop, 'stopped browser does not resume screenshot polling');
-  assert.equal(t.changes.length, 1);
-  assert.equal(t.changes[0][1].operation, 'browser-stop');
-  t.controller.deactivate();
-});
-
-test('failed stop reports its uncertain UUID once and does not retry or launch', async () => {
-  const unavailable = Error('stop transport unavailable');
-  const t = fixture({request: async url => {
-    if (url.endsWith('/status')) return {enabled: true, running: true, state: 'running'};
-    if (url.endsWith('/tabs')) return {tabs: [], selected: null};
-    if (url.endsWith('/stop')) throw unavailable;
-    return {ok: true};
-  }});
-  await t.controller.activate(); t.calls.length = 0;
-  assert.equal(await t.controller.stop(), false);
-  const stops = t.calls.filter(call => call[0].endsWith('/stop'));
-  assert.equal(stops.length, 1);
-  assert.match(stops[0][2].request_id,
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
-  assert.equal(t.calls.some(call => call[0].endsWith('/launch')), false);
-  assert.equal(t.toasts.length, 1);
-  assert.match(t.toasts[0][0], /stop transport unavailable.*Request ID [0-9a-f-]{36}/i);
-  assert.equal(t.toasts[0][1], true);
-  t.controller.deactivate();
-});
-
-test('a late stop response cannot mutate the newly selected owner', async () => {
-  let releaseStop;
-  const pending = new Promise(resolve => { releaseStop = resolve; });
-  const t = fixture({source: 'peer/a', request: async url => {
-    if (url.endsWith('/status')) return {enabled: true, running: true, state: 'running'};
-    if (url.endsWith('/tabs')) return {tabs: [], selected: null};
-    if (url.endsWith('/stop')) return pending;
-    return {ok: true};
-  }});
-  await t.controller.activate(); t.calls.length = 0;
-  const stopping = t.controller.stop(); await tick();
-  assert.equal(t.calls[0][0], '/api/federation/peer%2Fa/proxy/api/browser/stop');
-  t.switchSource('peer/b');
-  releaseStop({running: false, stopped: true});
-  assert.equal(await stopping, false);
-  assert.equal(t.controller.source, 'peer/b');
-  assert.equal(t.controller.status, null);
-  assert.equal(t.elements['#browser-owner'].textContent, 'Owning server: Peer peer/b');
-  assert.equal(t.elements['#browser-launch'].textContent, 'Launch browser');
-  assert.equal(t.changes.length, 0);
-  assert.equal(t.calls.length, 1, 'late completion does not refresh or mutate the new owner');
-  t.controller.deactivate();
-});
-
-test('pointer gesture freezes displayed target and posts ratio click without frame IDs', async () => {
-  const t = fixture(); await activate(t);
-  const before = t.calls.length;
-  t.elements['#browser-screen'].dispatch('pointerdown', {button: 0, pointerId: 7, clientX: 110, clientY: 45});
-  assert.equal(await t.controller.shot(), false, 'periodic screenshot is deferred during a gesture');
-  assert.equal(t.calls.length, before);
-  t.elements['#browser-screen'].dispatch('pointerup', {button: 0, pointerId: 7, clientX: 110, clientY: 45});
-  await tick(); await tick();
-  const click = t.calls.find(call => call[0].endsWith('/click'));
-  assert.deepEqual(click.slice(1, 3), ['POST', {target_id: 'tab-a', x_ratio: .5, y_ratio: .25}]);
-  assert.equal('frame_id' in click[2], false);
-  assert.equal(t.calls.filter(call => call[0].includes('/screenshot?')).length, 2, 'action refreshes screenshot after pointerup');
-  t.controller.deactivate();
-});
-
-test('navigation and close snapshot target and refresh tabs through HTTP', async () => {
-  const t = fixture({tabs: [
-    {id: 'tab-a', title: 'A', url: 'https://a.test/'},
-    {id: 'tab-b', title: 'B', url: 'https://b.test/'},
-  ]});
-  await activate(t); const before = t.calls.length;
-  assert.equal(await t.controller.navigate('back'), true);
-  assert.deepEqual(t.calls[before].slice(0, 3), ['/api/browser/back', 'POST', {target_id: 'tab-a'}]);
-  assert.equal(await t.controller.closeTab('tab-a'), true);
-  const close = t.calls.find(call => call[0].endsWith('/close'));
-  assert.deepEqual(close.slice(1, 3), ['POST', {target_id: 'tab-a'}]);
-  assert.equal(t.controller.selected, 'tab-b');
-  assert.equal(t.calls.some(call => 'frame_id' in (call[2] || {})), false);
-  t.controller.deactivate();
-});
-
-test('clipboard reads only on explicit paste, splits 4096 text, and copy writes remote text', async () => {
-  const original = global.navigator; let reads = 0, written = '';
-  Object.defineProperty(global, 'navigator', {configurable: true, value: {clipboard: {
-    readText: async () => { reads += 1; return 'x'.repeat(4096); },
-    writeText: async value => { written = value; },
-  }}});
-  try {
-    const t = fixture(); await activate(t);
-    assert.equal(reads, 0, 'activation and screenshots never read the OS clipboard');
-    assert.equal(await t.controller.paste(), true);
-    const chunks = t.calls.filter(call => call[0].endsWith('/text'));
-    assert.equal(chunks.length, 2); assert.deepEqual(chunks.map(call => call[2].text.length), [2048, 2048]);
-    assert.ok(chunks.every(call => call[2].target_id === 'tab-a'));
-    assert.equal(await t.controller.copy(), true); assert.equal(written, 'remote selection');
-    t.controller.deactivate();
-  } finally { Object.defineProperty(global, 'navigator', {configurable: true, value: original}); }
-});
-
-test('input queue is bounded and changing selection drops queued old-page input', async () => {
-  let release;
-  const blocked = new Promise(resolve => { release = resolve; });
-  const t = fixture({tabs: [
-    {id: 'tab-a', title: 'A', url: 'https://a.test/'},
-    {id: 'tab-b', title: 'B', url: 'https://b.test/'},
-  ], request: async (url, method, body, binary) => {
-    if (url.endsWith('/status')) return {enabled: true, running: true};
-    if (url.endsWith('/tabs')) return {tabs: [
-      {id: 'tab-a', title: 'A', url: 'https://a.test/'}, {id: 'tab-b', title: 'B', url: 'https://b.test/'},
-    ], selected: 'tab-a'};
-    if (url.includes('/screenshot?')) return new Blob(['png'], {type: 'image/png'});
-    if (url.endsWith('/text')) return blocked;
-    return {ok: true};
-  }});
-  await activate(t);
-  void t.controller.sendText('tab-a', 'first');
-  for (let index = 0; index < MAX_QUEUE + 10; index += 1) void t.controller.sendText('tab-a', `q${index}`);
-  assert.ok(t.controller.queue.length + 1 <= MAX_QUEUE);
-  assert.match(t.toasts.at(-1)[0], /queue is full/i);
-  void t.controller.select('tab-b');
-  assert.equal(t.controller.queue.length, 0, 'queued input is not replayed after selection changes');
-  release({ok: true}); await tick();
-  t.controller.deactivate();
-});
-
-test('deferred selects do not dispatch a queued selection for a stale owner', async () => {
-  let blockSelect = false, release;
-  const blocked = new Promise(resolve => { release = resolve; });
-  const tabs = [
-    {id: 'tab-a', title: 'A', url: 'https://a.test/'},
-    {id: 'tab-b', title: 'B', url: 'https://b.test/'},
-  ];
-  const t = fixture({tabs, request: async (url, method, body) => {
-    if (url.endsWith('/status')) return {enabled: true, running: true};
-    if (url.endsWith('/tabs')) return {tabs, selected: 'tab-a'};
-    if (url.includes('/screenshot?')) return new Blob(['png'], {type: 'image/png'});
-    if (url.endsWith('/select') && blockSelect) return blocked;
-    return {ok: true};
-  }});
-  await activate(t); t.calls.length = 0; blockSelect = true;
-  const first = t.controller.select('tab-a'); await tick();
-  const second = t.controller.select('tab-b');
-  assert.deepEqual(t.calls.filter(call => call[0].endsWith('/select')).map(call => call[2].target_id), ['tab-a']);
-  t.switchSource('peer/b'); release({ok: true});
-  assert.equal(await first, false); assert.equal(await second, false); await tick();
-  assert.deepEqual(t.calls.filter(call => call[0].endsWith('/select')).map(call => call[2].target_id), ['tab-a']);
-  t.controller.deactivate();
-});
-
-test('a context switch or deactivation prevents a second paste chunk', async () => {
-  for (const action of ['context switch', 'deactivate']) {
-    let release;
-    const blocked = new Promise(resolve => { release = resolve; });
-    const t = fixture({request: async (url) => {
-      if (url.endsWith('/status')) return {enabled: true, running: true};
-      if (url.endsWith('/tabs')) return {tabs: [{id: 'tab-a', title: 'A', url: 'https://a.test/'}], selected: 'tab-a'};
-      if (url.includes('/screenshot?')) return new Blob(['png'], {type: 'image/png'});
-      if (url.endsWith('/text')) return blocked;
-      return {ok: true};
-    }});
-    await activate(t); t.calls.length = 0;
-    const sending = t.controller.sendText('tab-a', 'x'.repeat(4096)); await tick();
-    assert.equal(t.calls.filter(call => call[0].endsWith('/text')).length, 1, `${action}: first chunk dispatched`);
-    if (action === 'context switch') t.switchSource('peer/b'); else t.controller.deactivate();
-    release({ok: true}); await sending; await tick();
-    assert.equal(t.calls.filter(call => call[0].endsWith('/text')).length, 1, `${action}: second chunk suppressed`);
-    t.controller.deactivate();
-  }
-});
-
-test('an uncertain timeout prevents a second paste chunk', async () => {
-  let release;
-  const blocked = new Promise(resolve => { release = resolve; });
-  const t = fixture({request: async url => {
-    if (url.endsWith('/status')) return {enabled: true, running: true};
-    if (url.endsWith('/tabs')) return {tabs: [{id: 'tab-a', title: 'A', url: 'https://a.test/'}], selected: 'tab-a'};
-    if (url.includes('/screenshot?')) return new Blob(['png'], {type: 'image/png'});
-    if (url.endsWith('/text')) return blocked;
-    return {ok: true};
-  }});
-  await activate(t); t.calls.length = 0;
-  const originalSetTimeout = global.setTimeout, originalClearTimeout = global.clearTimeout;
-  const timeoutToken = {}, scheduled = [];
-  global.setTimeout = (callback, delay, ...args) => {
-    if (delay === 20000) { scheduled.push(callback); return timeoutToken; }
-    return originalSetTimeout(callback, delay, ...args);
-  };
-  global.clearTimeout = token => token === timeoutToken ? undefined : originalClearTimeout(token);
-  try {
-    const sending = t.controller.sendText('tab-a', 'x'.repeat(4096)); await tick();
-    assert.equal(t.calls.filter(call => call[0].endsWith('/text')).length, 1);
-    scheduled[0](); assert.equal(await sending, false);
-    release({ok: true}); await tick(); await tick();
-    assert.equal(t.calls.filter(call => call[0].endsWith('/text')).length, 1);
-  } finally {
-    global.setTimeout = originalSetTimeout; global.clearTimeout = originalClearTimeout;
-    t.controller.deactivate();
-  }
-});
-
-function discoverySettingsFixture(options = {}) {
-  const elements = nodes(), calls = [], changed = [];
-  for (const id of ['executable-select', 'discovery-status']) {
-    const node = new Element(); node.ownerDocument = elements['#browser-executable'].ownerDocument;
-    elements[`#browser-${id}`] = node;
-  }
-  let source = options.source || 'local', generation = 1;
-  const settings = options.settings || {revision: 3, enabled: false, headless: true, executable: null};
-  const discovery = options.discovery || {browsers: [], unavailable: []};
-  const request = async (url, method = 'GET', body) => {
-    calls.push([url, method, body]);
-    if (options.request) return options.request(url, method, body, {source, generation});
-    if (url.endsWith('/discovery')) return discovery;
-    if (method === 'POST') return {...body, revision: body.revision + 1};
-    return settings;
-  };
-  const controller = new BrowserSettingsController({query: selector => elements[selector] || null, request,
-    currentSwarm: () => source, currentGeneration: () => generation,
-    ownerName: value => value === 'local' ? 'Local' : `Peer ${value}`,
-    onChanged: async (...args) => changed.push(args)});
-  return {controller, elements, calls, changed, switchSource(value) {
+    ownerName: value => value === 'local' ? 'Local' : `Peer ${value}`, toast: (...args) => toasts.push(args)});
+  return {controller, elements, calls, toasts, setRegistry(value) { list = value; }, switchSource(value) {
     source = value; generation += 1; controller.setContext();
   }};
 }
 
+async function activateAndConnect(t) {
+  assert.equal(await t.controller.activate(), true);
+  assert.equal(t.controller.connected, false);
+  assert.equal(await t.controller.connect(), true);
+}
+
+test('activation lists multiple instances, restores a selection, and never auto-connects', async () => {
+  const t = viewerFixture();
+  assert.equal(await t.controller.activate(), true);
+  assert.deepEqual(t.calls.map(call => call.slice(0, 2)), [['/api/browser/instances', 'GET']]);
+  assert.equal(t.controller.browserId, A);
+  assert.equal(t.controller.connected, false);
+  assert.equal(t.elements['#browser-connect'].textContent, 'Connect');
+  assert.deepEqual(t.elements['#browser-instance-select'].children.map(node => node.value), [A, B]);
+  assert.match(t.elements['#browser-instance-select'].children[1].textContent, /external :9222/);
+  assert.equal(t.calls.some(call => call[0].endsWith('/tabs')), false);
+  t.controller.deactivate();
+});
+
+test('connect revalidates ownership/running and uses instance-scoped viewer HTTP', async () => {
+  const t = viewerFixture({source: 'peer/a'}); await activateAndConnect(t);
+  assert.deepEqual(t.calls.slice(0, 5).map(call => [call[0].replace(/&t=\d+$/, '&t=*'), call[1], call[3]]), [
+    ['/api/federation/peer%2Fa/proxy/api/browser/instances', 'GET', false],
+    ['/api/federation/peer%2Fa/proxy/api/browser/instances', 'GET', false],
+    [`/api/federation/peer%2Fa/proxy/api/browser/instances/${A}/tabs`, 'GET', false],
+    [`/api/federation/peer%2Fa/proxy/api/browser/instances/${A}/select`, 'POST', false],
+    [`/api/federation/peer%2Fa/proxy/api/browser/instances/${A}/screenshot?target_id=page-a&t=*`, 'GET', true],
+  ]);
+  assert.equal(t.elements['#browser-tabs'].children[0].textContent, '<b>plain</b>');
+  assert.equal(t.elements['#browser-tabs'].children[0].children.length, 1, 'page title stays text');
+  assert.equal(t.elements['#browser-connect'].textContent, 'Disconnect');
+  t.controller.deactivate();
+});
+
+test('selector change disconnects before changing ID and never auto-connects', async () => {
+  const t = viewerFixture(); await activateAndConnect(t);
+  assert.notEqual(t.controller.timer, null); t.calls.length = 0;
+  t.elements['#browser-instance-select'].value = B;
+  t.elements['#browser-instance-select'].dispatch('change');
+  assert.equal(t.controller.browserId, B); assert.equal(t.controller.connected, false);
+  assert.equal(t.controller.timer, null); assert.equal(t.controller.tabs.length, 0);
+  assert.equal(t.elements['#browser-screen'].src || '', '');
+  assert.equal(t.calls.length, 0, 'changing instances performs no implicit connect');
+  t.controller.deactivate();
+});
+
+test('registry removal disconnects old instance before selecting a running replacement', async () => {
+  const t = viewerFixture(); await activateAndConnect(t); t.calls.length = 0;
+  t.setRegistry(registry(4, [external()]));
+  assert.equal(t.controller.updateInstances(registry(4, [external()])), true);
+  assert.equal(t.controller.browserId, B); assert.equal(t.controller.connected, false);
+  assert.equal(t.controller.tabs.length, 0); assert.equal(t.controller.queue.length, 0);
+  assert.equal(t.controller.displayed, null); assert.equal(t.elements['#browser-screen'].src || '', '');
+  t.elements['#browser-screen'].dispatch('pointerdown', {button: 0, pointerId: 7, clientX: 20, clientY: 30});
+  t.elements['#browser-screen'].dispatch('pointerup', {button: 0, pointerId: 7, clientX: 20, clientY: 30});
+  await tick();
+  assert.equal(t.calls.some(call => call[0].includes(`/instances/${A}/click`)), false);
+  assert.equal(t.calls.length, 0, 'registry retarget performs no implicit connect or old-instance click');
+  assert.equal(await t.controller.connect(), true);
+  assert.equal(t.controller.browserId, B); assert.equal(t.controller.connected, true);
+  assert.equal(t.calls.some(call => call[0].includes(`/instances/${B}/tabs`)), true);
+  t.controller.deactivate();
+});
+
+test('stopped or identity-changed selected instance disconnects without changing its ID', async () => {
+  const t = viewerFixture(); await activateAndConnect(t);
+  t.controller.updateInstances(registry(4, [managed(A, 'Main', {running: false, can_stop: false, state: 'stopped'}), external()]));
+  assert.equal(t.controller.browserId, A); assert.equal(t.controller.connected, false);
+  t.setRegistry(registry(5)); assert.equal(await t.controller.connect(), true);
+  t.controller.updateInstances(registry(6, [external(A, 'Reused'), external()]));
+  assert.equal(t.controller.browserId, A); assert.equal(t.controller.connected, false);
+  t.controller.deactivate();
+});
+
+test('lower-revision viewer refresh cannot overwrite a newer registry projection', async () => {
+  let release; const pending = new Promise(resolve => { release = resolve; });
+  const t = viewerFixture({request: url => url.endsWith('/instances') ? pending : {ok: true}});
+  const loading = t.controller.activate(); await tick();
+  t.controller.updateInstances(registry(9, [external()]));
+  release(registry(3)); await loading;
+  assert.equal(t.controller.registry.revision, 9); assert.equal(t.controller.browserId, B);
+  t.controller.deactivate();
+});
+
+test('deactivate disconnects but keeps selection; reactivation still does not connect', async () => {
+  const t = viewerFixture(); await activateAndConnect(t); const id = t.controller.browserId;
+  t.controller.deactivate(); assert.equal(t.controller.connected, false); assert.equal(t.controller.browserId, id);
+  t.calls.length = 0; await t.controller.activate();
+  assert.equal(t.controller.browserId, id); assert.equal(t.controller.connected, false);
+  assert.deepEqual(t.calls.map(call => call[0]), ['/api/browser/instances']);
+  t.controller.deactivate();
+});
+
+test('owner switch clears viewer state and late old-owner list cannot paint', async () => {
+  let release; const pending = new Promise(resolve => { release = resolve; });
+  const t = viewerFixture({source: 'peer/a', request: url => url.includes('peer%2Fa') ? pending : registry(8, [external()])});
+  const loading = t.controller.activate(); await tick(); t.switchSource('peer/b');
+  release(registry()); await loading;
+  assert.equal(t.controller.source, 'peer/b'); assert.equal(t.controller.registry, null);
+  assert.equal(t.controller.browserId, null); assert.equal(t.controller.connected, false);
+  assert.equal(t.elements['#browser-instance-select'].children.length, 0);
+  t.controller.deactivate();
+});
+
+test('queued input is bound to owner, instance, lifecycle, and page target', async () => {
+  let release; const blocked = new Promise(resolve => { release = resolve; });
+  const t = viewerFixture({request: async (url) => {
+    if (url.endsWith('/instances')) return registry();
+    if (url.endsWith('/tabs')) return {tabs: [{id: 'page-a', title: 'A', url: 'https://a'}], selected: 'page-a'};
+    if (url.includes('/screenshot?')) return new Blob(['png'], {type: 'image/png'});
+    if (url.endsWith('/text')) return blocked;
+    return {ok: true};
+  }});
+  await activateAndConnect(t); t.calls.length = 0;
+  const send = t.controller.sendText('page-a', 'x'.repeat(4096)); await tick();
+  t.elements['#browser-instance-select'].value = B; t.elements['#browser-instance-select'].dispatch('change');
+  release({ok: true}); assert.equal(await send, false); await tick();
+  const textCalls = t.calls.filter(call => call[0].endsWith('/text'));
+  assert.equal(textCalls.length, 1, 'second chunk is dropped');
+  assert.match(textCalls[0][0], new RegExp(`/instances/${A}/text$`));
+  assert.equal(t.calls.some(call => call[0].includes(`/instances/${B}/text`)), false);
+  t.controller.deactivate();
+});
+
+test('refresh means registry while disconnected and tabs while connected', async () => {
+  const t = viewerFixture(); await t.controller.activate(); t.calls.length = 0;
+  await t.controller.refreshConnection(); assert.deepEqual(t.calls.map(call => call[0]), ['/api/browser/instances']);
+  await t.controller.connect(); t.calls.length = 0; await t.controller.refreshConnection();
+  assert.equal(t.calls[0][0], `/api/browser/instances/${A}/tabs`);
+  t.controller.deactivate();
+});
+
 function settingsFixture(options = {}) {
-  const elements = nodes(), calls = [], changed = []; let source = options.source || 'local', generation = 1;
-  let saved = {revision: 3, enabled: false, headless: true, executable: null};
-  const request = async (...args) => {
-    calls.push(args);
-    if (args[1] === 'POST') saved = {...args[2], revision: args[2].revision + 1};
-    return {...saved};
+  const elements = nodes(), calls = [], changed = [], toasts = [];
+  let source = options.source || 'local', generation = 1, list = options.registry || registry();
+  const discovery = options.discovery || {browsers: [], unavailable: []};
+  const request = async (url, method = 'GET', body) => {
+    calls.push([url, method, body]);
+    if (options.request) return options.request(url, method, body);
+    if (url.endsWith('/discovery')) return discovery;
+    if (method === 'GET') return structuredClone(list);
+    list = {...list, revision: list.revision + 1};
+    return {...structuredClone(list), operation: {browser_id: body.id || A}};
   };
   const controller = new BrowserSettingsController({query: selector => elements[selector] || null, request,
     currentSwarm: () => source, currentGeneration: () => generation,
     ownerName: value => value === 'local' ? 'Local' : `Peer ${value}`,
-    onChanged: async (...args) => changed.push(args)});
-  return {controller, elements, calls, changed};
+    confirm: options.confirm || (() => true), prompt: options.prompt || ((_message, value) => `${value} renamed`),
+    toast: (...args) => toasts.push(args), onChanged: (...args) => changed.push(args)});
+  return {controller, elements, calls, changed, toasts, setRegistry(value) { list = value; }, switchSource(value) {
+    source = value; generation += 1; controller.setContext();
+  }};
 }
 
-test('settings are lazy, request-based, projected, and blocked while running', async () => {
-  const t = settingsFixture({source: 'peer/a'});
-  assert.equal(t.calls.length, 0); assert.equal(t.elements['#browser-headless'].checked, true);
+test('settings load registry then discovery and renders aliases/XSS as plain text', async () => {
+  const lexical = '/snap/bin/chromium-link';
+  const t = settingsFixture({source: 'peer/a', discovery: {browsers: [
+    {name: '<img src=x onerror=alert(1)>', executable: lexical, supported: true},
+  ], unavailable: [{name: 'Windows Edge', executable: 'C:\\Edge\\msedge.exe', reason: 'Use native Edge'}]}});
   await t.controller.load();
-  assert.deepEqual(t.calls[0], ['/api/federation/peer%2Fa/proxy/api/browser/settings', 'GET']);
-  t.elements['#browser-enabled'].checked = true; t.elements['#browser-enabled'].dispatch('input');
-  t.elements['#browser-executable'].value = ' /opt/edge '; t.elements['#browser-executable'].dispatch('input');
-  assert.equal(await t.controller.saveSettings(), true);
-  assert.deepEqual(t.calls[1][2], {revision: 3, request_id: t.calls[1][2].request_id,
-    enabled: true, headless: true, executable: '/opt/edge'});
-  assert.match(t.calls[1][2].request_id, /^[0-9a-f-]{36}$/i);
-  assert.equal(t.calls.some(call => call[0].endsWith('/launch')), false);
-  t.controller.setContext({running: true});
-  t.elements['#browser-headless'].dispatch('input');
-  assert.equal(await t.controller.saveSettings(), false);
-  assert.match(t.elements['#browser-settings-status'].textContent, /cannot be changed while/i);
-});
-
-test('browser discovery renders lexical aliases and unsafe labels as text, then requires an explicit selection', async () => {
-  const configured = '/snap/bin/chromium';
-  const t = discoverySettingsFixture({settings: {revision: 7, enabled: false, headless: true, executable: configured},
-    discovery: {browsers: [
-      {name: '<img src=x onerror=alert(1)>', executable: configured, supported: true},
-      {name: 'Chromium alias', executable: '/usr/local/bin/chromium-link', supported: true},
-    ], unavailable: [{name: 'Windows Microsoft Edge', executable: 'C:\\Program Files\\Edge\\msedge.exe',
-      reason: 'Use native Windows Swarm or install Edge/Chromium inside WSL.'}]}});
-  assert.equal(await t.controller.load(), t.controller.settings);
   assert.deepEqual(t.calls.map(call => call.slice(0, 2)), [
-    ['/api/browser/settings', 'GET'], ['/api/browser/discovery', 'GET'],
+    ['/api/federation/peer%2Fa/proxy/api/browser/instances', 'GET'],
+    ['/api/federation/peer%2Fa/proxy/api/browser/discovery', 'GET'],
   ]);
-  const select = t.elements['#browser-executable-select'];
-  assert.deepEqual(select.children.map(option => option.value), [
-    '', configured, '/usr/local/bin/chromium-link', '__unavailable_0__', '__custom__',
-  ]);
-  assert.equal(select.children[1].textContent, `<img src=x onerror=alert(1)> — ${configured}`);
-  assert.equal(select.children[1].children.length, 0, 'discovery labels are assigned only as text');
-  assert.equal(select.children[3].disabled, true);
-  assert.equal(select.children[3].textContent,
-    'Windows Microsoft Edge — Use native Windows Swarm or install Edge/Chromium inside WSL.');
-  assert.equal(select.value, configured, 'the configured lexical path snaps to its matching alias');
-  assert.match(t.elements['#browser-discovery-status'].textContent, /WSL/i);
-
-  select.value = ''; select.dispatch('change');
-  assert.equal(t.elements['#browser-executable'].value, '');
-  assert.equal(t.controller.dirty.has('executable'), true);
-  assert.equal(t.calls.length, 2, 'changing the selector does not save automatically');
-  select.value = '/usr/local/bin/chromium-link'; select.dispatch('change');
-  assert.equal(t.elements['#browser-executable'].value, '/usr/local/bin/chromium-link');
-  assert.equal(t.calls.length, 2);
-  select.value = '__custom__'; select.dispatch('change');
-  assert.equal(t.elements['#browser-executable'].focused, true);
-  t.elements['#browser-executable'].value = 'C:\\safe\\custom-browser.exe';
-  t.elements['#browser-executable'].dispatch('input');
-  assert.equal(select.value, '__custom__');
+  const options = t.elements['#browser-executable-select'].children;
+  assert.equal(options[1].value, lexical); assert.equal(options[1].textContent, `<img src=x onerror=alert(1)> — ${lexical}`);
+  assert.equal(options[1].children.length, 0); assert.equal(options[2].disabled, true);
+  const rows = t.elements['#browser-management-list'].children;
+  assert.equal(rows.length, 2); assert.match(rows[1].children[0].textContent, /Existing — external port 9222/);
 });
 
-test('settings null defaults to Auto and discovery failures preserve manual editing and saving', async () => {
-  const missing = Error('not found'); missing.status = 404;
-  const t = discoverySettingsFixture({request: async (url, method, body) => {
-    if (url.endsWith('/discovery')) throw missing;
-    if (method === 'POST') return {...body, revision: body.revision + 1};
-    return {revision: 2, enabled: false, headless: true, executable: null};
+test('launch and add snapshot strict fields and post through owner path', async () => {
+  const t = settingsFixture({source: 'peer/a'}); await t.controller.load(); t.calls.length = 0;
+  t.elements['#browser-instance-name'].value = ' New managed ';
+  t.elements['#browser-headless'].checked = false;
+  t.elements['#browser-executable-manual'].value = ' /opt/ms edge ';
+  assert.equal(await t.controller.launch(), true);
+  const launch = t.calls.find(call => call[0].endsWith('/launch'));
+  assert.equal(t.calls[0][0], '/api/federation/peer%2Fa/proxy/api/browser/instances', 'fresh registry is read before mutation');
+  assert.deepEqual(Object.keys(launch[2]).sort(), ['executable', 'headless', 'name', 'request_id', 'revision'].sort());
+  assert.deepEqual({...launch[2], request_id: '<uuid>'}, {revision: 3, request_id: '<uuid>', name: 'New managed', headless: false, executable: '/opt/ms edge'});
+  assert.match(launch[2].request_id, /^[0-9a-f-]{36}$/i);
+  t.elements['#browser-existing-name'].value = ' DevTools ';
+  t.elements['#browser-existing-port'].value = '9333'; t.calls.length = 0;
+  assert.equal(await t.controller.addExisting(), true);
+  const add = t.calls.find(call => call[0].endsWith('/add'));
+  assert.deepEqual(Object.keys(add[2]).sort(), ['name', 'port', 'request_id', 'revision'].sort());
+  assert.equal(add[2].name, 'DevTools'); assert.equal(add[2].port, 9333); assert.equal(add[2].revision, 4);
+});
+
+test('external stop does nothing; external remove is safe; running managed remove is disabled', async () => {
+  const t = settingsFixture(); await t.controller.load(); t.calls.length = 0;
+  assert.equal(await t.controller.stop(B), false); assert.equal(t.calls.length, 0);
+  assert.equal(await t.controller.remove(A), false); assert.equal(t.calls.length, 0);
+  const managedRemove = t.elements['#browser-management-list'].children[0].children.at(-1);
+  const externalStop = t.elements['#browser-management-list'].children[1].children[2];
+  assert.equal(managedRemove.disabled, true); assert.equal(externalStop.disabled, true);
+  assert.equal(await t.controller.remove(B), true);
+  const post = t.calls.find(call => call[0].endsWith('/remove'));
+  assert.deepEqual(Object.keys(post[2]).sort(), ['id', 'request_id', 'revision'].sort()); assert.equal(post[2].id, B);
+});
+
+test('revision conflict refreshes projection and requires operator review without POST', async () => {
+  let gets = 0;
+  const t = settingsFixture({request: async (url, method) => {
+    if (url.endsWith('/discovery')) return {browsers: [], unavailable: []};
+    if (method === 'POST') throw Error('must not post');
+    gets += 1; return gets === 1 ? registry(3) : registry(4, [managed(A, 'Changed')]);
   }});
-  const loaded = await t.controller.load();
-  assert.equal(loaded.executable, null);
-  assert.equal(t.controller.settings.revision, 2, 'a discovery error does not discard valid settings');
-  assert.equal(t.elements['#browser-executable-select'].value, '');
-  assert.match(t.elements['#browser-discovery-status'].textContent, /unavailable.*custom executable/i);
-  t.elements['#browser-executable'].value = 'C:\\Browsers\\edge.exe';
-  t.elements['#browser-executable'].dispatch('input');
-  assert.equal(await t.controller.saveSettings(), true);
-  const post = t.calls.find(call => call[1] === 'POST');
-  assert.equal(post[2].executable, 'C:\\Browsers\\edge.exe');
+  await t.controller.load(); t.elements['#browser-instance-name'].value = 'new'; t.calls.length = 0;
+  assert.equal(await t.controller.launch(), false);
+  assert.equal(t.calls.filter(call => call[1] === 'POST').length, 0);
+  assert.equal(t.controller.registry.revision, 4);
+  assert.match(t.elements['#browser-settings-status'].textContent, /changed.*review/i);
 });
 
-test('malformed discovery is bounded and does not replace settings or disable custom save', async () => {
-  const t = discoverySettingsFixture({discovery: {browsers: [
-    {name: `bad\u0000name`, executable: '/bin/browser', supported: true},
-  ], unavailable: []}});
-  await t.controller.load();
-  assert.equal(t.controller.settings.revision, 3);
-  assert.deepEqual(t.controller.discovery, {browsers: [], unavailable: []});
-  assert.match(t.elements['#browser-discovery-status'].textContent, /malformed.*custom executable/i);
-  t.elements['#browser-executable'].value = '/opt/manual-browser';
-  t.elements['#browser-executable'].dispatch('input');
-  assert.equal(t.elements['#browser-settings-save'].disabled, false);
-});
-
-test('owner changes discard pending discovery and never paint stale browser options', async () => {
-  let resolveA;
-  const pendingA = new Promise(resolve => { resolveA = resolve; });
-  const t = discoverySettingsFixture({source: 'peer/a', request: async url => {
-    if (url.includes('peer%2Fa') && url.endsWith('/settings'))
-      return {revision: 1, enabled: false, headless: true, executable: null};
-    if (url.includes('peer%2Fa') && url.endsWith('/discovery')) return pendingA;
-    if (url.endsWith('/settings')) return {revision: 4, enabled: true, headless: false, executable: '/b/browser'};
-    return {browsers: [{name: 'B browser', executable: '/b/browser', supported: true}], unavailable: []};
+test('lost lifecycle POST locks mutations with its UUID until a successful explicit refresh', async () => {
+  let posts = 0;
+  const t = settingsFixture({request: async (url, method) => {
+    if (url.endsWith('/discovery')) return {browsers: [], unavailable: []};
+    if (method === 'POST') { posts += 1; throw Error('transport lost'); }
+    return registry(3);
   }});
-  const loadA = t.controller.load(); await tick();
-  assert.equal(t.calls.at(-1)[0], '/api/federation/peer%2Fa/proxy/api/browser/discovery');
-  t.switchSource('peer/b');
-  assert.deepEqual(t.elements['#browser-executable-select'].children.map(option => option.value), ['', '__custom__']);
-  await t.controller.load();
-  assert.deepEqual(t.elements['#browser-executable-select'].children.map(option => option.value), ['', '/b/browser', '__custom__']);
-  resolveA({browsers: [{name: 'A browser', executable: '/a/browser', supported: true}], unavailable: []});
-  await loadA;
-  assert.equal(t.controller.source, 'peer/b');
-  assert.deepEqual(t.elements['#browser-executable-select'].children.map(option => option.value), ['', '/b/browser', '__custom__']);
+  await t.controller.load(); t.elements['#browser-instance-name'].value = 'new';
+  assert.equal(await t.controller.launch(), false); assert.equal(posts, 1); assert.equal(t.controller.uncertain, true);
+  assert.match(t.elements['#browser-settings-status'].textContent, /Request ID [0-9a-f-]{36}/i);
+  assert.equal(await t.controller.launch(), false); assert.equal(posts, 1, 'uncertain action is never retried');
+  await t.controller.load(true); assert.equal(t.controller.uncertain, false);
 });
 
-test('source contains EdgeMCP attribution, no websocket/stream protocol, and no data HTML sink', () => {
+test('uncertain 409 preserves the posted request ID and blocks another POST until refresh', async () => {
+  let posts = 0, postedId;
+  const t = settingsFixture({request: async (url, method, body) => {
+    if (url.endsWith('/discovery')) return {browsers: [], unavailable: []};
+    if (method === 'POST') {
+      posts += 1; postedId = body.request_id;
+      throw Object.assign(Error(`Browser outcome uncertain. Request ID: ${body.request_id}`), {status: 409});
+    }
+    return registry(3);
+  }});
+  await t.controller.load(); t.elements['#browser-instance-name'].value = 'new';
+  assert.equal(await t.controller.launch(), false); assert.equal(posts, 1); assert.equal(t.controller.uncertain, true);
+  assert.match(postedId, /^[0-9a-f-]{36}$/i);
+  assert.match(t.elements['#browser-settings-status'].textContent, new RegExp(postedId));
+  assert.equal(await t.controller.launch(), false); assert.equal(posts, 1);
+  await t.controller.load(true); assert.equal(t.controller.uncertain, false);
+});
+
+test('mutation acknowledgement accepts a valid projection advanced by an unrelated revision', async () => {
+  const t = settingsFixture({request: async (url, method, body) => {
+    if (url.endsWith('/discovery')) return {browsers: [], unavailable: []};
+    if (method === 'GET') return registry(3);
+    return {...registry(5, [managed(), external(), managed(C, 'New')]), operation: {browser_id: C}, request_id: body.request_id};
+  }});
+  await t.controller.load(); t.elements['#browser-instance-name'].value = 'New';
+  assert.equal(await t.controller.launch(), true);
+  assert.equal(t.controller.registry.revision, 5); assert.deepEqual(t.controller.operationIds, [C]);
+  assert.equal(t.changed.length, 1);
+});
+
+test('slow lower-revision settings GET cannot overwrite a newer projection', async () => {
+  let release, gets = 0;
+  const pending = new Promise(resolve => { release = resolve; });
+  const t = settingsFixture({request: async (url) => {
+    if (url.endsWith('/discovery')) return {browsers: [], unavailable: []};
+    gets += 1; return gets === 1 ? registry(3) : pending;
+  }});
+  await t.controller.load();
+  const loading = t.controller.load(false); await tick();
+  t.controller.setContext(registry(8, [external()]));
+  release(registry(4, [managed(A, 'Stale')])); await loading;
+  assert.equal(t.controller.registry.revision, 8);
+  assert.deepEqual(t.controller.registry.browsers.map(item => item.id), [B]);
+});
+
+test('owner context change clears busy state and stale completion has no effect', async () => {
+  let release; const pending = new Promise(resolve => { release = resolve; });
+  let source = 'local';
+  const t = settingsFixture({request: async (url, method, body) => {
+    if (url.endsWith('/discovery')) return {browsers: [], unavailable: []};
+    if (method === 'POST') return pending;
+    return source === 'local' ? registry(1) : registry(9, [external()]);
+  }});
+  await t.controller.load(); t.elements['#browser-instance-name'].value = 'new';
+  const saving = t.controller.launch(); await tick(); await tick(); assert.equal(t.controller.saving, true);
+  source = 'peer/b'; t.switchSource('peer/b');
+  assert.equal(t.controller.saving, false); assert.equal(t.controller.loading, false); assert.equal(t.controller.registry, null);
+  release({...registry(2), operation: {browser_id: A}}); await saving;
+  assert.equal(t.controller.source, 'peer/b'); assert.equal(t.controller.registry, null); assert.equal(t.changed.length, 0);
+});
+
+test('rename uses captured ID/name and list labels containing quotes stay text-only', async () => {
+  const nasty = managed(A, `O'Reilly <script>alert(1)</script>`);
+  const t = settingsFixture({registry: registry(3, [nasty]), prompt: () => `"safe" renamed`}); await t.controller.load();
+  const label = t.elements['#browser-management-list'].children[0].children[0];
+  assert.equal(label.textContent, `${nasty.name} — managed — running`); assert.equal(label.children.length, 0);
+  t.calls.length = 0; assert.equal(await t.controller.rename(A), true);
+  const post = t.calls.find(call => call[0].endsWith('/rename'));
+  assert.equal(post[2].id, A); assert.equal(post[2].name, `"safe" renamed`);
+});
+
+test('source keeps EdgeMCP screenshot core and forbids old lifecycle/protocol controls', () => {
   const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/remote-browser.js'), 'utf8');
   assert.match(source, /c09dc257886305539ea90bc454ceda63b9b150a6/);
+  assert.match(source, /createObjectURL\?\.\(blob\)/);
   assert.doesNotMatch(source, /WebSocket|createSocket|frame_id|MAX_FRAME|stream extension/i);
   assert.doesNotMatch(source, /\.innerHTML\s*=|document\.write|<iframe|evaluate\s*\(/i);
-  assert.match(source, /createObjectURL\?\.\(blob\)/);
-});
-
-
-test('settings owner switch clears old pending and running locks without stale completion effects', async () => {
-  const elements=nodes();let source='local',generation=1,resolveOld;
-  const base={revision:0,enabled:false,headless:true,executable:null};
-  const controller=new BrowserSettingsController({query:selector=>elements[selector],currentSwarm:()=>source,currentGeneration:()=>generation,
-    request:async(_path,method)=>method==='POST'?new Promise(resolve=>{resolveOld=resolve;}):{...base}});
-  await controller.load();elements['#browser-enabled'].checked=true;elements['#browser-enabled'].dispatch('input');
-  const saving=controller.saveSettings();await tick();assert.equal(controller.saving,true);
-  controller.running=true;source='remote';generation++;controller.setContext();await controller.load();
-  assert.equal(controller.saving,false);assert.equal(controller.loading,false);assert.equal(controller.running,false);
-  assert.equal(elements['#browser-enabled'].disabled,false);
-  resolveOld({...base,revision:1,enabled:true});await saving;
-  assert.equal(controller.source,'remote');assert.equal(controller.settings.enabled,false);assert.equal(controller.saving,false);
+  assert.doesNotMatch(source, /#browser-enabled|toggleLaunch|saveSettings/);
+  assert.equal(MAX_QUEUE, 32);
 });

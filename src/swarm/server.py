@@ -41,6 +41,7 @@ from .agent_limits import (
     AgentLimitsError,
 )
 from .auth import MAX_LOGIN_BODY, AuthFailure, BrowserAccess, BrowserAuthMiddleware, loopback
+from .browser_registry import BrowserRegistry, BrowserRegistryUncertain
 from .browser_settings import (
     BrowserSettings,
     BrowserSettingsConflict,
@@ -186,6 +187,9 @@ def create_app(
     history_archiver = HistoryArchiver(meta_compactor)
     browser_settings = BrowserSettings(store.home)
     remote_browser = RemoteBrowser(store.home, browser_settings)
+    browser_registry = BrowserRegistry(
+        store.home, browser_settings, legacy_manager=remote_browser
+    )
     browser_settings_lock = asyncio.Lock()
     sessions = Sessions(store, session_roots)
     grok = GrokSessions(store, grok_session_roots)
@@ -241,6 +245,7 @@ def create_app(
                 await relay_settings.close()
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
+                await asyncio.to_thread(app.state.browser_registry.close)
                 await asyncio.to_thread(app.state.remote_browser.close)
                 await asyncio.to_thread(meta_compactor.close)
                 # Stopping the web application deliberately does NOT stop any agent.
@@ -256,6 +261,7 @@ def create_app(
     app.state.output_repair = output_repair
     app.state.history_archiver = history_archiver
     app.state.remote_browser = remote_browser
+    app.state.browser_registry = browser_registry
     app.state.browser_settings = browser_settings
     app.state.sessions = sessions
     app.state.grok_sessions = grok
@@ -392,6 +398,17 @@ def create_app(
     async def remote_browser_error(_request: Request, exc: BrowserError):
         return JSONResponse({"detail": str(exc)}, status_code=409)
 
+    @app.exception_handler(BrowserRegistryUncertain)
+    async def browser_registry_uncertain(_request: Request, exc: BrowserRegistryUncertain):
+        return JSONResponse(
+            {
+                "detail": str(exc),
+                "uncertain": True,
+                "request_id": exc.request_id,
+            },
+            status_code=409,
+        )
+
     @app.exception_handler(ValueError)
     async def bad_request(request, exc):
         return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -508,6 +525,11 @@ def create_app(
         ):
             raise AuthFailure("Operator browser authentication required", 403)
 
+    async def guard_legacy_browser_mutation() -> None:
+        guard = getattr(app.state.browser_registry, "legacy_mutation_guard", None)
+        if guard is not None:
+            await asyncio.to_thread(guard)
+
     @app.get("/api/browser/discovery")
     async def get_browser_discovery(request: Request):
         require_browser_operator(request)
@@ -522,6 +544,7 @@ def create_app(
     async def set_browser_settings(request: Request):
         require_browser_operator(request)
         body = await bounded_json(request, 16 * 1024)
+        await guard_legacy_browser_mutation()
         async with browser_settings_lock:
             current = await asyncio.to_thread(browser_settings.get)
             status = await asyncio.to_thread(app.state.remote_browser.status)
@@ -537,6 +560,79 @@ def create_app(
         require_browser_operator(request)
         return await asyncio.to_thread(app.state.remote_browser.status)
 
+    @app.get("/api/browser/instances")
+    async def list_browser_instances(request: Request):
+        require_browser_operator(request)
+        return await asyncio.to_thread(app.state.browser_registry.list)
+
+    @app.post("/api/browser/instances/{action}")
+    async def browser_instance_lifecycle(action: str, request: Request):
+        require_browser_operator(request)
+        methods = {
+            "launch": "launch",
+            "add": "add_existing",
+            "rename": "rename",
+            "stop": "stop",
+            "remove": "remove",
+        }
+        method = methods.get(action)
+        if method is None:
+            raise ValueError("Unknown browser instance lifecycle action")
+        body = await bounded_json(request, 16 * 1024)
+        return await asyncio.to_thread(getattr(app.state.browser_registry, method), body)
+
+    @app.get("/api/browser/instances/{browser_id}/{action}")
+    async def browser_instance_read(browser_id: UUID, action: str, request: Request):
+        require_browser_operator(request)
+        if action not in {"tabs", "screenshot"}:
+            raise ValueError("Unknown browser action")
+        query = dict(request.query_params)
+        expected = set() if action == "tabs" else {"target_id"}
+        if set(query) != expected:
+            raise ValueError(
+                "tabs accepts no query parameters"
+                if action == "tabs"
+                else "screenshot requires only target_id"
+            )
+        result = await asyncio.to_thread(
+            app.state.browser_registry.request,
+            str(browser_id),
+            action,
+            query=query,
+        )
+        if isinstance(result, bytes):
+            if len(result) > 8 * 1024 * 1024:
+                raise ValueError("Browser screenshot exceeds 8 MiB")
+            return Response(
+                result,
+                media_type="image/png",
+                headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+            )
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/browser/instances/{browser_id}/{action}")
+    async def browser_instance_action(browser_id: UUID, action: str, request: Request):
+        require_browser_operator(request)
+        if action not in {
+            "select",
+            "new",
+            "close",
+            "back",
+            "forward",
+            "reload",
+            "click",
+            "drag",
+            "text",
+            "key",
+            "copy",
+        }:
+            raise ValueError("Unknown browser action")
+        body = await bounded_json(request, 16 * 1024)
+        result = await asyncio.to_thread(
+            app.state.browser_registry.request, str(browser_id), action, body
+        )
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
     async def browser_request_id(request: Request) -> str:
         body = await bounded_json(request, 2048)
         if set(body) != {"request_id"}:
@@ -550,6 +646,7 @@ def create_app(
     async def launch_browser(request: Request):
         require_browser_operator(request)
         request_id = await browser_request_id(request)
+        await guard_legacy_browser_mutation()
         async with browser_settings_lock:
             return await asyncio.to_thread(app.state.remote_browser.launch, request_id)
 
@@ -557,6 +654,7 @@ def create_app(
     async def stop_browser(request: Request):
         require_browser_operator(request)
         request_id = await browser_request_id(request)
+        await guard_legacy_browser_mutation()
         async with browser_settings_lock:
             return await asyncio.to_thread(app.state.remote_browser.stop, request_id)
 

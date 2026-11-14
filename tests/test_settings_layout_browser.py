@@ -74,6 +74,8 @@ class SettingsAPI:
             "remote-legacy": state(supported=False),
         }
         self.requests = []
+        self.browser_revisions = {source: 2 for source in self.states}
+        self.browser_instances = {source: [] for source in self.states}
         self.relay = {
             "enabled": False,
             "connected": False,
@@ -173,6 +175,38 @@ class SettingsAPI:
                 value = copy.deepcopy(current)
         elif endpoint == "/api/fleet/restarts":
             value = {"jobs": []}
+        elif endpoint == "/api/browser/instances" and method == "GET":
+            value = {
+                "revision": self.browser_revisions[source],
+                "browsers": copy.deepcopy(self.browser_instances[source]),
+            }
+        elif endpoint == "/api/browser/discovery":
+            value = {
+                "browsers": [
+                    {"name": "Chromium", "executable": "/usr/bin/chromium", "supported": True}
+                ],
+                "unavailable": [],
+            }
+        elif endpoint == "/api/browser/instances/launch" and method == "POST":
+            browser_id = "55555555-5555-4555-8555-555555555555"
+            instance = {
+                "id": browser_id,
+                "name": body["name"],
+                "kind": "managed",
+                "port": 9222,
+                "executable": body["executable"],
+                "headless": body["headless"],
+                "running": True,
+                "state": "running",
+                "can_stop": True,
+            }
+            self.browser_instances[source].append(instance)
+            self.browser_revisions[source] += 1
+            value = {
+                "revision": self.browser_revisions[source],
+                "browsers": copy.deepcopy(self.browser_instances[source]),
+                "operation": {"browser_id": browser_id},
+            }
         elif path in ("/api/federation/connect", "/api/federation/disconnect"):
             raise AssertionError(f"Settings layout test must not mutate relay state: {path}")
         else:
@@ -285,6 +319,54 @@ def test_scoped_settings_layout_is_compact_and_relay_is_lazy(static_url, width):
             assert dialog.evaluate("node => node.scrollWidth <= node.clientWidth")
             assert page.evaluate("document.body.scrollWidth <= innerWidth")
             assert not mutations(api)
+            assert not errors
+        finally:
+            browser.close()
+
+
+def test_browser_registry_settings_are_lazy_and_launch_from_user_draft(static_url):
+    api = SettingsAPI()
+    with playwright.sync_playwright() as runner:
+        browser = launch_chromium(runner)
+        try:
+            page, errors = open_page(browser, api)
+            page.goto(static_url)
+            select_remote(page)
+            dialog = open_settings(page)
+            section = dialog.locator("#browser-settings-section")
+            assert section.get_attribute("open") is None
+            assert api.count(suffix="/api/browser/instances") == 0
+            section.locator("summary").first.click()
+            playwright.expect(section.locator("#browser-settings-status")).to_contain_text(
+                "0 browser instance(s)."
+            )
+            assert api.count(suffix="/api/browser/instances", method="GET") >= 1
+            playwright.expect(section.locator("#browser-instance-name")).to_have_value("")
+            playwright.expect(section.locator("#browser-headless")).to_be_checked()
+            playwright.expect(section.locator("#browser-executable-select")).to_have_value("")
+            playwright.expect(section.locator("#browser-existing-name")).to_be_attached()
+            playwright.expect(section.locator("#browser-existing-port")).to_be_attached()
+            assert not [
+                item for item in mutations(api)
+                if "/api/browser/instances/" in item[1]
+            ]
+
+            section.locator("#browser-instance-name").fill("Remote draft")
+            section.locator("#browser-headless").uncheck()
+            section.locator("#browser-executable-select").select_option("__custom__")
+            section.locator("#browser-executable").fill(" /opt/remote-draft ")
+            section.locator("#browser-settings-launch").click()
+            playwright.expect(section.locator("#browser-management-list")).to_contain_text(
+                "Remote draft — managed — running"
+            )
+            launch = [
+                body for method, path, body in mutations(api)
+                if method == "POST" and path.endswith("/api/browser/instances/launch")
+            ][-1]
+            assert launch["revision"] == 2
+            assert launch["name"] == "Remote draft"
+            assert launch["headless"] is False
+            assert launch["executable"] == "/opt/remote-draft"
             assert not errors
         finally:
             browser.close()

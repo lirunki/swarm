@@ -65,14 +65,14 @@ async function browserRequest(path, method = 'GET', body, binary = false) {
     let value; try { value = await response.json(); } catch { throw nonJsonResponseError(response); }
     if (!response.ok) {
       const error = new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value));
-      error.status = response.status; throw error;
+      error.status = response.status; error.uncertain = value.uncertain === true; error.requestId = value.request_id; throw error;
     }
     return value;
   }
   if (!response.ok) {
     let value; try { value = await response.json(); } catch { throw nonJsonResponseError(response); }
     const error = new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value));
-    error.status = response.status; throw error;
+    error.status = response.status; error.uncertain = value.uncertain === true; error.requestId = value.request_id; throw error;
   }
   const type = (response.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
   const declared = Number(response.headers.get('content-length'));
@@ -896,7 +896,7 @@ function activate(id, persist = true) {
   $('#dashboard-tab').classList.toggle('active', activeTab === 'dashboard');
   $('#dashboard-tab').setAttribute('aria-current', activeTab === 'dashboard' ? 'page' : 'false');
   if(browserVisible && typeof remoteBrowserController!=='undefined' && remoteBrowserController && !remoteBrowserController.active)
-    void remoteBrowserController.activate().then(()=>browserSettingsController?.setContext(remoteBrowserController.status));
+    void remoteBrowserController.activate();
   else if(!browserVisible && typeof remoteBrowserController!=='undefined')remoteBrowserController?.deactivate();
   for (const [key, t] of terminals) {
     t.pane.hidden = key !== activeTab; t.tab.classList.toggle('active', key === activeTab); t.group.classList.toggle('active', key === activeTab);
@@ -1609,7 +1609,10 @@ if (globalThis.SwarmRemoteBrowser) {
   browserSettingsController = new SwarmRemoteBrowser.BrowserSettingsController({
     request: browserRequest, currentSwarm: () => activeSwarm, currentGeneration: () => stateGeneration,
     ownerName: browserOwnerName, toast,
-    onChanged: async () => { remoteBrowserController?.setContext(); },
+    onChanged: async (registry,context) => {
+      if(context.source!==activeSwarm||context.generation!==stateGeneration)return;
+      remoteBrowserController?.updateInstances(registry);
+    },
   });
 }
 const agentBroadcast = new SwarmAgentBroadcast.BroadcastController({

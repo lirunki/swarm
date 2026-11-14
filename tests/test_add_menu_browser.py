@@ -59,12 +59,18 @@ class MenuBrowserAPI:
     def __init__(self):
         self.requests = []
         self.states = {owner: dashboard_state() for owner in ("local", REMOTE, LEGACY)}
-        self.statuses = {
-            owner: {"enabled": True, "running": False, "state": "stopped", "error": None}
-            for owner in self.states
-        }
-        self.settings = {
-            owner: {"revision": 3, "enabled": True, "headless": True, "executable": None}
+        self.instances = {
+            owner: [{
+                "id": "11111111-1111-4111-8111-111111111111",
+                "name": "Registered browser",
+                "kind": "managed",
+                "port": 9222,
+                "executable": "/opt/browser",
+                "headless": True,
+                "running": True,
+                "state": "running",
+                "can_stop": True,
+            }]
             for owner in self.states
         }
 
@@ -117,10 +123,10 @@ class MenuBrowserAPI:
             }
         elif endpoint == "/api/state":
             value = copy.deepcopy(self.states[owner])
-        elif endpoint == "/api/browser/status":
-            value = copy.deepcopy(self.statuses[owner])
-        elif endpoint == "/api/browser/settings":
-            value = copy.deepcopy(self.settings[owner])
+        elif endpoint == "/api/browser/instances":
+            value = {"revision": 3, "browsers": copy.deepcopy(self.instances[owner])}
+        elif endpoint == "/api/browser/discovery":
+            value = {"browsers": [], "unavailable": []}
         elif endpoint == "/api/notifications":
             value = {"revision": 1, "count": 0, "notifications": []}
         elif endpoint == "/api/fleet/restarts":
@@ -308,16 +314,17 @@ def test_browser_open_group_terminal_close_and_reload_lifecycle(static_url, widt
         assert page.locator("#browser-tab-group > #browser-tab").count() == 1
         playwright.expect(browser_group).to_be_hidden()
         playwright.expect(page.locator("#browser-panel")).to_be_hidden()
-        assert api.count("/api/browser/status") == 0
+        assert api.count("/api/browser/instances") == 0
 
         open_add_menu(page)
         page.locator("#open-browser-button").click()
         playwright.expect(page.locator("#browser-panel")).to_be_visible()
         playwright.expect(browser_group).to_be_visible()
-        playwright.expect(page.locator("#browser-status")).to_have_text("Browser stopped")
+        playwright.expect(page.locator("#browser-status")).to_contain_text("connect to view")
+        playwright.expect(page.locator("#browser-connect")).to_have_text("Connect")
         assert page.evaluate("activeTab") == "browser"
         assert page.evaluate("browserOpen") is True
-        assert api.count("/api/browser/launch", method="POST") == 0
+        assert api.count("/api/browser/instances/launch", method="POST") == 0
         assert page.locator("#browser-screen").is_hidden()
 
         page.locator("#dashboard-tab").click()
@@ -342,13 +349,13 @@ def test_browser_open_group_terminal_close_and_reload_lifecycle(static_url, widt
         assert page.evaluate("selectedAgentGroup") is None
 
         page.locator("#browser-tab").click()
-        status_requests = api.count("/api/browser/status")
+        status_requests = api.count("/api/browser/instances")
         page.locator("#browser-tab-close").click()
         playwright.expect(page.locator("#dashboard")).to_be_visible()
         playwright.expect(browser_group).to_be_hidden()
         assert page.evaluate("activeTab") == "dashboard"
         assert page.evaluate("browserOpen") is False
-        assert api.count("/api/browser/status") == status_requests
+        assert api.count("/api/browser/instances") == status_requests
         assert not api.mutations
 
         # Closing persists false and never auto-reopens after reload.
@@ -356,24 +363,25 @@ def test_browser_open_group_terminal_close_and_reload_lifecycle(static_url, widt
         playwright.expect(page.locator("#agent-count")).to_have_text("18")
         playwright.expect(browser_group).to_be_hidden()
         assert page.evaluate("activeTab") == "dashboard"
-        assert api.count("/api/browser/status") == status_requests
+        assert api.count("/api/browser/instances") == status_requests
 
-        # The Add menu is required to reopen. An open Browser view persists as an
-        # open, active workspace and still does not launch a stopped browser.
+        # The Add menu is required to reopen. An open Browser view persists without
+        # implicitly connecting to the selected registry instance.
         open_add_menu(page)
         page.locator("#open-browser-button").click()
-        playwright.expect(page.locator("#browser-status")).to_have_text("Browser stopped")
+        playwright.expect(page.locator("#browser-status")).to_contain_text("connect to view")
+        playwright.expect(page.locator("#browser-connect")).to_have_text("Connect")
         page.reload()
         playwright.expect(page.locator("#browser-panel")).to_be_visible()
         assert page.evaluate("activeTab") == "browser"
         saved = page.evaluate("JSON.parse(localStorage.getItem('swarm.ui-view-state.local'))")
         assert saved["browserOpen"] is True
         assert saved["terminalTabs"]["active"] == "browser"
-        assert api.count("/api/browser/launch", method="POST") == 0
+        assert api.count("/api/browser/instances/launch", method="POST") == 0
         assert not [
             request
             for request in api.mutations
-            if request[1].startswith("/api/agents/") or request[1].startswith("/api/browser/stop")
+            if request[1].startswith("/api/agents/") or (request[1].startswith("/api/browser/instances/") and request[1].endswith("/stop"))
         ]
         assert not failed_assets
         assert not errors
@@ -391,8 +399,8 @@ def test_browser_state_is_per_swarm_migrates_legacy_and_source_change_closes_men
         open_add_menu(page)
         page.locator("#open-browser-button").click()
         playwright.expect(page.locator("#browser-owner")).to_have_text("Owning server: Blue owner")
-        assert api.count("/api/browser/status", owner=REMOTE) == 1
-        assert api.count("/api/browser/launch", method="POST") == 0
+        assert api.count("/api/browser/instances", owner=REMOTE) == 1
+        assert api.count("/api/browser/instances/launch", method="POST") == 0
         page.locator("#dashboard-tab").click()
 
         select_swarm(page, "local")
@@ -429,7 +437,7 @@ def test_browser_state_is_per_swarm_migrates_legacy_and_source_change_closes_men
         page.wait_for_function("owner => activeSwarm === owner && uiViewStateRestored", arg=LEGACY)
         playwright.expect(page.locator("#browser-panel")).to_be_visible()
         assert page.evaluate("browserOpen") is True
-        assert api.count("/api/browser/status", owner=LEGACY) == 1
+        assert api.count("/api/browser/instances", owner=LEGACY) == 1
         migrated = page.evaluate(
             f"JSON.parse(localStorage.getItem('swarm.ui-view-state.{LEGACY}'))"
         )
@@ -441,13 +449,13 @@ def test_browser_state_is_per_swarm_migrates_legacy_and_source_change_closes_men
         page.locator("#notifications-button").click()
         page.get_by_role("button", name="Settings", exact=True).click()
         section = page.locator("#browser-settings-section")
-        section.locator("summary").click()
+        section.locator("summary").first.click()
         playwright.expect(section.locator("#browser-settings-owner")).to_have_text(
             "Owning server: Legacy owner"
         )
-        playwright.expect(section.locator("#browser-enabled")).to_be_enabled()
-        assert api.count("/api/browser/settings", owner=LEGACY) == 1
-        assert api.count("/api/browser/launch", method="POST") == 0
+        playwright.expect(section.locator("#browser-settings-launch")).to_be_enabled()
+        assert api.count("/api/browser/instances", owner=LEGACY) >= 1
+        assert api.count("/api/browser/instances/launch", method="POST") == 0
         assert not api.mutations
         assert not failed_assets
         assert not errors
