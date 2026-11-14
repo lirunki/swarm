@@ -139,6 +139,11 @@
       this.queue = []; this.pending = null; this.selectQueue = Promise.resolve();
       this.lastResize = null; this.resizeWanted = false; this.resizeTimer = null;
       this.resizeObserver = null; this.windowResizeHandler = null;
+      this.options = query('#browser-options');
+      this.optionsOutside = event => { if(this.options?.open && !this.options.contains(event.target))this.options.open=false; };
+      this.optionsEscape = event => { if(event.key==='Escape' && this.options?.open){this.options.open=false;this.options.querySelector('summary')?.focus();event.stopPropagation();} };
+      this.options?.ownerDocument?.addEventListener('pointerdown',this.optionsOutside);
+      this.options?.addEventListener('keydown',this.optionsEscape);
       this.bind(); this.bindResize(resizeObserverFactory); this.loadInterval(); this.render();
     }
 
@@ -293,7 +298,7 @@
         !this.registry ? 'Browser instances unavailable' : !chosen ? 'Select a browser instance' :
           !chosen.running ? `${chosen.name}: stopped` : !this.connected ? `${chosen.name}: running — connect to view` : `${chosen.name}: ${this.tabs.length} tab(s)`;
       text(this.nodes.status, label);
-      if (this.nodes.connect) { this.nodes.connect.disabled = !chosen?.running; this.nodes.connect.textContent = this.connected ? 'Disconnect' : 'Connect'; }
+      if (this.nodes.connect) { this.nodes.connect.disabled = !chosen?.running; this.nodes.connect.textContent = this.connected ? 'Disconnect' : 'Connect'; this.nodes.connect.setAttribute('aria-label',this.connected?'Disconnect':'Connect');this.nodes.connect.title=this.connected?'Disconnect viewer':'Connect viewer';this.nodes.connect.setAttribute('data-connected',String(this.connected)); }
       const disabled = !this.connected || !chosen?.running || this.connectionBlocked;
       for (const id of ['back', 'forward', 'reload', 'copy', 'paste', 'new'])
         if (this.nodes[id]) this.nodes[id].disabled = disabled || (id !== 'new' && !this.selected);
@@ -363,10 +368,13 @@
       if (render) this.render(); return true;
     }
 
-    deactivate() { this.active = false; this.disconnect(); }
+    deactivate() {
+      if(this.options)this.options.open=false; this.active = false; this.disconnect(); }
     dispose() {
       if (this.disposed) return;
       this.deactivate(); this.disposed = true;
+      this.options?.ownerDocument?.removeEventListener('pointerdown',this.optionsOutside);
+      this.options?.removeEventListener('keydown',this.optionsEscape);
       this.resizeObserver?.disconnect?.(); this.resizeObserver = null;
       if (this.windowResizeHandler) root.removeEventListener?.('resize', this.windowResizeHandler);
       this.windowResizeHandler = null; this.clearImage();

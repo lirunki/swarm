@@ -838,6 +838,11 @@ through B reads and changes A, with operator authentication at both ends.
 
 Page tabs, navigation, click/drag, keyboard input and explicit plain-text Copy/Paste
 retain EdgeMCP behavior.
+Browser chrome uses the compact tmux-toolbar style: small right-aligned icon controls,
+with a single row on wide screens and at most two rows on narrow screens. The **⋯**
+menu holds refresh timing, Fit, Pause, status and help instead of permanent extra rows.
+Icons keep accessible labels and tooltips; Escape/outside click dismisses the menu.
+
 The selected browser automatically fits the viewer's available space when connected
 or resized; **Fit to view** explicitly reapplies the size. Updates are debounced and
 paused during gestures. Viewport bounds are 320×240 through 3840×2160, capped at

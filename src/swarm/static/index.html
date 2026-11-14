@@ -7,31 +7,31 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=wsl-edge-fit-1">
+  <link rel="stylesheet" href="/static/app.css?v=compact-browser-toolbar-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/org-chart.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/relay-settings.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/terminal-touch.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/terminal-copy.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/terminal-keys.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/agent-files.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/agent-messages.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/agent-broadcast.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/auth.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/fleet-control.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/system-notifications.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/notifications.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/agent-groups.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/grouping-mode.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/agent-search.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/history-archive.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/agent-limits.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/terminal-wheel.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/remote-browser.js?v=wsl-edge-fit-1"></script>
-  <script defer src="/static/app.js?v=wsl-edge-fit-1"></script>
+  <script defer src="/static/card-views.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/org-chart.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/relay-settings.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/terminal-touch.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/terminal-copy.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/terminal-keys.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/agent-files.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/agent-messages.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/agent-broadcast.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/auth.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/fleet-control.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/system-notifications.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/notifications.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/agent-groups.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/grouping-mode.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/agent-search.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/history-archive.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/agent-limits.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/terminal-wheel.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/remote-browser.js?v=compact-browser-toolbar-1"></script>
+  <script defer src="/static/app.js?v=compact-browser-toolbar-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -79,25 +79,19 @@
   <section id="terminals" aria-label="Agent terminal workspace" hidden></section>
   <section id="browser-panel" aria-label="Shared remote browser" hidden>
     <header class="browser-toolbar">
-      <div class="browser-heading"><strong>Browser</strong><span id="browser-owner" class="hint"></span><span id="browser-status" class="hint" role="status" aria-live="polite">Browser status unavailable</span></div>
-      <div class="browser-actions">
-        <select id="browser-instance-select" aria-label="Browser instance"><option value="">Select a browser</option></select><button id="browser-connect" type="button" class="small primary" disabled>Connect</button>
-        <button id="browser-refresh-tabs" type="button" class="small" disabled>Refresh tabs</button>
-        <button id="browser-back" type="button" class="small" aria-label="Back" disabled>Back</button>
-        <button id="browser-forward" type="button" class="small" aria-label="Forward" disabled>Forward</button>
-        <button id="browser-reload" type="button" class="small" disabled>Reload</button>
-        <button id="browser-copy" type="button" class="small" disabled>Copy</button>
-        <button id="browser-paste" type="button" class="small" disabled>Paste</button>
-      </div>
-      <div class="browser-location">
-        <input id="browser-url" type="url" inputmode="url" aria-label="New browser tab URL" placeholder="https://example.com">
-        <button id="browser-new" type="button" class="small" disabled>New tab</button>
-        <label for="browser-interval">Screenshot every <input id="browser-interval" type="number" value="2"> seconds</label>
-        <button id="browser-fit" type="button" class="small" disabled>Fit to view</button><button id="browser-pause" type="button" class="small">Pause refresh</button>
-      </div>
-      <p class="browser-sharing hint">Screenshots, not video. This is one shared selected tab: other connected clients can change or close it.</p>
-      <div id="browser-tabs" class="browser-page-tabs" role="tablist" aria-label="Remote browser pages"></div>
-    </header>
+<div class="browser-actions">
+<select id="browser-instance-select" aria-label="Browser instance"><option value="">Select a browser</option></select><button id="browser-connect" type="button" class="small" disabled>Connect</button>
+<button id="browser-back" type="button" class="small" aria-label="Back" title="Back" disabled>←</button><button id="browser-forward" type="button" class="small" aria-label="Forward" title="Forward" disabled>→</button><button id="browser-reload" type="button" class="small" aria-label="Reload" title="Reload" disabled>↻</button><button id="browser-copy" type="button" class="small" aria-label="Copy" title="Copy selection" disabled>⧉</button><button id="browser-paste" type="button" class="small" aria-label="Paste" title="Paste text" disabled>▣</button>
+</div>
+<div class="browser-location"><input id="browser-url" type="url" inputmode="url" aria-label="New browser tab URL" placeholder="https://…" maxlength="4096"><button id="browser-new" type="button" class="small" aria-label="New tab" title="New tab" disabled>+</button></div>
+<details id="browser-options" class="browser-options"><summary aria-label="Browser options" title="Browser options">⋯</summary><div class="browser-options-panel">
+<div class="browser-heading"><span id="browser-owner" class="hint"></span><span id="browser-status" class="hint" role="status" aria-live="polite"></span></div>
+<button id="browser-refresh-tabs" type="button" class="small" disabled>Refresh tabs</button>
+<label for="browser-interval">Refresh every <input id="browser-interval" type="number" min="0.25" max="60" step="0.25" value="2"> seconds</label><button id="browser-fit" type="button" class="small" disabled>Fit to view</button><button id="browser-pause" type="button" class="small">Pause refresh</button>
+<p class="browser-sharing hint">Screenshots, not video. Other connected clients can change the shared page. Browser management is in Settings.</p>
+</div></details>
+<div id="browser-tabs" class="browser-page-tabs" role="tablist" aria-label="Remote browser pages"></div>
+</header>
     <div class="browser-viewport">
       <p id="browser-placeholder" class="hint">Browser status unavailable</p>
       <img id="browser-screen" alt="Remote browser screenshot; click, drag, type, or paste to interact" tabindex="0" draggable="false" hidden>
