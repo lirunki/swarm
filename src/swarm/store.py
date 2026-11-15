@@ -139,10 +139,9 @@ class Store:
         return updated
 
     def pause_mailbox(self, agent: Agent) -> None:
-        """Close an exposed inbox during a sleep/stop report, not on a later monitor tick."""
+        """Close an exposed inbox immediately for process stop/restart reservations."""
         if not (
-            agent.status in {Status.dormant, Status.done}
-            or getattr(agent, "stop_pending", False)
+            getattr(agent, "stop_pending", False)
             or getattr(agent, "orchestration_stop", None)
             or getattr(agent, "restart_job_id", None)
         ):

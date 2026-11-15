@@ -1303,7 +1303,7 @@ Type a message (up to 32,000 characters) in **Broadcast to agents**, then click
 - **Only this Swarm** or **All connected Swarms** (online sources only).
 - **All agents**, **Only awaken**, or **Only non-awaken**, plus text search.
   Awaken means a live managed process, matching Master control—not goal status.
-  Dormant/done processes may be live but still hold their messages until resumed.
+  Live Dormant/Done agents receive messages too; goal status does not block delivery.
 - **Select all shown**, **Select none shown**, individual checkboxes and refresh.
   Only visible, checked managed agents are sent to; hidden selections never leak
   into a filtered broadcast. Observed agents cannot receive managed inbox messages.
@@ -1415,7 +1415,8 @@ terminal injection. `/model` changes the live Pi session; a configured Swarm mod
 override is still reapplied on a later launch unless separately changed.
 
 Delivery occurs only while an agent is **awake**: managed, alive and fully provisioned,
-with status running/waiting/idle, and neither stopping nor compacting. Queueing never wakes it. Older Pi processes launched
+regardless of goal status (including Done/Dormant), and neither stopping, restarting
+nor compacting. A fresh matching Pi mailbox heartbeat is required. Queueing never wakes it. Older Pi processes launched
 without Swarm's trusted mailbox extension must be relaunched; their messages remain pending
 with the transport state visible. Newly launched Pi loads that extension, including its
 `swarm_session_command` tool for queueing its own supported commands.

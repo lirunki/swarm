@@ -140,17 +140,27 @@ def test_awake_uses_native_bridge_and_ack_not_tty_or_status_change(setup):
         assert json.loads((directory / "inbox.json").read_text())["items"] == []
 
 
-@pytest.mark.parametrize("status", ["dormant", "done"])
-def test_alive_sleeping_or_done_agents_do_not_receive_until_explicit_wake(setup, status):
-    app, ctl, agent = setup
+@pytest.mark.parametrize("status", ["running", "waiting", "idle", "dormant", "done"])
+def test_live_agents_receive_regardless_of_goal_status_without_wake(setup, status):
+    _, ctl, agent = setup
     agent, directory, _ = connect_bridge(ctl, agent)
     ctl.store.update(agent.id, {"status": status})
-    result = ctl.messages.send(str(agent.id), MessageRequest(text="Only after waking"))
+    result = ctl.messages.send(str(agent.id), MessageRequest(text="Deliver to the live process"))
+    assert result["message"]["status"] == "delivering"
+    assert json.loads((directory / "inbox.json").read_text())["awake"]
+    assert ctl.store.get(agent.id).status.value == status
+    assert not ctl.processes.launches
+    ack(directory, ctl.store.get(agent.id), result["message"])
+    ctl.messages.tick(ctl.store.get(agent.id))
+    assert ctl.messages.list(str(agent.id))["messages"] == []
+
+
+@pytest.mark.parametrize("status", ["dormant", "done"])
+def test_stopped_agents_still_queue_without_launch(setup, status):
+    _, ctl, agent = setup
+    ctl.store.update(agent.id, {"status": status})
+    result = ctl.messages.send(str(agent.id), MessageRequest(text="Wait for a live process"))
     assert result["message"]["status"] == "pending"
-    assert not json.loads((directory / "inbox.json").read_text())["awake"]
-    ctl.wake(str(agent.id), "")
-    ctl.tick()
-    assert ctl.messages.list(str(agent.id))["messages"][0]["status"] == "delivering"
     assert not ctl.processes.launches
 
 
@@ -413,14 +423,25 @@ def test_stale_bridge_does_not_strand_inflight_forever_and_accepts_late_proof(
     assert ctl.messages.list(str(agent.id))["messages"] == []
 
 
-def test_sleep_report_closes_exposed_inbox_before_monitor_tick(setup):
-    app, ctl, agent = setup
-    agent, directory, epoch = connect_bridge(ctl, agent)
+@pytest.mark.parametrize("status", ["dormant", "done"])
+def test_goal_status_report_does_not_pause_a_live_mailbox(setup, status):
+    _, ctl, agent = setup
+    agent, directory, _ = connect_bridge(ctl, agent)
     ctl.messages.send(str(agent.id), MessageRequest(text="In flight"))
+    Store(ctl.store.home).update(agent.id, {"status": status})
     assert json.loads((directory / "inbox.json").read_text())["awake"]
-    Store(ctl.store.home).update(agent.id, {"status": "dormant"})
+    ctl.messages.tick(agent)  # Even an older snapshot rereads the authoritative record.
+    assert json.loads((directory / "inbox.json").read_text())["awake"]
+    assert not ctl.processes.launches
+
+
+def test_stop_reservation_still_pauses_exposed_inbox_immediately(setup):
+    _, ctl, agent = setup
+    agent, directory, _ = connect_bridge(ctl, agent)
+    ctl.messages.send(str(agent.id), MessageRequest(text="In flight"))
+    Store(ctl.store.home).update(agent.id, {"stop_pending": True})
     assert not json.loads((directory / "inbox.json").read_text())["awake"]
-    ctl.messages.tick(agent)  # An earlier fleet-scan snapshot must not reopen it.
+    ctl.messages.tick(agent)
     assert not json.loads((directory / "inbox.json").read_text())["awake"]
 
 

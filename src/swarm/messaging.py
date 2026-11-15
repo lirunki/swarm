@@ -20,7 +20,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .meta_compact import busy
-from .models import Agent, Status, now
+from .models import Agent, now
 from .store import Store, atomic_write
 
 if TYPE_CHECKING:
@@ -326,7 +326,6 @@ class Messages:
     def awake(self, agent: Agent, alive: bool | None = None) -> bool:
         return bool(
             agent.managed
-            and agent.status not in {Status.dormant, Status.done}
             and agent.spawn_state in {None, "ready"}
             and not getattr(agent, "restart_job_id", None)
             and not busy(agent)

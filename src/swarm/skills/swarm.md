@@ -295,7 +295,8 @@ Use Swarm's mailbox for ordinary messages; never type instructions or commands i
 
 Messages are durable across controller restarts and remain ordinary enveloped text even
 when they begin with `/`. Queueing does not wake the recipient. Delivery requires an awake
-agent: managed/alive, neither dormant nor done, ready and not stopping or compacting. An
+agent: managed/alive regardless of goal status (including dormant/done), ready and
+not stopping, restarting or compacting, with a healthy Pi mailbox bridge. An
 acknowledgement means the context/handoff was persisted, not that the recipient completed
 the task. Older Pi agents without the trusted mailbox extension need relaunching; leave
 messages pending and inspect their visible transport state rather than falling back to tmux.

@@ -204,7 +204,7 @@
     renderSummary() {
       if (!this.summaryNode) return;
       const selected = this.effectiveTargets(), shown = this.rows.size;
-      this.summaryNode.textContent = `${selected.length} of ${shown} shown managed agents selected. “Awake” means a live process, including dormant or done agents; durable messages may queue even while a live process is dormant or done. Sending never wakes an agent.`;
+      this.summaryNode.textContent = `${selected.length} of ${shown} shown managed agents selected. “Awake” means a live process, including dormant or done agents; goal status does not block delivery, but restart/maintenance and mailbox health still can. Sending never wakes an agent.`;
       if (this.sendButton) this.sendButton.disabled = this.loading || this.sending || selected.length === 0;
     }
 
