@@ -339,3 +339,23 @@ def test_viewer_screenshot_query_is_accepted_by_the_actual_route(tmp_path):
     assert response.content == PNG
     assert response.headers["cache-control"] == "no-store"
     assert ("request", BROWSER_A, "screenshot", None, {"target_id": "tab-a"}) in fake.calls
+
+
+def test_screenshot_timeout_returns_actionable_504_not_uncaught_500(tmp_path):
+    from swarm.edgemcp_browser import ScreenshotUnavailable
+
+    app, fake = app_with_registry(tmp_path)
+
+    def unavailable(*_args, **_kwargs):
+        raise ScreenshotUnavailable(
+            "Browser screenshot unavailable: keep the Android browser in the foreground."
+        )
+
+    fake.request = unavailable
+    with TestClient(app) as client:
+        response = client.get(
+            f"/api/browser/instances/{BROWSER_A}/screenshot", params={"target_id": "tab-a"}
+        )
+    assert response.status_code == 504
+    assert "foreground" in response.json()["detail"]
+    assert response.headers["cache-control"] == "no-store"

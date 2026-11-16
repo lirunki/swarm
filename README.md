@@ -849,7 +849,14 @@ paused during gestures. Viewport bounds are 320×240 through 3840×2160, capped 
 8,294,400 pixels. Headed browsers also receive a window-size request; headless uses
 an exact emulated viewport. Other browser instances are not resized. Multiple viewers
 sharing one page may prefer different sizes; Fit to view restores your local fit.
- Screenshots refresh every 2 seconds by default, adjustable
+ On Android/Termux, the target browser may stop servicing capture while backgrounded,
+locked, or battery-restricted. Swarm tries surface capture once (10 seconds), then
+one view-capture fallback (5 seconds). If both fail, the API returns an actionable
+504 and detaches the stale tab connection; it never restarts the browser or replays
+input. Keep the target browser/page foregrounded and the device unlocked when testing.
+This compatibility fallback does not bypass Android screen/security restrictions.
+
+Screenshots refresh every 2 seconds by default, adjustable
 from 0.25–60 seconds. They are **snapshots, not video**; content may move before a
 click. Multiple viewers of one instance share its selected page, so coordinate
 control. Separate instances have independent tabs/profiles and don't block one

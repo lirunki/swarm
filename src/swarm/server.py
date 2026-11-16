@@ -50,6 +50,7 @@ from .browser_settings import (
 )
 from .controller import Controller
 from .discovery import browse_folders, discover_models
+from .edgemcp_browser import ScreenshotUnavailable
 from .federation import MAX_RPC_REQUEST, FederationConfig
 from .files import FileRequest, FileUnavailable
 from .grouping import GroupingConflict, GroupingCorrupt, GroupingError
@@ -187,9 +188,7 @@ def create_app(
     history_archiver = HistoryArchiver(meta_compactor)
     browser_settings = BrowserSettings(store.home)
     remote_browser = RemoteBrowser(store.home, browser_settings)
-    browser_registry = BrowserRegistry(
-        store.home, browser_settings, legacy_manager=remote_browser
-    )
+    browser_registry = BrowserRegistry(store.home, browser_settings, legacy_manager=remote_browser)
     browser_settings_lock = asyncio.Lock()
     sessions = Sessions(store, session_roots)
     grok = GrokSessions(store, grok_session_roots)
@@ -394,6 +393,12 @@ def create_app(
     async def browser_settings_error(_request: Request, exc: BrowserSettingsError):
         return JSONResponse({"detail": str(exc)}, status_code=400)
 
+    @app.exception_handler(ScreenshotUnavailable)
+    async def screenshot_unavailable(_request: Request, exc: ScreenshotUnavailable):
+        return JSONResponse(
+            {"detail": str(exc)}, status_code=504, headers={"Cache-Control": "no-store"}
+        )
+
     @app.exception_handler(BrowserError)
     async def remote_browser_error(_request: Request, exc: BrowserError):
         return JSONResponse({"detail": str(exc)}, status_code=409)
@@ -551,7 +556,9 @@ def create_app(
             if status["running"] and any(
                 body.get(key) != current.get(key) for key in ("enabled", "headless", "executable")
             ):
-                raise RuntimeError("Close the dedicated browser on this server before changing its settings.")
+                raise RuntimeError(
+                    "Close the dedicated browser on this server before changing its settings."
+                )
             value = await asyncio.to_thread(browser_settings.apply, body)
         return value
 
@@ -807,7 +814,7 @@ def create_app(
         methods=["GET", "POST", "PATCH", "DELETE"],
     )
     async def federation_proxy(node_id: str, remote_path: str, request: Request):
-        if remote_path.lstrip('/').startswith('api/browser/'):
+        if remote_path.lstrip("/").startswith("api/browser/"):
             require_browser_operator(request)
         if not federation:
             return JSONResponse({"detail": "federation is not configured"}, status_code=404)

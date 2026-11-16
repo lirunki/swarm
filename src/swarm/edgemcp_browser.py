@@ -4,6 +4,7 @@ Adapted from EdgeMCP server.py at commit
 c09dc257886305539ea90bc454ceda63b9b150a6. It intentionally contains no MCP,
 HTTP server, SSH, or general-purpose JavaScript evaluation interface.
 """
+
 from __future__ import annotations
 
 import base64
@@ -22,15 +23,18 @@ from .edgemcp_launcher import (
 )
 
 _CDP_KEYS = {
-    "Enter": ("Enter", "Enter", 13, "\r", 0), "Tab": ("Tab", "Tab", 9, "\t", 0),
+    "Enter": ("Enter", "Enter", 13, "\r", 0),
+    "Tab": ("Tab", "Tab", 9, "\t", 0),
     "Escape": ("Escape", "Escape", 27, "", 0),
     "Backspace": ("Backspace", "Backspace", 8, "\b", 0),
-    "Delete": ("Delete", "Delete", 46, "\x7f", 0), "Space": ("Space", " ", 32, " ", 0),
+    "Delete": ("Delete", "Delete", 46, "\x7f", 0),
+    "Space": ("Space", " ", 32, " ", 0),
     "ArrowUp": ("ArrowUp", "ArrowUp", 38, "", 0),
     "ArrowDown": ("ArrowDown", "ArrowDown", 40, "", 0),
     "ArrowLeft": ("ArrowLeft", "ArrowLeft", 37, "", 0),
     "ArrowRight": ("ArrowRight", "ArrowRight", 39, "", 0),
-    "Home": ("Home", "Home", 36, "", 0), "End": ("End", "End", 35, "", 0),
+    "Home": ("Home", "Home", 36, "", 0),
+    "End": ("End", "End", 35, "", 0),
     "PageUp": ("PageUp", "PageUp", 33, "", 0),
     "PageDown": ("PageDown", "PageDown", 34, "", 0),
 }
@@ -51,15 +55,18 @@ def _serialized(function):
     def wrapped(self, *args, **kwargs):
         with self._lock:
             return function(self, *args, **kwargs)
+
     return wrapped
+
+
+class ScreenshotUnavailable(RuntimeError):
+    """A bounded CDP capture failed; do not expose raw browser exceptions."""
 
 
 class EdgeBrowser:
     """The existing EdgeMCP selected-tab controls, scoped to one CDP port."""
 
-    def __init__(
-        self, port: int, pychrome_module: Any | None = None, *, host: str = "127.0.0.1"
-    ):
+    def __init__(self, port: int, pychrome_module: Any | None = None, *, host: str = "127.0.0.1"):
         self.port = _validate_port(port)
         self.host = canonical_cdp_host(host)
         self._pychrome = pychrome_module
@@ -75,6 +82,7 @@ class EdgeBrowser:
             import pychrome
 
             from . import pychrome_compat
+
             pychrome_compat.install(pychrome)
             self._pychrome = pychrome
         return self._pychrome
@@ -101,7 +109,9 @@ class EdgeBrowser:
 
                     def _request(browser, method, path, **kwargs):
                         response = browser.session.request(
-                            method, f"{browser.dev_url}{path}", allow_redirects=False,
+                            method,
+                            f"{browser.dev_url}{path}",
+                            allow_redirects=False,
                             **kwargs,
                         )
                         if not 200 <= response.status_code < 300:
@@ -122,7 +132,8 @@ class EdgeBrowser:
                             target_id = metadata.get("id")
                             existing = browser._tabs.get(target_id)
                             tabs[target_id] = (
-                                existing if existing is not None
+                                existing
+                                if existing is not None
                                 and existing.status != tab_type.status_stopped
                                 else tab_type(**metadata)
                             )
@@ -163,9 +174,7 @@ class EdgeBrowser:
                         return payload
 
                 browser_type = SessionBrowser
-            self._browser = browser_type(
-                url=f"http://{_http_authority(self.host, self.port)}"
-            )
+            self._browser = browser_type(url=f"http://{_http_authority(self.host, self.port)}")
         return self._browser
 
     def _validated_tabs(self) -> list[Any]:
@@ -192,9 +201,9 @@ class EdgeBrowser:
                 valid = False
             if not valid:
                 raise ValueError("Invalid page websocket URL")
-            rebased = urlunsplit((
-                "ws", _http_authority(self.host, self.port), expected_path, "", ""
-            ))
+            rebased = urlunsplit(
+                ("ws", _http_authority(self.host, self.port), expected_path, "", "")
+            )
             metadata["webSocketDebuggerUrl"] = rebased
             if hasattr(tab, "_websocket_url"):
                 tab._websocket_url = rebased
@@ -216,6 +225,7 @@ class EdgeBrowser:
 
     def _list_pages(self) -> list[dict]:
         """Fetch current target metadata without proxies or redirects."""
+
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, *args, **kwargs):
                 return None
@@ -316,8 +326,11 @@ class EdgeBrowser:
 
     def _eval(self, expression: str):
         result = self._tab.Runtime.evaluate(
-            expression=expression, returnByValue=True, awaitPromise=True,
-            allowUnsafeEvalBlocking=True, _timeout=10,
+            expression=expression,
+            returnByValue=True,
+            awaitPromise=True,
+            allowUnsafeEvalBlocking=True,
+            _timeout=10,
         )
         if result and result.get("exceptionDetails"):
             raise RuntimeError("Browser evaluation failed")
@@ -339,10 +352,37 @@ class EdgeBrowser:
     @_serialized
     def screenshot(self, target_id: str) -> bytes:
         tab = self._target(target_id)
-        result = tab.Page.captureScreenshot(
-            format="png", captureBeyondViewport=False, fromSurface=True, _timeout=10
+        module = self._module()
+        capture_errors = tuple(
+            kind
+            for name in ("TimeoutException", "CallMethodException", "RuntimeException")
+            if isinstance(kind := getattr(module, name, None), type)
         )
-        return base64.b64decode(result["data"], validate=True)
+        try:
+            try:
+                result = tab.Page.captureScreenshot(
+                    format="png", captureBeyondViewport=False, fromSurface=True, _timeout=10
+                )
+            except capture_errors:
+                # Android/background compositors may not service a surface capture.
+                # Retry only this read-only operation once, using the view capture.
+                result = tab.Page.captureScreenshot(
+                    format="png", captureBeyondViewport=False, fromSurface=False, _timeout=5
+                )
+        except capture_errors as exc:
+            self._detach_tab()
+            raise ScreenshotUnavailable(
+                "Browser screenshot unavailable: CDP did not complete capture. "
+                "On Android, keep the target browser/page in the foreground and "
+                "the device unlocked; check battery/background restrictions. "
+                "Reconnect the viewer after checking the browser."
+            ) from exc
+        try:
+            if not isinstance(result, dict) or not isinstance(result.get("data"), str):
+                raise ValueError("missing image")
+            return base64.b64decode(result["data"], validate=True)
+        except (ValueError, TypeError) as exc:
+            raise ScreenshotUnavailable("Browser returned invalid screenshot data.") from exc
 
     @_serialized
     def resize(self, target_id: str, width: int, height: int) -> dict:
@@ -369,7 +409,8 @@ class EdgeBrowser:
                 pass
             try:
                 tab.Browser.setWindowBounds(
-                    windowId=window_id, bounds={"width": width, "height": height},
+                    windowId=window_id,
+                    bounds={"width": width, "height": height},
                     _timeout=5,
                 )
             except call_error:
@@ -386,16 +427,19 @@ class EdgeBrowser:
         tab = self._target(target_id)
         viewport = self._eval("({width: window.innerWidth, height: window.innerHeight})")
         common = {
-            "x": x_ratio * viewport["width"], "y": y_ratio * viewport["height"],
-            "button": "left", "clickCount": 1,
+            "x": x_ratio * viewport["width"],
+            "y": y_ratio * viewport["height"],
+            "button": "left",
+            "clickCount": 1,
         }
         tab.Input.dispatchMouseEvent(type="mousePressed", **common)
         tab.Input.dispatchMouseEvent(type="mouseReleased", **common)
         return {"ok": True}
 
     @_serialized
-    def drag(self, target_id: str, start_x: float, start_y: float,
-             end_x: float, end_y: float) -> dict:
+    def drag(
+        self, target_id: str, start_x: float, start_y: float, end_x: float, end_y: float
+    ) -> dict:
         tab = self._target(target_id)
         viewport = self._eval("({width: window.innerWidth, height: window.innerHeight})")
         sx, sy = start_x * viewport["width"], start_y * viewport["height"]
@@ -406,9 +450,7 @@ class EdgeBrowser:
                 type="mousePressed", x=sx, y=sy, button="left", clickCount=1
             )
             pressed = True
-            tab.Input.dispatchMouseEvent(
-                type="mouseMoved", x=ex, y=ey, button="left", buttons=1
-            )
+            tab.Input.dispatchMouseEvent(type="mouseMoved", x=ex, y=ey, button="left", buttons=1)
         finally:
             if pressed:
                 tab.Input.dispatchMouseEvent(
@@ -430,17 +472,25 @@ class EdgeBrowser:
         entry = _CDP_KEYS.get(key)
         if entry is None:
             entry = (
-                key if len(key) == 1 and key.isalpha() else "Unidentified", key,
+                key if len(key) == 1 and key.isalpha() else "Unidentified",
+                key,
                 ord(key.upper()) if len(key) == 1 and key.isalpha() else 0,
-                key if len(key) == 1 else "", 0,
+                key if len(key) == 1 else "",
+                0,
             )
         code, normalized_key, key_code, text, location = entry
         if modifier_bits & (_MOD_BITS["ctrl"] | _MOD_BITS["alt"] | _MOD_BITS["meta"]):
             text = ""
         common = {
-            "key": normalized_key, "code": code, "windowsVirtualKeyCode": key_code,
-            "nativeVirtualKeyCode": key_code, "modifiers": modifier_bits, "text": text,
-            "location": location, "unmodifiedText": text, "isKeypad": False,
+            "key": normalized_key,
+            "code": code,
+            "windowsVirtualKeyCode": key_code,
+            "nativeVirtualKeyCode": key_code,
+            "modifiers": modifier_bits,
+            "text": text,
+            "location": location,
+            "unmodifiedText": text,
+            "isKeypad": False,
             "isSystemKey": False,
         }
         tab.Input.dispatchKeyEvent(type="keyDown", **common)

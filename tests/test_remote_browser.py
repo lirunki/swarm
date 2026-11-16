@@ -86,11 +86,14 @@ class Domain:
                 return {"data": base64.b64encode(b"\x89PNG\r\n\x1a\nfixture").decode()}
             if self.name == "Page" and method == "getNavigationHistory":
                 return {
-                    "entries": [{"id": 10, "url": "https://before.test/"},
-                                {"id": 11, "url": "https://after.test/"}],
+                    "entries": [
+                        {"id": 10, "url": "https://before.test/"},
+                        {"id": 11, "url": "https://after.test/"},
+                    ],
                     "currentIndex": 1,
                 }
             return {}
+
         return call
 
 
@@ -154,7 +157,9 @@ def harness(tmp_path):
     launcher = FakeLauncher()
     pychrome = FakePychrome()
     remote = RemoteBrowser(
-        tmp_path, settings, launcher=launcher,
+        tmp_path,
+        settings,
+        launcher=launcher,
         browser_factory=lambda port: EdgeBrowser(port, pychrome),
     )
     return remote, launcher, pychrome
@@ -165,7 +170,10 @@ def test_disabled_status_does_not_probe_import_or_create_state(tmp_path):
     remote = RemoteBrowser(tmp_path, {"enabled": False, "cdp_port": 0}, launcher=launcher)
 
     assert remote.status() == {
-        "enabled": False, "running": False, "state": "disabled", "error": None,
+        "enabled": False,
+        "running": False,
+        "state": "disabled",
+        "error": None,
     }
     with pytest.raises(BrowserError, match="disabled"):
         remote.launch()
@@ -183,9 +191,15 @@ def test_launch_uses_stable_private_state_and_fixed_profile(harness, tmp_path, m
     again = remote.launch("same-request")
     other = remote.launch("other-request")
 
-    assert first == again == {
-        "running": True, "started": True, "browser": "Chromium/Fake",
-    }
+    assert (
+        first
+        == again
+        == {
+            "running": True,
+            "started": True,
+            "browser": "Chromium/Fake",
+        }
+    )
     assert other == {"running": True, "started": False, "browser": "Chromium/Fake"}
     assert len(launcher.launches) == 2
     port, options = launcher.launches[0]
@@ -218,32 +232,50 @@ def test_actual_edgemcp_adapter_tabs_selection_screenshot_and_input(harness):
     assert pychrome.activated == [("page-1", 5)]
     tab = pychrome.tabs["page-1"]
     assert set(tab.Runtime.callbacks) == {
-        "executionContextCreated", "executionContextDestroyed", "executionContextsCleared",
+        "executionContextCreated",
+        "executionContextDestroyed",
+        "executionContextsCleared",
     }
     assert remote.request("screenshot", query={"target_id": "page-1"}).startswith(b"\x89PNG")
     assert remote.request("copy", {"target_id": "page-1"}) == {"text": "copied text"}
 
     remote.request("click", {"target_id": "page-1", "x_ratio": 0.5, "y_ratio": 0.25})
-    mouse = [kwargs for domain, method, kwargs in tab.calls
-             if domain == "Input" and method == "dispatchMouseEvent"]
+    mouse = [
+        kwargs
+        for domain, method, kwargs in tab.calls
+        if domain == "Input" and method == "dispatchMouseEvent"
+    ]
     assert [(event["type"], event["x"], event["y"]) for event in mouse[-2:]] == [
-        ("mousePressed", 400, 150), ("mouseReleased", 400, 150),
+        ("mousePressed", 400, 150),
+        ("mouseReleased", 400, 150),
     ]
 
-    remote.request("drag", {
-        "target_id": "page-1", "start": {"x_ratio": 0, "y_ratio": 0},
-        "end": {"x_ratio": 1, "y_ratio": 1},
-    })
-    mouse = [kwargs for domain, method, kwargs in tab.calls
-             if domain == "Input" and method == "dispatchMouseEvent"]
+    remote.request(
+        "drag",
+        {
+            "target_id": "page-1",
+            "start": {"x_ratio": 0, "y_ratio": 0},
+            "end": {"x_ratio": 1, "y_ratio": 1},
+        },
+    )
+    mouse = [
+        kwargs
+        for domain, method, kwargs in tab.calls
+        if domain == "Input" and method == "dispatchMouseEvent"
+    ]
     assert [event["type"] for event in mouse[-3:]] == [
-        "mousePressed", "mouseMoved", "mouseReleased",
+        "mousePressed",
+        "mouseMoved",
+        "mouseReleased",
     ]
 
     remote.request("text", {"target_id": "page-1", "text": "hello"})
     remote.request("key", {"target_id": "page-1", "key": "a", "modifiers": ["ctrl"]})
-    keys = [kwargs for domain, method, kwargs in tab.calls
-            if domain == "Input" and method == "dispatchKeyEvent"]
+    keys = [
+        kwargs
+        for domain, method, kwargs in tab.calls
+        if domain == "Input" and method == "dispatchKeyEvent"
+    ]
     assert [event["type"] for event in keys[-2:]] == ["keyDown", "keyUp"]
     assert keys[-2]["text"] == ""
 
@@ -261,8 +293,9 @@ def test_tabs_missing_or_invalid_constructor_metadata_falls_back_to_empty_string
         {"id": "page-1", "url": "", "title": ""},
         {"id": "page-2", "url": "", "title": ""},
     ]
-    assert all(isinstance(tab["url"], str) and isinstance(tab["title"], str)
-               for tab in result["tabs"])
+    assert all(
+        isinstance(tab["url"], str) and isinstance(tab["title"], str) for tab in result["tabs"]
+    )
 
 
 def test_screenshot_response_is_bounded_to_8_mib(harness, monkeypatch):
@@ -286,8 +319,11 @@ def test_tab_lifecycle_navigation_and_close_only_detaches(harness):
     remote.request("back", {"target_id": "new-page"})
     remote.request("forward", {"target_id": "new-page"})
     remote.request("reload", {"target_id": "new-page"})
-    assert [(method, kwargs.get("entryId")) for domain, method, kwargs in new_tab.calls
-            if method == "navigateToHistoryEntry"] == [
+    assert [
+        (method, kwargs.get("entryId"))
+        for domain, method, kwargs in new_tab.calls
+        if method == "navigateToHistoryEntry"
+    ] == [
         ("navigateToHistoryEntry", 10),
     ]
 
@@ -300,9 +336,15 @@ def test_tab_lifecycle_navigation_and_close_only_detaches(harness):
     assert pychrome.closed == [("new-page", 10)]
 
 
-@pytest.mark.parametrize("url", [
-    "file:///etc/passwd", "javascript:alert(1)", "https://u:p@example.test/", "",
-])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///etc/passwd",
+        "javascript:alert(1)",
+        "https://u:p@example.test/",
+        "",
+    ],
+)
 def test_remote_web_route_validation_rejects_unsafe_urls(harness, url):
     remote, _, _ = harness
     remote.launch()
@@ -347,15 +389,19 @@ def test_stop_helper_sends_browser_close_on_verified_browser_websocket(monkeypat
 
     monkeypatch.setattr(edgemcp_launcher, "probe_identity", lambda port, timeout=1: next(probes))
     import websocket
+
     monkeypatch.setattr(websocket, "create_connection", connect)
 
     assert edgemcp_launcher.stop_browser(49150, browser_id) == {
-        "running": False, "stopped": True,
+        "running": False,
+        "stopped": True,
     }
-    assert connections == [(
-        f"ws://127.0.0.1:49150/devtools/browser/{browser_id}",
-        {"timeout": 5, "suppress_origin": True, "http_proxy_host": None},
-    )]
+    assert connections == [
+        (
+            f"ws://127.0.0.1:49150/devtools/browser/{browser_id}",
+            {"timeout": 5, "suppress_origin": True, "http_proxy_host": None},
+        )
+    ]
     assert sent == [{"id": 1, "method": "Browser.close", "params": {}}, "closed"]
 
 
@@ -373,10 +419,13 @@ def test_launcher_keeps_one_attempt_and_accepts_chromium(tmp_path, monkeypatch):
     probes = iter([None, identity, identity])
 
     monkeypatch.setattr(
-        edgemcp_launcher, "probe_identity", lambda port, timeout=1: next(probes),
+        edgemcp_launcher,
+        "probe_identity",
+        lambda port, timeout=1: next(probes),
     )
     monkeypatch.setattr(
-        edgemcp_launcher.subprocess, "Popen",
+        edgemcp_launcher.subprocess,
+        "Popen",
         lambda command, **options: commands.append((command, options)) or process,
     )
     port = 49151
@@ -384,10 +433,18 @@ def test_launcher_keeps_one_attempt_and_accepts_chromium(tmp_path, monkeypatch):
     edgemcp_launcher._READY.discard((port, str(profile.resolve())))
 
     first = edgemcp_launcher.launch(
-        port, executable=str(executable), profile=profile, headless=True, timeout=1,
+        port,
+        executable=str(executable),
+        profile=profile,
+        headless=True,
+        timeout=1,
     )
     second = edgemcp_launcher.launch(
-        port, executable=str(executable), profile=profile, headless=True, timeout=1,
+        port,
+        executable=str(executable),
+        profile=profile,
+        headless=True,
+        timeout=1,
     )
 
     assert first["started"] is True
@@ -511,7 +568,9 @@ def test_legacy_port_only_state_refuses_preexisting_listener(tmp_path):
     launcher.version = "Chromium/Fake"
     launcher.browser_id = "44444444-4444-4444-8444-444444444444"
     remote = RemoteBrowser(
-        tmp_path, {"enabled": True, "headless": True, "cdp_port": 0}, launcher=launcher,
+        tmp_path,
+        {"enabled": True, "headless": True, "cdp_port": 0},
+        launcher=launcher,
     )
 
     status = remote.status()
@@ -549,13 +608,15 @@ def test_probe_identity_validates_websocket_url_and_probe_keeps_string_api():
         websocket_port_offset = 0
 
         def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
-            content = json.dumps({
-                "Browser": "Chromium/123",
-                "webSocketDebuggerUrl": (
-                    f"ws://127.0.0.1:{self.server.server_port + self.websocket_port_offset}"
-                    f"/devtools/browser/{browser_id}"
-                ),
-            }).encode()
+            content = json.dumps(
+                {
+                    "Browser": "Chromium/123",
+                    "webSocketDebuggerUrl": (
+                        f"ws://127.0.0.1:{self.server.server_port + self.websocket_port_offset}"
+                        f"/devtools/browser/{browser_id}"
+                    ),
+                }
+            ).encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(content)))
             self.end_headers()
@@ -569,7 +630,8 @@ def test_probe_identity_validates_websocket_url_and_probe_keeps_string_api():
     thread.start()
     try:
         assert edgemcp_launcher.probe_identity(server.server_port) == {
-            "browser": "Chromium/123", "browser_id": str(UUID(browser_id)),
+            "browser": "Chromium/123",
+            "browser_id": str(UUID(browser_id)),
         }
         assert edgemcp_launcher.probe(server.server_port) == "Chromium/123"
         Handler.websocket_port_offset = 1
@@ -594,10 +656,59 @@ def test_launcher_rejects_unrecorded_existing_browser(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="unowned browser"):
         edgemcp_launcher.launch(
-            key[0], executable=None, profile=profile, expected_browser_id=None,
+            key[0],
+            executable=None,
+            profile=profile,
+            expected_browser_id=None,
         )
     reused = edgemcp_launcher.launch(
-        key[0], executable=None, profile=profile,
+        key[0],
+        executable=None,
+        profile=profile,
         expected_browser_id=identity["browser_id"],
     )
     assert reused["already_running"] is True
+
+
+@pytest.mark.parametrize("failure_name", ["TimeoutException", "CallMethodException"])
+def test_capture_read_only_fallback_handles_android_surface_failures(harness, failure_name):
+    import pychrome
+
+    remote, launcher, fake = harness
+    setattr(fake, failure_name, getattr(pychrome, failure_name))
+    remote.launch("capture-fallback")
+    calls = []
+
+    def capture(**kwargs):
+        calls.append(kwargs)
+        if kwargs["fromSurface"]:
+            raise getattr(pychrome, failure_name)("sensitive raw diagnostic")
+        return {"data": base64.b64encode(b"\x89PNG\r\n\x1a\nfixture").decode()}
+
+    object.__setattr__(fake.tabs["page-1"].Page, "captureScreenshot", capture)
+    assert remote.request("screenshot", query={"target_id": "page-1"}).startswith(b"\x89PNG")
+    assert [call["fromSurface"] for call in calls] == [True, False]
+    assert [call["_timeout"] for call in calls] == [10, 5]
+    assert not any(domain == "Input" for domain, _, _ in fake.tabs["page-1"].calls)
+
+
+def test_capture_exhausted_timeout_is_sanitized_and_detaches(harness):
+    import pychrome
+
+    from swarm.edgemcp_browser import ScreenshotUnavailable
+
+    remote, launcher, fake = harness
+    fake.TimeoutException = pychrome.TimeoutException
+    remote.launch("capture-timeout")
+    calls = []
+
+    def capture(**kwargs):
+        calls.append(kwargs)
+        raise pychrome.TimeoutException("secret browser diagnostic")
+
+    object.__setattr__(fake.tabs["page-1"].Page, "captureScreenshot", capture)
+    with pytest.raises(ScreenshotUnavailable, match="foreground") as error:
+        remote.request("screenshot", query={"target_id": "page-1"})
+    assert "secret browser diagnostic" not in str(error.value)
+    assert len(calls) == 2
+    assert fake.tabs["page-1"].stopped
