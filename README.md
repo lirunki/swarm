@@ -801,7 +801,9 @@ needed.
   `%LOCALAPPDATA%\Swarm\Edge-CDP-<port>-<profile-hash>`; the personal Edge profile
   is never used. Headless is supported. Native auto-discovery does not select this
   bridge implicitly. Windows listener/process/profile identity is verified before
-  Swarm claims the browser. WSL must reach Windows localhost (mirrored networking
+  Swarm claims the browser. Launch and ownership inputs are explicitly forwarded
+  through `WSLENV`; `Invalid CDP port` on older versions can mean missing environment
+  forwarding, not an occupied port. WSL must reach Windows localhost (mirrored networking
   or an existing secured loopback forward); Swarm does not change firewalls or
   expose CDP. Known pre-launch failures remain removable; uncertain launches are
   retained for inspection instead of being blindly replayed.

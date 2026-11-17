@@ -23,9 +23,7 @@ INSPECT_CACHE_SECONDS = 1.0
 class WslEdgeLaunchError(RuntimeError):
     """A sanitized WSL launch failure with an explicit side-effect classification."""
 
-    def __init__(
-        self, message: str, *, started: bool, definite: bool, code: str
-    ) -> None:
+    def __init__(self, message: str, *, started: bool, definite: bool, code: str) -> None:
         self.started = started
         self.definite = definite
         self.code = code
@@ -194,8 +192,12 @@ def powershell_executable() -> str | None:
 
 def _command(powershell: str, script: str) -> list[str]:
     return [
-        powershell, "-NoLogo", "-NoProfile", "-NonInteractive",
-        "-EncodedCommand", _encoded(script),
+        powershell,
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-EncodedCommand",
+        _encoded(script),
     ]
 
 
@@ -211,17 +213,34 @@ def _bounded_json(completed: Any) -> Any | None:
         return None
 
 
+def _bridge_environment(values: dict[str, str]) -> dict[str, str]:
+    """Explicitly export validated scalar inputs across the WSL/Win32 boundary."""
+    env = os.environ.copy()
+    env.update(values)
+    # WSL does not pass arbitrary Linux variables to Win32 processes by default.
+    # Replace any existing entries for these scalars: /p, /l or /u flags would
+    # translate their values or suppress the direction needed by PowerShell.
+    entries = [
+        item
+        for item in env.get("WSLENV", "").split(":")
+        if item and item.split("/", 1)[0].upper() not in values
+    ]
+    env["WSLENV"] = ":".join([*entries, *values])
+    return env
+
+
 def _inspect(port: int, tag: str, pid: int = 0, birth: int = 0) -> dict[str, Any]:
     powershell = powershell_executable()
     if powershell is None:
         return {"state": "unknown", "pid": None, "birth": None}
-    env = os.environ.copy()
-    env.update({
-        "SWARM_EDGE_CDP_PORT": str(port),
-        "SWARM_EDGE_PROFILE_TAG": tag,
-        "SWARM_EDGE_PID": str(pid),
-        "SWARM_EDGE_BIRTH": str(birth),
-    })
+    env = _bridge_environment(
+        {
+            "SWARM_EDGE_CDP_PORT": str(port),
+            "SWARM_EDGE_PROFILE_TAG": tag,
+            "SWARM_EDGE_PID": str(pid),
+            "SWARM_EDGE_BIRTH": str(birth),
+        }
+    )
     try:
         completed = subprocess.run(
             _command(powershell, _INSPECT_SCRIPT),
@@ -256,8 +275,12 @@ class WindowsEdgeHandle:
     port: int
     tag: str
     _checked_at: float = field(default=0.0, init=False, repr=False, compare=False)
-    _last_inspection: dict[str, Any] | None = field(default=None, init=False, repr=False, compare=False)
-    _inspect_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False, compare=False)
+    _last_inspection: dict[str, Any] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    _inspect_lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False, compare=False
+    )
 
     def _identity(self, *, force: bool = False) -> dict[str, Any]:
         with self._inspect_lock:
@@ -334,14 +357,17 @@ def launch(
         if powershell is None:
             raise WslEdgeLaunchError(
                 "Windows PowerShell interop is unavailable in WSL",
-                started=False, definite=True, code="interop_unavailable",
+                started=False,
+                definite=True,
+                code="interop_unavailable",
             )
-        env = os.environ.copy()
-        env.update({
-            "SWARM_EDGE_CDP_PORT": str(port),
-            "SWARM_EDGE_PROFILE_TAG": tag,
-            "SWARM_EDGE_HEADLESS": "1" if headless else "0",
-        })
+        env = _bridge_environment(
+            {
+                "SWARM_EDGE_CDP_PORT": str(port),
+                "SWARM_EDGE_PROFILE_TAG": tag,
+                "SWARM_EDGE_HEADLESS": "1" if headless else "0",
+            }
+        )
         try:
             completed = subprocess.run(
                 _command(powershell, _POWERSHELL_SCRIPT),
@@ -354,12 +380,16 @@ def launch(
         except subprocess.TimeoutExpired as exc:
             raise WslEdgeLaunchError(
                 "Windows Edge launch bridge timed out",
-                started=True, definite=False, code="bridge_timeout",
+                started=True,
+                definite=False,
+                code="bridge_timeout",
             ) from exc
         except OSError as exc:
             raise WslEdgeLaunchError(
                 "Could not run the Windows Edge launch bridge",
-                started=False, definite=True, code="bridge_unavailable",
+                started=False,
+                definite=True,
+                code="bridge_unavailable",
             ) from exc
 
         result: Any = _bounded_json(completed)
@@ -377,12 +407,16 @@ def launch(
                 )
             raise WslEdgeLaunchError(
                 "Windows Edge launch bridge failed after launch may have started",
-                started=True, definite=False, code="bridge_failed",
+                started=True,
+                definite=False,
+                code="bridge_failed",
             )
         try:
-            if not isinstance(result, dict) or set(result) != {
-                "stage", "pid", "birth", "profile", "executable", "port"
-            } or result["stage"] != "launched":
+            if (
+                not isinstance(result, dict)
+                or set(result) != {"stage", "pid", "birth", "profile", "executable", "port"}
+                or result["stage"] != "launched"
+            ):
                 raise ValueError
             pid = result["pid"]
             birth = result["birth"]
@@ -393,16 +427,26 @@ def launch(
                 raise ValueError
             if returned_port != port:
                 raise ValueError
-            if not isinstance(windows_profile, str) or not windows_profile or len(windows_profile) > 4096:
+            if (
+                not isinstance(windows_profile, str)
+                or not windows_profile
+                or len(windows_profile) > 4096
+            ):
                 raise ValueError
-            if not isinstance(edge, str) or not edge.lower().endswith("msedge.exe") or len(edge) > 4096:
+            if (
+                not isinstance(edge, str)
+                or not edge.lower().endswith("msedge.exe")
+                or len(edge) > 4096
+            ):
                 raise ValueError
             if any(ord(character) < 32 for character in windows_profile + edge):
                 raise ValueError
         except (AttributeError, TypeError, UnicodeError, ValueError) as exc:
             raise WslEdgeLaunchError(
                 "Windows Edge launch bridge returned an invalid response after launch may have started",
-                started=True, definite=False, code="invalid_response",
+                started=True,
+                definite=False,
+                code="invalid_response",
             ) from exc
         handle = WindowsEdgeHandle(pid, birth, windows_profile, edge, port, tag)
         WSL_ATTEMPTS[key] = handle

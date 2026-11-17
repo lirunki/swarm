@@ -61,9 +61,13 @@ def test_wsl_launch_uses_fixed_encoded_script_and_validated_environment(tmp_path
     assert options["shell"] is False and options["timeout"] == 10
     assert options["env"]["SWARM_EDGE_CDP_PORT"] == "9333"
     assert options["env"]["SWARM_EDGE_HEADLESS"] == "1"
-    assert options["env"]["SWARM_EDGE_PROFILE_TAG"] == hashlib.sha256(
-        str(profile.resolve()).encode("utf-8")
-    ).hexdigest()[:16]
+    assert {"SWARM_EDGE_CDP_PORT", "SWARM_EDGE_PROFILE_TAG", "SWARM_EDGE_HEADLESS"} <= set(
+        options["env"]["WSLENV"].split(":")
+    )
+    assert (
+        options["env"]["SWARM_EDGE_PROFILE_TAG"]
+        == hashlib.sha256(str(profile.resolve()).encode("utf-8")).hexdigest()[:16]
+    )
     assert handle.pid == 4321 and handle.poll() is None
     assert not profile.exists()
 
@@ -78,14 +82,20 @@ def test_windows_profile_is_dedicated_by_port_and_source_profile(tmp_path, monke
             f"{env['SWARM_EDGE_CDP_PORT']}-{env['SWARM_EDGE_PROFILE_TAG']}"
         )
         profiles.append(windows_profile)
-        return SimpleNamespace(returncode=0, stdout=json.dumps({
-            "stage": "launched",
-            "pid": 1000 + len(profiles),
-            "birth": 638500000000000000 + len(profiles),
-            "profile": windows_profile,
-            "executable": "C:\\Edge\\msedge.exe",
-            "port": int(env["SWARM_EDGE_CDP_PORT"]),
-        }).encode(), stderr=b"")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "stage": "launched",
+                    "pid": 1000 + len(profiles),
+                    "birth": 638500000000000000 + len(profiles),
+                    "profile": windows_profile,
+                    "executable": "C:\\Edge\\msedge.exe",
+                    "port": int(env["SWARM_EDGE_CDP_PORT"]),
+                }
+            ).encode(),
+            stderr=b"",
+        )
 
     monkeypatch.setattr(wsl_edge, "powershell_executable", lambda: "powershell.exe")
     monkeypatch.setattr(wsl_edge.subprocess, "run", run)
@@ -102,9 +112,11 @@ def test_windows_profile_is_dedicated_by_port_and_source_profile(tmp_path, monke
 def test_bridge_failure_is_sanitized_and_attempt_is_not_recorded(tmp_path, monkeypatch):
     secret = "secret-from-powershell"
     monkeypatch.setattr(wsl_edge, "powershell_executable", lambda: "powershell.exe")
-    monkeypatch.setattr(wsl_edge.subprocess, "run", lambda *_args, **_kwargs: SimpleNamespace(
-        returncode=1, stdout=b"", stderr=secret.encode()
-    ))
+    monkeypatch.setattr(
+        wsl_edge.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout=b"", stderr=secret.encode()),
+    )
     wsl_edge.WSL_ATTEMPTS.clear()
 
     with pytest.raises(wsl_edge.WslEdgeLaunchError, match="launch bridge failed") as error:
@@ -118,9 +130,13 @@ def test_bridge_failure_is_sanitized_and_attempt_is_not_recorded(tmp_path, monke
 def test_structured_preflight_failure_is_definite_and_preserves_safe_message(tmp_path, monkeypatch):
     payload = {"stage": "preflight", "error": "Microsoft Edge was not found on Windows"}
     monkeypatch.setattr(wsl_edge, "powershell_executable", lambda: "powershell.exe")
-    monkeypatch.setattr(wsl_edge.subprocess, "run", lambda *_args, **_kwargs: SimpleNamespace(
-        returncode=1, stdout=json.dumps(payload).encode(), stderr=b"private command text"
-    ))
+    monkeypatch.setattr(
+        wsl_edge.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1, stdout=json.dumps(payload).encode(), stderr=b"private command text"
+        ),
+    )
     wsl_edge.WSL_ATTEMPTS.clear()
 
     with pytest.raises(wsl_edge.WslEdgeLaunchError, match="Microsoft Edge was not found") as caught:
@@ -133,10 +149,12 @@ def test_structured_preflight_failure_is_definite_and_preserves_safe_message(tmp
 
 
 def test_windows_handle_poll_requires_fixed_identity_proof(monkeypatch):
-    results = iter([
-        {"state": "owned", "pid": 2222, "birth": 638500000000000000},
-        {"state": "gone", "pid": None, "birth": None},
-    ])
+    results = iter(
+        [
+            {"state": "owned", "pid": 2222, "birth": 638500000000000000},
+            {"state": "gone", "pid": None, "birth": None},
+        ]
+    )
     monkeypatch.setattr(wsl_edge, "_inspect", lambda *_args: next(results))
     handle = wsl_edge.WindowsEdgeHandle(
         2222, 638500000000000000, "C:\\profile", "C:\\Edge\\msedge.exe", 9555, "a" * 16
@@ -165,9 +183,7 @@ def test_sentinel_validation_requires_linux_wsl(monkeypatch):
 def test_discovery_offers_wsl_mode_only_with_edge_and_powershell(tmp_path):
     root = tmp_path / "root"
     fixture_file(root / "mnt/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe")
-    fixture_file(
-        root / "mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-    )
+    fixture_file(root / "mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe")
 
     result = edgemcp_launcher.discover_browsers(
         platform="linux",
@@ -176,19 +192,29 @@ def test_discovery_offers_wsl_mode_only_with_edge_and_powershell(tmp_path):
         root=root,
     )
 
-    assert {"name": "Microsoft Edge via WSL", "executable": "wsl:msedge", "supported": True} in result["browsers"]
+    assert {
+        "name": "Microsoft Edge via WSL",
+        "executable": "wsl:msedge",
+        "supported": True,
+    } in result["browsers"]
     assert result["unavailable"] == []
 
 
 def test_auto_discovery_never_selects_wsl_sentinel(monkeypatch):
-    monkeypatch.setattr(edgemcp_launcher, "discover_browsers", lambda: {
-        "browsers": [{
-            "name": "Microsoft Edge via WSL",
-            "executable": "wsl:msedge",
-            "supported": True,
-        }],
-        "unavailable": [],
-    })
+    monkeypatch.setattr(
+        edgemcp_launcher,
+        "discover_browsers",
+        lambda: {
+            "browsers": [
+                {
+                    "name": "Microsoft Edge via WSL",
+                    "executable": "wsl:msedge",
+                    "supported": True,
+                }
+            ],
+            "unavailable": [],
+        },
+    )
 
     with pytest.raises(RuntimeError, match="not found"):
         edgemcp_launcher._find_browser(None)
@@ -198,7 +224,8 @@ def test_explicit_sentinel_passes_without_path_resolution(monkeypatch):
     monkeypatch.setattr(edgemcp_launcher.sys, "platform", "linux")
     monkeypatch.setattr(edgemcp_launcher.paths, "is_wsl", lambda **_kwargs: True)
     monkeypatch.setattr(
-        edgemcp_launcher, "_launchable_path",
+        edgemcp_launcher,
+        "_launchable_path",
         lambda *_args, **_kwargs: pytest.fail("sentinel must not be resolved as a path"),
     )
 
@@ -228,9 +255,15 @@ def test_parent_launcher_dispatches_explicit_wsl_mode(tmp_path, monkeypatch):
         9555, executable="wsl:msedge", profile=profile, headless=True, timeout=1
     )
 
-    assert launched == [((9555, profile.resolve()), {
-        "executable": "wsl:msedge", "headless": True,
-    })]
+    assert launched == [
+        (
+            (9555, profile.resolve()),
+            {
+                "executable": "wsl:msedge",
+                "headless": True,
+            },
+        )
+    ]
     assert result == {
         "started": True,
         "already_running": False,
@@ -255,10 +288,37 @@ def test_parent_launcher_does_not_claim_foreign_windows_listener(tmp_path, monke
     edgemcp_launcher._READY.discard(key)
 
     with pytest.raises(wsl_edge.WslEdgeLaunchError, match="different process") as caught:
-        edgemcp_launcher.launch(
-            9666, executable=wsl_edge.SENTINEL, profile=profile, timeout=1
-        )
+        edgemcp_launcher.launch(9666, executable=wsl_edge.SENTINEL, profile=profile, timeout=1)
 
     assert caught.value.started is True and caught.value.definite is False
     assert key not in edgemcp_launcher._READY
     edgemcp_launcher._ATTEMPTS.pop(key, None)
+
+
+def test_bridge_environment_preserves_unrelated_exports_and_removes_scalar_flags(monkeypatch):
+    monkeypatch.setenv("WSLENV", "KEEP/p:SWARM_EDGE_CDP_PORT/u:SWARM_EDGE_PROFILE_TAG/pl:OTHER/w")
+    values = {"SWARM_EDGE_CDP_PORT": "9234", "SWARM_EDGE_PROFILE_TAG": "0123456789abcdef"}
+    env = wsl_edge._bridge_environment(values)
+    assert env["WSLENV"] == "KEEP/p:OTHER/w:SWARM_EDGE_CDP_PORT:SWARM_EDGE_PROFILE_TAG"
+    assert env["SWARM_EDGE_CDP_PORT"] == "9234"
+
+
+def test_windows_ownership_probe_exports_pid_and_birth_through_wslenv(monkeypatch):
+    calls = []
+
+    def run(_command, **options):
+        calls.append(options["env"])
+        return SimpleNamespace(
+            returncode=0, stdout=b'{"state":"gone","pid":null,"birth":null}', stderr=b""
+        )
+
+    monkeypatch.setattr(wsl_edge, "powershell_executable", lambda: "powershell.exe")
+    monkeypatch.setattr(wsl_edge.subprocess, "run", run)
+    assert wsl_edge._inspect(9234, "0123456789abcdef", 42, 99)["state"] == "gone"
+    assert {
+        "SWARM_EDGE_CDP_PORT",
+        "SWARM_EDGE_PROFILE_TAG",
+        "SWARM_EDGE_PID",
+        "SWARM_EDGE_BIRTH",
+    } <= set(calls[0]["WSLENV"].split(":"))
+    assert calls[0]["SWARM_EDGE_PID"] == "42" and calls[0]["SWARM_EDGE_BIRTH"] == "99"
