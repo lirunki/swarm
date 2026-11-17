@@ -442,7 +442,8 @@
         const doc = host.ownerDocument || root.document;
         const button = doc?.createElement?.('button'); if (!button) break;
         button.type = 'button'; button.className = tab.id === this.selected ? 'active' : '';
-        button.textContent = tab.title || '(untitled)'; button.title = `${tab.title || '(untitled)'}\n${tab.url}`;
+        const label = doc.createElement('span'); label.className = 'browser-page-title'; label.textContent = tab.title || '(untitled)';
+        button.appendChild(label); button.title = `${tab.title || '(untitled)'}\n${tab.url}`;
         button.dataset.id = tab.id;
         button.setAttribute?.('aria-selected', String(tab.id === this.selected));
         listen(button, 'click', () => void this.select(tab.id));

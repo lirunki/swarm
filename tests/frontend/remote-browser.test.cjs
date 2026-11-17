@@ -101,8 +101,8 @@ test('connect revalidates ownership/running and uses instance-scoped viewer HTTP
     [`/api/federation/peer%2Fa/proxy/api/browser/instances/${A}/select`, 'POST', false],
     [`/api/federation/peer%2Fa/proxy/api/browser/instances/${A}/screenshot?target_id=page-a`, 'GET', true],
   ]);
-  assert.equal(t.elements['#browser-tabs'].children[0].textContent, '<b>plain</b>');
-  assert.equal(t.elements['#browser-tabs'].children[0].children.length, 1, 'page title stays text');
+  assert.equal(t.elements['#browser-tabs'].children[0].children[0].textContent, '<b>plain</b>');
+  assert.equal(t.elements['#browser-tabs'].children[0].children.length, 2, 'page title stays text');
   assert.equal(t.elements['#browser-connect'].textContent, 'Disconnect');
   t.controller.deactivate();
 });

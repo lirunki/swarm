@@ -22,6 +22,9 @@ def test_browser_chrome_is_two_rows_at_most_and_options_keep_controls_accessible
             super().route(route)
 
     api = ToolbarAPI()
+    for tabs in api.tabs.values():
+        for tab in tabs:
+            tab["title"] = "Very long browser page title " * 30
     context, page, errors = open_page(chromium_browser, _dashboard_static_url, api, width=width)
     try:
         open_browser(page)
@@ -46,6 +49,21 @@ def test_browser_chrome_is_two_rows_at_most_and_options_keep_controls_accessible
         playwright.expect(page.locator("#browser-screen")).to_be_visible()
         assert toolbar.bounding_box()["height"] <= 69
         assert toolbar.evaluate("node => node.scrollWidth <= node.clientWidth")
+        tab = page.locator("#browser-tabs > button").first
+        label = tab.locator(".browser-page-title")
+        close = tab.locator(".tab-close")
+        label_box, close_box, tab_box = (
+            label.bounding_box(),
+            close.bounding_box(),
+            tab.bounding_box(),
+        )
+        assert label.evaluate("node=>node.scrollWidth>node.clientWidth")
+        assert label_box["x"] + label_box["width"] <= close_box["x"]
+        assert close_box["x"] + close_box["width"] <= tab_box["x"] + tab_box["width"]
+        assert close_box["width"] >= 10
+        assert close.evaluate(
+            "node=>{const r=node.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)===node}"
+        )
         options.locator("summary").click()
         page.locator("#browser-pause").click()
         playwright.expect(page.locator("#browser-pause")).to_have_text("Resume refresh")
