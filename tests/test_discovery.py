@@ -3,7 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from swarm.discovery import browse_folders, discover_models, sibling_worktree_path
+from swarm import discovery
+from swarm.discovery import (
+    browse_folders,
+    canonical_worktree_parent,
+    discover_models,
+    sibling_worktree_path,
+)
 
 
 def test_discover_models_uses_pi_catalog_and_marks_configured_default(tmp_path, monkeypatch):
@@ -83,3 +89,33 @@ def test_sibling_worktree_path_sanitizes_branch_separators(tmp_path):
     assert sibling_worktree_path(source, "feature/nested\\task") == Path(
         str(source) + "_feature_nested_task"
     )
+    custom = tmp_path / "custom parent"
+    assert sibling_worktree_path(source, "feature/nested\\task", custom) == (
+        custom / "feature_nested_task"
+    )
+
+
+@pytest.mark.parametrize("branch", [".", "..", "feature/\x00bad", "feature/\x1fbad"])
+def test_worktree_path_rejects_unsafe_folder_names(tmp_path, branch):
+    with pytest.raises(ValueError, match="control|safe"):
+        sibling_worktree_path(tmp_path / "source", branch, tmp_path / "parent")
+
+
+def test_custom_worktree_parent_requires_absolute_path_and_expands_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert canonical_worktree_parent("~/trees") == tmp_path / "trees"
+    with pytest.raises(ValueError, match="absolute"):
+        canonical_worktree_parent("relative/trees")
+
+
+def test_custom_worktree_parent_uses_native_windows_mapping(monkeypatch):
+    mapped = Path("/mapped/c/Worktrees")
+    calls = []
+
+    def map_path(value):
+        calls.append(str(value))
+        return mapped
+
+    monkeypatch.setattr(discovery, "local_path", map_path)
+    assert canonical_worktree_parent(r"C:\Worktrees") == mapped
+    assert calls == [r"C:\Worktrees"]

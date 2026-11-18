@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from .paths import local_path
 
@@ -113,10 +113,40 @@ def browse_folders(value: str | None = None) -> dict:
     }
 
 
-def sibling_worktree_path(source: str | Path, branch: str) -> Path:
-    """Return X_<branch> beside X, replacing path separators in the branch."""
-    source_path = local_path(source)
+def canonical_worktree_parent(value: str | Path) -> Path | None:
+    """Validate and canonicalize an optional server-local worktree parent."""
+    raw = str(value)
+    if not raw.strip():
+        return None
+    if any(ord(character) < 32 or ord(character) == 127 for character in raw):
+        raise ValueError("worktree_parent cannot contain control characters")
+    expanded = os.path.expanduser(raw)
+    if not (Path(expanded).is_absolute() or PureWindowsPath(expanded).is_absolute()):
+        raise ValueError("worktree_parent must be an absolute path")
+    parent = local_path(expanded)
+    if not parent.is_absolute():
+        raise ValueError("worktree_parent must map to an absolute local path")
+    return parent
+
+
+def sibling_worktree_path(
+    source: str | Path, branch: str, worktree_parent: str | Path | None = None
+) -> Path:
+    """Return a safe automatic destination, optionally below a custom parent."""
+    if any(ord(character) < 32 or ord(character) == 127 for character in branch):
+        raise ValueError("branch cannot contain control characters")
     safe_branch = branch.replace("/", "_").replace("\\", "_")
     if not safe_branch:
         raise ValueError("branch is required when creating a worktree")
-    return source_path.with_name(f"{source_path.name}_{safe_branch}")
+    if safe_branch in {".", ".."}:
+        raise ValueError("branch does not produce a safe worktree folder name")
+
+    parent = canonical_worktree_parent(worktree_parent or "")
+    if parent is None:
+        source_path = local_path(source)
+        return source_path.with_name(f"{source_path.name}_{safe_branch}")
+
+    destination = parent / safe_branch
+    if destination.parent != parent or destination == parent:
+        raise ValueError("worktree destination escapes its parent")
+    return destination

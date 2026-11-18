@@ -629,6 +629,27 @@ keyboards without the software keyboard do not show the accessory bar.
 This uses the existing terminal WebSocket/PTY transport, including remote terminals.
 Refresh the page after updating; no backend restart is needed.
 
+### Choosing a new agent's worktree location
+
+In **+ → New agent**, enable **Create worktree** and choose the existing Git folder
+as the seed. Next to New branch, **Worktree parent folder (optional)** chooses where
+the new folder is created. For example, parent `/home/username/git/` and branch
+`feature/login` produce `/home/username/git/feature_login`. Branch slashes are replaced
+with underscores; the original Git branch name is unchanged. The live Destination
+preview shows the full result.
+
+Leave the parent blank for the existing default: a sibling named
+`<seed-folder-name>_<branch-name>`. The last parent choice, including blank, is saved
+in this browser separately for each connected Swarm and restored when reopening
+New agent. Paths refer to the selected server, not the client computer. Browser
+storage is optional; if disabled, creation still works but the preference cannot
+persist.
+
+Custom parents must be absolute server paths (`~` is expanded by the server).
+Missing directories are created during background setup, not when opening the form.
+Existing destinations, files, and paths inside Git metadata or the Swarm registry
+are refused. No existing worktree, seed branch or uncommitted changes are overwritten.
+
 ### Child branch recovery after controller restart
 
 A child may continue on a newer PR branch in the same worktree. If Git and the

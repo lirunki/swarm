@@ -15,7 +15,7 @@ from .agent_limits import (
     count_active,
     count_active_entries,
 )
-from .discovery import sibling_worktree_path
+from .discovery import canonical_worktree_parent, sibling_worktree_path
 from .files import AgentFiles
 from .grouping import Groups
 from .messaging import Messages
@@ -76,8 +76,9 @@ class Controller:
             if sum(is_setup(a) for a in self.store.scan()) >= MAX_QUEUED_SETUPS:
                 raise ValueError("Too many agents are setting up; wait for a setup to finish")
             selected = local_path(request.folder)
+            worktree_parent = canonical_worktree_parent(request.worktree_parent)
             folder = (
-                sibling_worktree_path(selected, request.branch)
+                sibling_worktree_path(selected, request.branch, worktree_parent)
                 if (request.create_worktree and request.automatic_worktree_path)
                 else selected
             )
@@ -102,6 +103,7 @@ class Controller:
                 | {
                     "folder": str(selected),
                     "repository": str(local_path(request.repository)) if request.repository else "",
+                    "worktree_parent": str(worktree_parent) if worktree_parent else "",
                 },
                 f"Read the swarm skill and your Swarm record. Work toward this goal:\n{agent.goal}",
                 self.store,

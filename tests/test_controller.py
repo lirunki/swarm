@@ -326,6 +326,23 @@ def test_automatic_worktree_path_creates_sibling_and_sanitizes_branch(ctrl, tmp_
     assert agent.branch == "feature/nested"
     assert (destination / ".git").is_file()
 
+    custom_parent = tmp_path / "custom worktrees"
+    custom_queued = ctrl.create(
+        CreateAgent(
+            name="Custom parent coder",
+            goal="Ship elsewhere",
+            folder=str(repo),
+            branch="feature/custom",
+            create_worktree=True,
+            automatic_worktree_path=True,
+            worktree_parent=str(custom_parent),
+        )
+    )
+    custom = finish(ctrl, custom_queued)
+    assert custom.folder == str(custom_parent / "feature_custom")
+    assert custom.repository == str(repo)
+    assert (custom_parent / "feature_custom" / ".git").is_file()
+
 
 def test_automatic_worktree_path_refuses_existing_destination(ctrl, tmp_path):
     repo = tmp_path / "project"

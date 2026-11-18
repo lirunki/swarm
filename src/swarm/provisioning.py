@@ -283,7 +283,9 @@ class Worker:
                     selected if request.automatic_worktree_path else local_path(request.repository)
                 )
                 folder = (
-                    sibling_worktree_path(selected, request.branch)
+                    sibling_worktree_path(
+                        selected, request.branch, request.worktree_parent or None
+                    )
                     if request.automatic_worktree_path
                     else selected
                 )
@@ -306,11 +308,23 @@ class Worker:
                 raise ValueError("Branch already exists; choose a new branch")
             if folder.exists() or folder.is_symlink():
                 raise ValueError(f"Worktree destination already exists: {folder}")
+            folder = local_path(folder)
+            if folder.exists() or folder.is_symlink():
+                raise ValueError(f"Worktree destination already exists: {folder}")
+            if folder.parent.exists() and not folder.parent.is_dir():
+                raise ValueError("Worktree parent must be a directory")
             common = local_path(
                 self.git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
             )
-            if folder.is_relative_to(common) or folder.is_relative_to(self.store.home):
-                raise ValueError("Worktree cannot be inside Git metadata or the Swarm registry")
+            registry = local_path(self.store.home)
+
+            def validate_destination() -> None:
+                if folder.is_relative_to(common) or folder.is_relative_to(registry):
+                    raise ValueError(
+                        "Worktree cannot be inside Git metadata or the Swarm registry"
+                    )
+
+            validate_destination()
             self.stage(
                 "Creating worktree…",
                 spawn_workspace=str(folder),
@@ -319,6 +333,14 @@ class Worker:
                 spawn_base_commit=commit,
             )
             folder.parent.mkdir(parents=True, exist_ok=True)
+            if folder.exists() or folder.is_symlink():
+                raise ValueError(f"Worktree destination already exists: {folder}")
+            resolved_folder = local_path(folder)
+            if resolved_folder != folder:
+                folder = resolved_folder
+                validate_destination()
+            if folder.exists() or folder.is_symlink():
+                raise ValueError(f"Worktree destination already exists: {folder}")
             self.git(
                 repo,
                 "worktree",

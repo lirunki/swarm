@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -73,6 +74,204 @@ def test_http_returns_durable_queued_card_without_git_or_pi(tmp_path, monkeypatc
         assert client.get("/api/state").json()["agents"][0]["id"] == value["id"]
         assert not Path(value["folder"]).exists()
         assert not Path(value["session_file"]).exists()
+
+
+def test_http_queues_custom_parent_without_touching_filesystem(tmp_path, monkeypatch):
+    app = create_app(tmp_path / "registry", recover=False, allowed_hosts=["testserver"])
+    app.state.controller.processes = FakeProcesses(app.state.controller.store)
+    parent = tmp_path / "custom parent" / "not created"
+    monkeypatch.setattr(
+        "swarm.provisioning.Worker.git", lambda *a, **kw: pytest.fail("Git ran on request path")
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/agents",
+            json={
+                "name": "Custom queued",
+                "goal": "Work later",
+                "folder": str(tmp_path / "repo"),
+                "create_worktree": True,
+                "automatic_worktree_path": True,
+                "worktree_parent": str(parent),
+                "branch": "feature/subbranch",
+            },
+        )
+    assert response.status_code == 201, response.text
+    value = response.json()
+    assert value["folder"] == str(parent / "feature_subbranch")
+    assert not parent.exists()
+    plan = json.loads(
+        (
+            app.state.controller.store.home
+            / "setup"
+            / value["id"]
+            / "request.json"
+        ).read_text()
+    )
+    assert plan["request"]["worktree_parent"] == str(parent)
+    assert Path(plan["request"]["worktree_parent"]).is_absolute()
+
+
+def test_custom_parent_validation_is_rejected_before_queueing(tmp_path):
+    app = create_app(tmp_path / "registry", recover=False, allowed_hosts=["testserver"])
+    base = {"name": "Invalid", "goal": "Work", "folder": str(tmp_path / "repo")}
+    custom = str(tmp_path / "trees")
+    with TestClient(app) as client:
+        invalid_combinations = [
+            base | {"worktree_parent": custom},
+            base
+            | {
+                "create_worktree": True,
+                "repository": str(tmp_path / "repo"),
+                "branch": "feature/test",
+                "worktree_parent": custom,
+            },
+        ]
+        for payload in invalid_combinations:
+            assert client.post("/api/agents", json=payload).status_code == 422
+        relative = client.post(
+            "/api/agents",
+            json=base
+            | {
+                "create_worktree": True,
+                "automatic_worktree_path": True,
+                "branch": "feature/test",
+                "worktree_parent": "relative/trees",
+            },
+        )
+        assert relative.status_code == 400 and "absolute" in relative.json()["detail"]
+        control = client.post(
+            "/api/agents",
+            json=base
+            | {
+                "create_worktree": True,
+                "automatic_worktree_path": True,
+                "branch": "feature/test",
+                "worktree_parent": str(tmp_path) + "\u0000bad",
+            },
+        )
+        assert control.status_code == 422
+        unsafe_branch = client.post(
+            "/api/agents",
+            json=base
+            | {
+                "create_worktree": True,
+                "automatic_worktree_path": True,
+                "branch": "..",
+                "worktree_parent": custom,
+            },
+        )
+        assert unsafe_branch.status_code == 400
+    assert app.state.controller.store.scan() == []
+
+
+def test_worker_creates_custom_parent_with_spaces_after_cwd_change(tmp_path, monkeypatch):
+    repo = repository(tmp_path)
+    ctl = make_controller(tmp_path)
+    parent = tmp_path / "custom parent" / "nested"
+    agent = ctl.create(
+        CreateAgent(
+            name="Custom parent",
+            goal="Implement safely",
+            folder=str(repo),
+            create_worktree=True,
+            automatic_worktree_path=True,
+            worktree_parent=str(parent),
+            branch="feature/subbranch",
+        )
+    )
+    plan = json.loads((ctl.store.home / "setup" / str(agent.id) / "request.json").read_text())
+    assert plan["request"]["worktree_parent"] == str(parent)
+    assert agent.folder == str(parent / "feature_subbranch")
+    executions = []
+    monkeypatch.chdir(ctl.store.home)
+    assert run_worker(ctl, agent, lambda cmd, env: executions.append(Path.cwd()))
+    assert executions == [parent / "feature_subbranch"]
+    assert (parent / "feature_subbranch" / ".git").is_file()
+
+
+def test_custom_parent_existing_target_is_preserved(tmp_path, monkeypatch):
+    repo = repository(tmp_path)
+    ctl = make_controller(tmp_path)
+    parent = tmp_path / "custom"
+    destination = parent / "feature_existing"
+    destination.mkdir(parents=True)
+    marker = destination / "keep.txt"
+    marker.write_text("keep")
+    agent = ctl.create(
+        CreateAgent(
+            name="Existing custom target",
+            goal="Work",
+            folder=str(repo),
+            create_worktree=True,
+            automatic_worktree_path=True,
+            worktree_parent=str(parent),
+            branch="feature/existing",
+        )
+    )
+    calls = []
+    original = Worker.git
+
+    def track(worker, folder, *args, **kwargs):
+        calls.append(args)
+        return original(worker, folder, *args, **kwargs)
+
+    monkeypatch.setattr(Worker, "git", track)
+    assert not run_worker(ctl, agent)
+    assert marker.read_text() == "keep"
+
+    redirected = tmp_path / "redirected-target"
+    symlink = parent / "feature_symlink"
+    symlink.symlink_to(redirected, target_is_directory=True)
+    linked_agent = ctl.create(
+        CreateAgent(
+            name="Symlink custom target",
+            goal="Work",
+            folder=str(repo),
+            create_worktree=True,
+            automatic_worktree_path=True,
+            worktree_parent=str(parent),
+            branch="feature/symlink",
+        )
+    )
+    assert not run_worker(ctl, linked_agent)
+    assert symlink.is_symlink() and not redirected.exists()
+    assert not any(args[:2] == ("worktree", "add") for args in calls)
+
+
+def test_custom_parent_refuses_git_metadata_registry_and_files(tmp_path, monkeypatch):
+    repo = repository(tmp_path)
+    ctl = make_controller(tmp_path)
+    blocked_parents = [repo / ".git" / "blocked", ctl.store.home / "blocked"]
+    parent_file = tmp_path / "parent-file"
+    parent_file.write_text("not a directory")
+    blocked_parents.append(parent_file)
+    calls = []
+    original = Worker.git
+
+    def track(worker, folder, *args, **kwargs):
+        calls.append(args)
+        return original(worker, folder, *args, **kwargs)
+
+    monkeypatch.setattr(Worker, "git", track)
+    for number, parent in enumerate(blocked_parents):
+        agent = ctl.create(
+            CreateAgent(
+                name=f"Blocked {number}",
+                goal="Work",
+                folder=str(repo),
+                create_worktree=True,
+                automatic_worktree_path=True,
+                worktree_parent=str(parent),
+                branch=f"feature/blocked-{number}",
+            )
+        )
+        assert not run_worker(ctl, agent)
+        assert ctl.store.get(agent.id).spawn_state == "failed"
+    assert not blocked_parents[0].exists()
+    assert not blocked_parents[1].exists()
+    assert parent_file.read_text() == "not a directory"
+    assert not any(args[:2] == ("worktree", "add") for args in calls)
 
 
 def test_worker_reports_worktree_progress_then_executes_in_same_workspace(tmp_path, monkeypatch):

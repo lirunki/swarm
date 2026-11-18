@@ -51,6 +51,9 @@ test('worktree destination is a sanitized sibling while branch remains unchanged
     '/repos/app_feature_nested',
   );
   assert.equal(context.siblingWorktreePath('/repos/app', ''), '');
+  assert.equal(context.siblingWorktreePath('/repos/app','feature/nested','/home/user/git/'),'/home/user/git/feature_nested');
+  assert.equal(context.siblingWorktreePath('/repos/app','feature/nested','/'),'/feature_nested');
+  assert.equal(context.siblingWorktreePath('/repos/app','feature/nested',' /custom parent '),'/custom parent/feature_nested');
   assert.match(source, /data\.automatic_worktree_path = data\.create_worktree/);
   assert.match(source, /data\.branch\.trim\(\)/);
 });

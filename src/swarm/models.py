@@ -158,10 +158,24 @@ class CreateAgent(BaseModel):
     branch: str = ""
     create_worktree: bool = False
     automatic_worktree_path: bool = False
+    worktree_parent: str = Field(default="", max_length=4096)
     model: str | None = None
+
+    @field_validator("worktree_parent")
+    @classmethod
+    def valid_worktree_parent_characters(cls, value: str) -> str:
+        if any(ord(character) < 32 or ord(character) == 127 for character in value):
+            raise ValueError("worktree_parent cannot contain control characters")
+        return value
 
     @model_validator(mode="after")
     def worktree_requirements(self) -> CreateAgent:
+        if self.worktree_parent.strip() and not (
+            self.create_worktree and self.automatic_worktree_path
+        ):
+            raise ValueError(
+                "worktree_parent requires create_worktree and automatic_worktree_path"
+            )
         if not self.create_worktree:
             if self.automatic_worktree_path:
                 raise ValueError("automatic_worktree_path requires create_worktree")

@@ -1321,15 +1321,24 @@ async function loadModelOptions() {
     select.replaceChildren(); addSelectOption(select, '', 'Pi default'); hint.textContent = `Could not list Pi models: ${error.message}`;
   } finally { select.disabled = false; }
 }
-function siblingWorktreePath(source, branch) {
+function siblingWorktreePath(source, branch, worktreeParent = '') {
   const clean = source.replace(/\/+$/, ''), slash = clean.lastIndexOf('/'), parent = slash >= 0 ? clean.slice(0, slash + 1) : '', name = slash >= 0 ? clean.slice(slash + 1) : clean;
   const safeBranch = branch.replace(/[\\/]/g, '_');
-  return clean && safeBranch ? `${parent}${name}_${safeBranch}` : '';
+  const selectedParent=worktreeParent.trim().replace(/[\\/]+$/, '');
+  const customRoot=selectedParent || (worktreeParent.trim().startsWith('/') ? '/' : '');
+  return clean && safeBranch ? (customRoot ? `${customRoot.replace(/\/$/,'')}/${safeBranch}` : `${parent}${name}_${safeBranch}`) : '';
+}
+const worktreeParentPreferenceKey = () => `swarm.create-worktree-parent.${activeSwarm}`;
+function loadWorktreeParentPreference() {
+  try {return localStorage.getItem(worktreeParentPreferenceKey()) || '';}catch{return '';}
+}
+function rememberWorktreeParentPreference(value, source=activeSwarm) {
+  try {localStorage.setItem(`swarm.create-worktree-parent.${source}`, value.trim().replace(/([\\/]+)$/, (suffix, _group, offset) => offset===0 || /^[A-Za-z]:$/.test(value.trim().slice(0,offset)) ? suffix : '')); }catch{/* Storage is optional; the submitted request remains usable. */}
 }
 function updateWorktreeCreateFields() {
   const form = $('#create-form'), enabled = form.elements.create_worktree.checked, fields = $('#worktree-create-fields');
   fields.hidden = !enabled; form.elements.branch.required = enabled;
-  const destination = siblingWorktreePath(form.elements.folder.value, form.elements.branch.value.trim());
+  const destination = siblingWorktreePath(form.elements.folder.value, form.elements.branch.value.trim(), form.elements.worktree_parent.value);
   $('#worktree-destination').textContent = destination || 'Choose a folder and branch';
   $('#folder-selection-hint').textContent = enabled
     ? 'Select the existing Git worktree to branch from. The destination is computed below.'
@@ -1370,6 +1379,8 @@ $('#select-folder').addEventListener('click', () => {
 $('#create-form').elements.folder.addEventListener('change', updateWorktreeCreateFields);
 $('#create-form').elements.create_worktree.addEventListener('change', updateWorktreeCreateFields);
 $('#create-form').elements.branch.addEventListener('input', updateWorktreeCreateFields);
+$('#create-form').elements.worktree_parent.addEventListener('input', updateWorktreeCreateFields);
+$('#create-form').elements.worktree_parent.addEventListener('change', event=>rememberWorktreeParentPreference(event.currentTarget.value));
 $('#create-form').addEventListener('submit', event => {
   event.preventDefault(); const form = event.currentTarget;
   submit(form, async () => {
@@ -1377,10 +1388,12 @@ $('#create-form').addEventListener('submit', event => {
     data.create_worktree = form.elements.create_worktree.checked;
     data.automatic_worktree_path = data.create_worktree;
     if (!data.model) delete data.model;
-    if (!data.create_worktree) delete data.branch;
+    if (!data.create_worktree) {delete data.branch;delete data.worktree_parent;}
+    else {data.worktree_parent=data.worktree_parent.trim();if(!data.worktree_parent)delete data.worktree_parent;}
     if (data.create_worktree && (!data.folder || !data.branch.trim())) throw new Error('Choose a Git folder and enter a new branch.');
     // Capture the selected workspace before awaiting: a late remote response must never mutate a newly selected Swarm.
     const requestGeneration = stateGeneration, requestSwarm = activeSwarm;
+    if(data.create_worktree)rememberWorktreeParentPreference(form.elements.worktree_parent.value,requestSwarm);
     const agent = await api('/api/agents', 'POST', data);
     if (requestGeneration !== stateGeneration || requestSwarm !== activeSwarm) return;
     $('#create-dialog').close(); form.reset(); dashboardControls.status.reset(); $('#search').value = ''; activate('dashboard');
@@ -1516,7 +1529,7 @@ const relaySettingsDialog = new SwarmRelaySettings.RelaySettingsDialog({
 for (const el of document.querySelectorAll('[data-close]')) el.addEventListener('click', () => el.closest('dialog').close());
 const createDialog = () => {
   dashboardControls.closeAddMenus();
-  const form = $('#create-form'); form.reset(); loadAgentFolderOptions(); updateWorktreeCreateFields();
+  const form = $('#create-form'); form.reset();form.elements.worktree_parent.value=loadWorktreeParentPreference(); loadAgentFolderOptions(); updateWorktreeCreateFields();
   $('#model-selection-hint').textContent = 'Reading models from the server Pi configuration…';
   showDialog('#create-dialog'); loadModelOptions();
 };
