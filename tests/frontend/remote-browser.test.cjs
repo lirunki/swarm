@@ -567,3 +567,16 @@ test('source keeps EdgeMCP screenshot core and forbids old lifecycle/protocol co
   assert.doesNotMatch(source, /#browser-enabled|toggleLaunch|saveSettings/);
   assert.equal(MAX_QUEUE, 32);
 });
+
+
+test('confirmed pre-launch failure is not mislabeled uncertain just because it has a request ID', async () => {
+  const t=settingsFixture({request:async(url,method,body)=>{
+    if(url.endsWith('/discovery'))return {browsers:[],unavailable:[]};
+    if(method==='POST')throw Object.assign(Error(`No available port. Request ID: ${body.request_id}`),{status:409,definite:true,uncertain:false});
+    return registry(3);
+  }});
+  await t.controller.load();t.elements['#browser-instance-name'].value='new';
+  assert.equal(await t.controller.launch(),false);
+  assert.equal(t.controller.uncertain,false);
+  assert.doesNotMatch(t.elements['#browser-settings-status'].textContent,/Outcome uncertain/);
+});

@@ -7,31 +7,31 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=browser-tab-close-1">
+  <link rel="stylesheet" href="/static/app.css?v=archive-context-metrics-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/org-chart.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/relay-settings.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/terminal-touch.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/terminal-copy.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/terminal-keys.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/agent-files.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/agent-messages.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/agent-broadcast.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/auth.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/fleet-control.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/system-notifications.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/notifications.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/agent-groups.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/grouping-mode.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/agent-search.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/history-archive.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/agent-limits.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/terminal-wheel.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/remote-browser.js?v=browser-tab-close-1"></script>
-  <script defer src="/static/app.js?v=browser-tab-close-1"></script>
+  <script defer src="/static/card-views.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/org-chart.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/relay-settings.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/terminal-touch.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/terminal-copy.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/terminal-keys.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/agent-files.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/agent-messages.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/agent-broadcast.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/auth.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/fleet-control.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/system-notifications.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/notifications.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/agent-groups.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/grouping-mode.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/agent-search.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/history-archive.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/agent-limits.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/terminal-wheel.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/remote-browser.js?v=archive-context-metrics-1"></script>
+  <script defer src="/static/app.js?v=archive-context-metrics-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -414,7 +414,7 @@
         <div class="meta-compact-head"><div><h3 id="history-archive-heading">Archive older context <span class="hint">No LLM</span></h3><p id="history-archive-availability" class="hint"></p></div><button id="archive-history" type="button">Archive older context…</button></div>
         <p class="hint">Move the oldest chosen share of active model context to a private file and replace it with one history-reference entry. No summarization or model calls. Raw history stays intact; the newest user turn and tool-call/result batches remain together.</p>
         <label>Older context to archive (%)<input id="history-archive-percent" name="history_percent" type="number" value="50" min="1" max="95" step="1"></label>
-        <p class="hint">Measured by serialized model-content bytes, not exact tokens. The cut moves to a safe turn boundary; the actual percentage may differ. The agent stays stopped with automatic recovery disabled until you explicitly Wake/re-enable it.</p>
+        <p class="hint">Measured by serialized model-content bytes, not exact tokens. Pi’s ↑/↓/R/W counters are lifetime usage, not current context, and will not decrease. Raw session history is preserved. The cut moves to a safe turn boundary; the actual percentage may differ. The agent stays stopped with automatic recovery disabled until you explicitly Wake/re-enable it.</p>
         <div id="history-archive-status" class="meta-compact-status" aria-live="polite" hidden>
           <p><strong id="history-archive-state"></strong></p>
           <p id="history-archive-result" hidden></p>

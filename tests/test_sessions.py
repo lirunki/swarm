@@ -28,6 +28,35 @@ def sessions(tmp_path, monkeypatch):
     return Sessions(Store(tmp_path / "swarm"), [root]), path
 
 
+def test_running_pi_processes_returns_pid_and_cwd_and_folder_wrapper(monkeypatch):
+    import swarm.sessions as module
+
+    def run(command, **kwargs):
+        del kwargs
+        if command[0] == "ps":
+            return type(
+                "Result",
+                (),
+                {
+                    "stdout": (
+                        "991001 pi hidden-session-argument\n"
+                        "991002 node /opt/pi-coding-agent/cli.js hidden-session-argument\n"
+                        "991003 bash pi-coding-agent\n"
+                    )
+                },
+            )()
+        pid = command[3]
+        return type("Result", (), {"stdout": f"p{pid}\nn/work/{pid}\n"})()
+
+    monkeypatch.setattr(module, "cygwin", lambda: False)
+    monkeypatch.setattr(module.subprocess, "run", run)
+    expected = [(991001, "/work/991001"), (991002, "/work/991002")]
+    assert module.running_pi_processes() == expected
+
+    monkeypatch.setattr(module, "running_pi_processes", lambda: expected)
+    assert module.running_pi_folders() == ["/work/991001", "/work/991002"]
+
+
 def test_adoption_preserves_exact_session_and_does_not_launch(sessions):
     service, path = sessions
     original = path.read_bytes()

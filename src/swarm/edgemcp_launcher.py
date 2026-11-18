@@ -46,6 +46,13 @@ class DefiniteLaunchFailure(RuntimeError):
     """The launch is proven not to have left a browser running."""
 
     definite = True
+    started = False
+
+
+class BrowserPortOccupied(DefiniteLaunchFailure):
+    """The requested port was occupied before this launch could start."""
+
+    code = "port_occupied"
 
 
 def _validate_port(port: int) -> int:
@@ -71,6 +78,39 @@ def canonical_cdp_host(host: str = "127.0.0.1") -> str:
 
 def _http_authority(host: str, port: int) -> str:
     return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
+def _local_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def _port_is_locally_available(port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.bind(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+
+
+def free_port(*, executable: str | None = None, excluded: set[int] | None = None) -> int:
+    """Choose a currently free launch port in the browser's host namespace."""
+    excluded = excluded or set()
+    if executable != wsl_edge.SENTINEL:
+        for _ in range(20):
+            candidate = _local_free_port()
+            if candidate not in excluded:
+                return candidate
+    else:
+        # A WSL socket chosen on Linux need not be free on Windows. Ask Windows
+        # first, then reject candidates which are simultaneously busy in WSL.
+        for _ in range(5):
+            candidate = wsl_edge.choose_port()
+            if candidate not in excluded and _port_is_locally_available(candidate):
+                return candidate
+    raise DefiniteLaunchFailure("Could not choose a free browser CDP port")
 
 
 def _allowed_advertised_host(advertised: str | None, requested: str) -> bool:
@@ -410,8 +450,12 @@ def launch(
     with _LOCK:
         try:
             identity = probe_identity(port)
-        except RuntimeError:
-            if key not in _ATTEMPTS or key in _READY:
+        except RuntimeError as exc:
+            if key not in _ATTEMPTS:
+                raise BrowserPortOccupied(
+                    f"CDP port {port} is occupied before browser launch"
+                ) from exc
+            if key in _READY:
                 raise
             identity = None
         if identity:
@@ -420,9 +464,13 @@ def launch(
                     identity["browser_id"] != expected_browser_id
                     and (key not in _ATTEMPTS or key in _READY)
                 ):
-                    raise RuntimeError(f"CDP port {port} belongs to a different browser")
+                    raise BrowserPortOccupied(
+                        f"CDP port {port} belongs to a different browser"
+                    )
             elif key not in _ATTEMPTS:
-                raise RuntimeError(f"CDP port {port} is already occupied by an unowned browser")
+                raise BrowserPortOccupied(
+                    f"CDP port {port} is already occupied by an unowned browser"
+                )
             if executable == wsl_edge.SENTINEL:
                 existing = _ATTEMPTS.get(key)
                 if existing is not None and hasattr(existing, "owns_port"):
@@ -467,6 +515,13 @@ def launch(
                     port, profile_path, executable=wsl_edge.SENTINEL, headless=headless
                 )
             else:
+                # This exact bind catches non-CDP listeners which appeared after
+                # the HTTP probe. It occurs before Popen, so failure has no launch
+                # side effect and is safe for a fresh RemoteBrowser to relocate.
+                if not _port_is_locally_available(port):
+                    raise BrowserPortOccupied(
+                        f"CDP port {port} is occupied before browser launch"
+                    )
                 profile_path.mkdir(parents=True, exist_ok=True, mode=0o700)
                 if os.name != "nt":
                     profile_path.chmod(0o700)

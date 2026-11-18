@@ -4,6 +4,7 @@ The registry owns lifecycle metadata and idempotency.  Actual launch and CDP
 control remain in :mod:`remote_browser`; external browsers are registered only
 after their loopback CDP identity has been verified.
 """
+
 from __future__ import annotations
 
 import fcntl
@@ -135,9 +136,7 @@ class BrowserRegistry:
                             raise OSError("registry lock timeout")
                         time.sleep(LOCK_RETRY_SECONDS)
             except (BrowserError, OSError) as exc:
-                raise BrowserRegistryCorrupt(
-                    "Browser registry is temporarily unavailable"
-                ) from exc
+                raise BrowserRegistryCorrupt("Browser registry is temporarily unavailable") from exc
             yield
         finally:
             if descriptor is not None:
@@ -187,9 +186,9 @@ class BrowserRegistry:
         normalized["revision"] = cls._nonnegative_revision(body["revision"])
         normalized["request_id"] = cls._canonical_uuid(body["request_id"], "request_id")
         payload_hash = hashlib.sha256(
-            json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
-                "utf-8"
-            )
+            json.dumps(
+                normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
         ).hexdigest()
         return normalized, payload_hash
 
@@ -242,7 +241,11 @@ class BrowserRegistry:
     def _validate_state(cls, value: Any) -> dict[str, Any]:
         try:
             if not isinstance(value, dict) or set(value) != {
-                "version", "revision", "legacy_imported", "browsers", "receipts"
+                "version",
+                "revision",
+                "legacy_imported",
+                "browsers",
+                "receipts",
             }:
                 raise ValueError
             if value["version"] != 1 or type(value["version"]) is not int:
@@ -256,8 +259,7 @@ class BrowserRegistry:
             ids = [item["id"] for item in browsers]
             names = [item["name"].casefold() for item in browsers]
             endpoints = [
-                (item["host"], item["port"])
-                for item in browsers if item["kind"] == "external"
+                (item["host"], item["port"]) for item in browsers if item["kind"] == "external"
             ]
             if (
                 len(ids) != len(set(ids))
@@ -275,7 +277,12 @@ class BrowserRegistry:
                     raise ValueError
                 status = receipt.get("status")
                 expected = {
-                    "request_id", "payload_hash", "status", "action", "browser_id", "revision"
+                    "request_id",
+                    "payload_hash",
+                    "status",
+                    "action",
+                    "browser_id",
+                    "revision",
                 }
                 if status == "failed":
                     expected.add("error")
@@ -291,12 +298,18 @@ class BrowserRegistry:
                     or any(character not in "0123456789abcdef" for character in payload_hash)
                     or status not in {"pending", "completed", "failed"}
                     or receipt["action"] not in {"launch", "add", "rename", "stop", "remove"}
-                    or (status == "failed" and (
-                        receipt["action"] != "launch"
-                        or not isinstance(error, str)
-                        or not 1 <= len(error) <= 500
-                        or any(unicodedata.category(character).startswith("C") for character in error)
-                    ))
+                    or (
+                        status == "failed"
+                        and (
+                            receipt["action"] != "launch"
+                            or not isinstance(error, str)
+                            or not 1 <= len(error) <= 500
+                            or any(
+                                unicodedata.category(character).startswith("C")
+                                for character in error
+                            )
+                        )
+                    )
                     or (
                         receipt["revision"] is not None
                         and (type(receipt["revision"]) is not int or receipt["revision"] < 0)
@@ -316,9 +329,7 @@ class BrowserRegistry:
                 if status == "failed":
                     clean["error"] = error
                 clean_receipts.append(clean)
-            managed_ids = {
-                record["id"] for record in browsers if record["kind"] == "managed"
-            }
+            managed_ids = {record["id"] for record in browsers if record["kind"] == "managed"}
             if any(
                 receipt["status"] == "pending"
                 and (
@@ -358,7 +369,13 @@ class BrowserRegistry:
             return self._validate_state(json.loads(content.decode("utf-8")))
         except FileNotFoundError:
             return self.empty()
-        except (BrowserRegistryCorrupt, json.JSONDecodeError, OSError, UnicodeError, ValueError) as exc:
+        except (
+            BrowserRegistryCorrupt,
+            json.JSONDecodeError,
+            OSError,
+            UnicodeError,
+            ValueError,
+        ) as exc:
             raise BrowserRegistryCorrupt("Saved browser registry could not be read") from exc
         finally:
             if descriptor is not None:
@@ -389,8 +406,12 @@ class BrowserRegistry:
             raise BrowserRegistryCorrupt("Legacy browser configuration could not be read") from exc
         if "headless" in value and type(value["headless"]) is not bool:
             raise BrowserRegistryCorrupt("Legacy browser configuration could not be read")
-        return {"enabled": True, "headless": value.get("headless") is True,
-                "executable": executable, "cdp_port": 0}
+        return {
+            "enabled": True,
+            "headless": value.get("headless") is True,
+            "executable": executable,
+            "cdp_port": 0,
+        }
 
     def _legacy_record(self) -> dict[str, Any] | None:
         state_path = self.root / "state.json"
@@ -423,8 +444,9 @@ class BrowserRegistry:
         if legacy is not None:
             if len(state["browsers"]) >= MAX_INSTANCES:
                 raise BrowserRegistryConflict("Browser instance limit of 16 has been reached")
-            if any(item["name"].casefold() == legacy["name"].casefold()
-                   for item in state["browsers"]):
+            if any(
+                item["name"].casefold() == legacy["name"].casefold() for item in state["browsers"]
+            ):
                 raise BrowserRegistryConflict("Legacy browser name conflicts with the registry")
             state["browsers"].insert(0, legacy)
         if persist:
@@ -536,10 +558,15 @@ class BrowserRegistry:
             finally:
                 manager_lock.release()
         projected = {
-            "id": record["id"], "name": record["name"], "kind": record["kind"],
+            "id": record["id"],
+            "name": record["name"],
+            "kind": record["kind"],
             "host": record.get("host", "127.0.0.1"),
-            "port": port, "running": bool(status["running"]), "state": status["state"],
-            "executable": record["executable"], "headless": record["headless"],
+            "port": port,
+            "running": bool(status["running"]),
+            "state": status["state"],
+            "executable": record["executable"],
+            "headless": record["headless"],
             "can_stop": record["kind"] == "managed",
         }
         if status.get("error"):
@@ -582,8 +609,15 @@ class BrowserRegistry:
             try:
                 if self._pending_complete(record, receipt["action"]):
                     self._finalize_pending(receipt, record)
-            except (BrowserError, BrowserRegistryError, BrowserRegistryConflict,
-                    BrowserRegistryCorrupt, RuntimeError, ValueError, OSError):
+            except (
+                BrowserError,
+                BrowserRegistryError,
+                BrowserRegistryConflict,
+                BrowserRegistryCorrupt,
+                RuntimeError,
+                ValueError,
+                OSError,
+            ):
                 continue
             finally:
                 manager_lock.release()
@@ -606,7 +640,9 @@ class BrowserRegistry:
             if receipt["request_id"] != request["request_id"]:
                 continue
             if receipt["payload_hash"] != payload_hash or receipt["action"] != action:
-                raise BrowserRegistryConflict("request_id was already used with a different payload")
+                raise BrowserRegistryConflict(
+                    "request_id was already used with a different payload"
+                )
             return receipt
         return None
 
@@ -634,12 +670,19 @@ class BrowserRegistry:
         return state, request, payload_hash, receipt
 
     def _completed_receipt(
-        self, request: dict[str, Any], payload_hash: str, action: str, browser_id: str,
+        self,
+        request: dict[str, Any],
+        payload_hash: str,
+        action: str,
+        browser_id: str,
         revision: int,
     ) -> dict[str, Any]:
         return {
-            "request_id": request["request_id"], "payload_hash": payload_hash,
-            "status": "completed", "action": action, "browser_id": browser_id,
+            "request_id": request["request_id"],
+            "payload_hash": payload_hash,
+            "status": "completed",
+            "action": action,
+            "browser_id": browser_id,
             "revision": revision,
         }
 
@@ -657,8 +700,11 @@ class BrowserRegistry:
         with self._lock():
             state = self._with_legacy(self._read(), persist=True)
             receipt = next(
-                (item for item in state["receipts"]
-                 if item["request_id"] == expected_receipt["request_id"]),
+                (
+                    item
+                    for item in state["receipts"]
+                    if item["request_id"] == expected_receipt["request_id"]
+                ),
                 None,
             )
             if receipt is None or any(
@@ -668,7 +714,9 @@ class BrowserRegistry:
                 raise BrowserRegistryConflict("Browser operation receipt changed before completion")
             record = self._find(state, receipt["browser_id"])
             if record != expected_record:
-                raise BrowserRegistryConflict("Browser instance changed before operation completion")
+                raise BrowserRegistryConflict(
+                    "Browser instance changed before operation completion"
+                )
             if receipt["status"] == "pending":
                 state["revision"] += 1
                 receipt["status"] = "completed"
@@ -684,9 +732,10 @@ class BrowserRegistry:
 
     @staticmethod
     def _definite_failure(receipt: dict[str, Any]) -> BrowserRegistryConflict:
-        return BrowserRegistryConflict(
-            f"{receipt['error']} Request ID: {receipt['request_id']}"
-        )
+        error = BrowserRegistryConflict(f"{receipt['error']} Request ID: {receipt['request_id']}")
+        error.definite = True
+        error.request_id = receipt["request_id"]
+        return error
 
     def _fail_pending_launch(
         self, expected_receipt: dict[str, Any], expected_record: dict[str, Any], error: str
@@ -697,8 +746,11 @@ class BrowserRegistry:
         with self._lock():
             state = self._with_legacy(self._read(), persist=True)
             receipt = next(
-                (item for item in state["receipts"]
-                 if item["request_id"] == expected_receipt["request_id"]),
+                (
+                    item
+                    for item in state["receipts"]
+                    if item["request_id"] == expected_receipt["request_id"]
+                ),
                 None,
             )
             if receipt is None or any(
@@ -709,9 +761,7 @@ class BrowserRegistry:
             record = self._find(state, receipt["browser_id"])
             if record != expected_record or receipt["action"] != "launch":
                 raise BrowserRegistryConflict("Browser instance changed before launch failure")
-            state["browsers"] = [
-                item for item in state["browsers"] if item["id"] != record["id"]
-            ]
+            state["browsers"] = [item for item in state["browsers"] if item["id"] != record["id"]]
             receipt["status"] = "failed"
             receipt["revision"] = state["revision"]
             receipt["error"] = safe_error
@@ -719,9 +769,7 @@ class BrowserRegistry:
         self._detach(record["id"])
         return receipt
 
-    def _replay_or_recover(
-        self, state: dict[str, Any], receipt: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _replay_or_recover(self, state: dict[str, Any], receipt: dict[str, Any]) -> dict[str, Any]:
         if receipt["status"] == "failed":
             raise self._definite_failure(receipt)
         if receipt["status"] == "pending":
@@ -757,20 +805,29 @@ class BrowserRegistry:
                     raise BrowserRegistryConflict("Browser registry revision is stale")
                 if len(state["browsers"]) >= MAX_INSTANCES:
                     raise BrowserRegistryConflict("Browser instance limit of 16 has been reached")
-                if any(item["name"].casefold() == request["name"].casefold()
-                       for item in state["browsers"]):
+                if any(
+                    item["name"].casefold() == request["name"].casefold()
+                    for item in state["browsers"]
+                ):
                     raise BrowserRegistryConflict("Browser instance name is already in use")
                 browser_id = str(uuid5(UUID(request["request_id"]), "browser-instance"))
                 if any(item["id"] == browser_id for item in state["browsers"]):
                     raise BrowserRegistryConflict("Browser instance ID is already in use")
                 record = {
-                    "id": browser_id, "name": request["name"], "kind": "managed",
-                    "executable": executable, "headless": request["headless"], "legacy": False,
+                    "id": browser_id,
+                    "name": request["name"],
+                    "kind": "managed",
+                    "executable": executable,
+                    "headless": request["headless"],
+                    "legacy": False,
                 }
                 state["browsers"].append(record)
                 receipt = {
-                    "request_id": request["request_id"], "payload_hash": payload_hash,
-                    "status": "pending", "action": "launch", "browser_id": browser_id,
+                    "request_id": request["request_id"],
+                    "payload_hash": payload_hash,
+                    "status": "pending",
+                    "action": "launch",
+                    "browser_id": browser_id,
                     "revision": None,
                 }
                 self._append_receipt(state, receipt)
@@ -813,8 +870,7 @@ class BrowserRegistry:
                 if any(item["name"].casefold() == name.casefold() for item in state["browsers"]):
                     raise BrowserRegistryConflict("Browser instance name is already in use")
                 if any(
-                    item["kind"] == "external"
-                    and item["host"] == host and item["port"] == port
+                    item["kind"] == "external" and item["host"] == host and item["port"] == port
                     for item in state["browsers"]
                 ):
                     raise BrowserRegistryConflict("Browser CDP endpoint is already registered")
@@ -844,22 +900,28 @@ class BrowserRegistry:
                 if any(item["name"].casefold() == name.casefold() for item in state["browsers"]):
                     raise BrowserRegistryConflict("Browser instance name is already in use")
                 if any(
-                    item["kind"] == "external"
-                    and item["host"] == host and item["port"] == port
+                    item["kind"] == "external" and item["host"] == host and item["port"] == port
                     for item in state["browsers"]
                 ):
                     raise BrowserRegistryConflict("Browser CDP endpoint is already registered")
                 record = {
-                    "id": browser_id, "name": name, "kind": "external",
-                    "host": host, "port": port,
-                    "browser_uuid": browser_uuid, "executable": None, "headless": False,
+                    "id": browser_id,
+                    "name": name,
+                    "kind": "external",
+                    "host": host,
+                    "port": port,
+                    "browser_uuid": browser_uuid,
+                    "executable": None,
+                    "headless": False,
                     "legacy": False,
                 }
                 state["browsers"].append(record)
                 state["revision"] += 1
                 self._append_receipt(
-                    state, self._completed_receipt(request, payload_hash, "add", browser_id,
-                                                   state["revision"]),
+                    state,
+                    self._completed_receipt(
+                        request, payload_hash, "add", browser_id, state["revision"]
+                    ),
                 )
                 self._write(state)
         return self._operation_result(state, browser_id)
@@ -876,14 +938,18 @@ class BrowserRegistry:
                 if self._pending_for(state, browser_id):
                     raise BrowserRegistryConflict("Browser has an uncertain lifecycle operation")
                 name = self._name(request["name"])
-                if any(item["id"] != browser_id and item["name"].casefold() == name.casefold()
-                       for item in state["browsers"]):
+                if any(
+                    item["id"] != browser_id and item["name"].casefold() == name.casefold()
+                    for item in state["browsers"]
+                ):
                     raise BrowserRegistryConflict("Browser instance name is already in use")
                 record["name"] = name
                 state["revision"] += 1
                 self._append_receipt(
-                    state, self._completed_receipt(request, payload_hash, "rename", browser_id,
-                                                   state["revision"]),
+                    state,
+                    self._completed_receipt(
+                        request, payload_hash, "rename", browser_id, state["revision"]
+                    ),
                 )
                 self._write(state)
         return self._operation_result(state, browser_id)
@@ -903,8 +969,11 @@ class BrowserRegistry:
                 if self._pending_for(state, browser_id):
                     raise BrowserRegistryConflict("Browser has an uncertain lifecycle operation")
                 receipt = {
-                    "request_id": request["request_id"], "payload_hash": payload_hash,
-                    "status": "pending", "action": "stop", "browser_id": browser_id,
+                    "request_id": request["request_id"],
+                    "payload_hash": payload_hash,
+                    "status": "pending",
+                    "action": "stop",
+                    "browser_id": browser_id,
                     "revision": None,
                 }
                 self._append_receipt(state, receipt)
@@ -957,8 +1026,10 @@ class BrowserRegistry:
                 state["browsers"] = [item for item in state["browsers"] if item["id"] != browser_id]
                 state["revision"] += 1
                 self._append_receipt(
-                    state, self._completed_receipt(request, payload_hash, "remove", browser_id,
-                                                   state["revision"]),
+                    state,
+                    self._completed_receipt(
+                        request, payload_hash, "remove", browser_id, state["revision"]
+                    ),
                 )
                 self._write(state)
                 removed_now = True
@@ -1002,7 +1073,10 @@ class BrowserRegistry:
         for browser_id, manager in cached:
             record = records.get(browser_id)
             with self._manager_lock(browser_id):
-                if (record is not None and record["kind"] == "external"
-                        and not self._external_status(record)["running"]):
+                if (
+                    record is not None
+                    and record["kind"] == "external"
+                    and not self._external_status(record)["running"]
+                ):
                     continue
                 manager.close()

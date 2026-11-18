@@ -803,7 +803,11 @@ needed.
   bridge implicitly. Windows listener/process/profile identity is verified before
   Swarm claims the browser. Launch and ownership inputs are explicitly forwarded
   through `WSLENV`; `Invalid CDP port` on older versions can mean missing environment
-  forwarding, not an occupied port. WSL must reach Windows localhost (mirrored networking
+  forwarding, not an occupied port. Free ports for WSL Edge are selected on Windows
+  and checked in WSL. A fresh launch may try up to five distinct ports on confirmed
+  pre-launch collisions; it never retries a launch that may already have started.
+  Definite pre-launch errors remain distinct from uncertain outcomes in the UI.
+  WSL must reach Windows localhost (mirrored networking
   or an existing secured loopback forward); Swarm does not change firewalls or
   expose CDP. Known pre-launch failures remain removable; uncertain launches are
   retained for inspection instead of being blindly replayed.
@@ -1772,7 +1776,7 @@ swarm archive-history AGENT_ID --percent 50 --request-id ORIGINAL_UUID
 ```
 
 The percentage is measured from **serialized active model-content UTF-8 bytes**,
-not exact provider tokens, raw session file size, entry count, or tool metadata.
+not exact provider tokens, raw session file size, entry count, or tool metadata. Pi's footer ↑/↓/R/W counters are cumulative usage across the whole session and do not reset after archival. The context percentage/window indicator is separate; immediately after a native compaction its precise usage may be unknown until a subsequent response. Archiving itself requires no such response or model call.
 Swarm chooses the closest safe older-prefix boundary, so the actual share can be
 smaller or larger than requested. The result reports requested/actual percentages,
 archived/kept bytes and entry counts. It always keeps the newest user-message span
@@ -1839,8 +1843,9 @@ all pages into context or rerun old commands merely to recover their output.
 
 Like other offline maintenance, this requires a stopped, persisted managed Pi
 session that is not shared, stopping, provisioning, restarting, or undergoing
-another maintenance action. Stop external Pi processes using that workspace too.
-Swarm verifies ownership, source identity and hash again before commit, and uses a
+another maintenance action. Other managed agents may keep working in the same folder when their live PIDs
+and distinct session files/IDs can be verified. Unknown Pi writers or shared target
+sessions still block maintenance. Swarm verifies ownership, source identity and hash again before commit, and uses a
 cooperative source descriptor lock; an uncooperative external writer is not an
 atomic compare-and-swap guarantee. Do not edit/reopen the session during maintenance.
 Archives and directory entries are synced before replacement. A failure retains

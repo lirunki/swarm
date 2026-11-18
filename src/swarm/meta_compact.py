@@ -450,13 +450,71 @@ class MetaCompactor:
         return path
 
     @staticmethod
-    def check_external(agent: Agent) -> None:
-        # External Pi processes are not controlled by Swarm; be conservative.
-        from .sessions import running_pi_folders
+    def _separate_session(agent: Agent, other: Agent) -> bool:
+        """Prove two records cannot refer to the same Pi session file or ID."""
+        if not agent.session_id or not other.session_id or agent.session_id == other.session_id:
+            return False
+        if not agent.session_file or not other.session_file:
+            return False
+        target = Path(agent.session_file).expanduser()
+        peer = Path(other.session_file).expanduser()
+        try:
+            if target.resolve() == peer.resolve():
+                return False
+            if target.is_file() and peer.is_file() and target.samefile(peer):
+                return False
+        except OSError:
+            return False
+        return True
 
-        running = running_pi_folders()
-        if None in running or str(Path(agent.folder).resolve()) in running:
+    def check_session_processes(
+        self,
+        agent: Agent,
+        running: list[str | None],
+        pi_processes: list[tuple[int, str | None]],
+    ) -> None:
+        """Reject relevant Pi writers except proven live, separate managed peers."""
+        agents, record_errors = self.store.scan_with_errors()
+        if record_errors:
+            raise RuntimeError("Unreadable agent records prevent session ownership verification")
+
+        safe_pids: set[int] = set()
+        for other in agents:
+            if (
+                other.id != agent.id
+                and other.managed
+                and other.backend == "pi"
+                and other.pid is not None
+                and self._separate_session(agent, other)
+                and self.controller.processes.alive(other)
+            ):
+                safe_pids.add(other.pid)
+
+        # running_pi_folders() remains an independent conservative view (and is
+        # the only view on Windows). Remove only entries tied to an exact PID in
+        # the process view, so a second unknown Pi in the same cwd still blocks.
+        residual = list(running)
+        target_folder = str(Path(agent.folder).resolve())
+        for pid, folder in pi_processes:
+            try:
+                residual.remove(folder)
+            except ValueError:
+                pass
+            if pid in safe_pids:
+                continue
+            if folder is None or str(Path(folder).resolve()) == target_folder:
+                raise RuntimeError("Stop other Pi processes in this workspace before meta-compaction")
+
+        if any(
+            folder is None or str(Path(folder).resolve()) == target_folder for folder in residual
+        ):
             raise RuntimeError("Stop other Pi processes in this workspace before meta-compaction")
+
+    def check_external(self, agent: Agent) -> None:
+        # External Pi processes are not controlled by Swarm; be conservative.
+        from .sessions import running_pi_folders, running_pi_processes
+
+        self.check_session_processes(agent, running_pi_folders(), running_pi_processes())
 
     def start(self, agent_id: str, request: MetaCompactRequest) -> dict:
         with self.controller.lock:

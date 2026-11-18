@@ -110,7 +110,7 @@ test('update preserves an edited percent and renders persisted report fields as 
   assert.equal(t.elements['#history-archive-percent'].value, '67');
   assert.equal(t.elements['#history-archive-state'].textContent, '<img onerror=alert(1)>');
   assert.equal(t.elements['#history-archive-error'].textContent, '<script>bad()</script>');
-  assert.match(t.elements['#history-archive-result'].textContent, /Original context 10000.*archived 4300.*43\.0%/);
+  assert.match(t.elements['#history-archive-result'].textContent, /Active context: 10000.*archived 4300.*43\.0%/);
   assert.equal(t.elements['#history-archive-file'].textContent, '<img src=x>');
   assert.equal(t.elements['#history-archive-original'].textContent, '<svg onload=bad()>');
   assert.equal(t.elements['#history-archive-file-row'].hidden, false);
@@ -266,4 +266,14 @@ test('another maintenance request blocks archival before it publishes a persiste
 test('the available action clearly identifies model-free archival', () => {
   const t=fixture();t.controller.update();
   assert.match(t.elements['#archive-history'].textContent,/no LLM/i);
+});
+
+
+test('archive report shows retained context bytes and distinguishes cumulative usage', () => {
+  const t=fixture();
+  t.controller.renderReport({status:'completed',context_before_bytes:10000,archive_bytes:6000,kept_bytes:4000,reference_bytes:500,actual_percent:60});
+  const text=t.elements['#history-archive-result'].textContent;
+  assert.match(text,/10000 → 4500/);
+  assert.match(text,/not an exact token count/);
+  assert.match(text,/cumulative.*do not reset/);
 });

@@ -33,6 +33,25 @@ class WslEdgeLaunchError(RuntimeError):
 # Request-controlled values are supplied only through a tiny validated environment
 # contract. The program emits one JSON object on every handled path and never emits
 # PowerShell exception text (which can contain user names or command lines).
+_CHOOSE_PORT_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+try {
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $listener.Start()
+    $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+    $listener.Stop()
+    @{ stage = 'selected'; port = $port } | ConvertTo-Json -Compress
+    exit 0
+} catch {
+    try { if ($listener) { $listener.Stop() } } catch {}
+    @{ stage = 'preflight'; error = 'Windows loopback port selection failed' } |
+        ConvertTo-Json -Compress
+    exit 1
+}
+""".strip()
+
+
 _POWERSHELL_SCRIPT = r"""
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
@@ -188,6 +207,56 @@ def powershell_executable() -> str | None:
         return found
     fixed = Path("/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe")
     return str(fixed) if fixed.is_file() else None
+
+
+def choose_port() -> int:
+    """Ask Windows for a free loopback port without starting a browser."""
+    powershell = powershell_executable()
+    if powershell is None:
+        raise WslEdgeLaunchError(
+            "Windows PowerShell interop is unavailable in WSL",
+            started=False,
+            definite=True,
+            code="interop_unavailable",
+        )
+    try:
+        completed = subprocess.run(
+            _command(powershell, _CHOOSE_PORT_SCRIPT),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            shell=False,
+            timeout=POWERSHELL_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise WslEdgeLaunchError(
+            "Windows loopback port selection timed out",
+            started=False,
+            definite=True,
+            code="port_selection_failed",
+        ) from exc
+    except OSError as exc:
+        raise WslEdgeLaunchError(
+            "Could not run the Windows port selection bridge",
+            started=False,
+            definite=True,
+            code="interop_unavailable",
+        ) from exc
+    result = _bounded_json(completed)
+    if (
+        completed.returncode != 0
+        or not isinstance(result, dict)
+        or set(result) != {"stage", "port"}
+        or result["stage"] != "selected"
+        or type(result["port"]) is not int
+        or not 1 <= result["port"] <= 65535
+    ):
+        raise WslEdgeLaunchError(
+            "Windows loopback port selection failed",
+            started=False,
+            definite=True,
+            code="port_selection_failed",
+        )
+    return result["port"]
 
 
 def _command(powershell: str, script: str) -> list[str]:
@@ -402,8 +471,13 @@ def launch(
                 and 1 <= len(result["error"]) <= 200
                 and all(ord(character) >= 32 for character in result["error"])
             ):
+                code = (
+                    "port_occupied"
+                    if result["error"] == "The requested Windows loopback port is occupied"
+                    else "preflight_failed"
+                )
                 raise WslEdgeLaunchError(
-                    result["error"], started=False, definite=True, code="preflight_failed"
+                    result["error"], started=False, definite=True, code=code
                 )
             raise WslEdgeLaunchError(
                 "Windows Edge launch bridge failed after launch may have started",

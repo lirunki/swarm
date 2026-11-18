@@ -127,6 +127,50 @@ def test_bridge_failure_is_sanitized_and_attempt_is_not_recorded(tmp_path, monke
     assert wsl_edge.WSL_ATTEMPTS == {}
 
 
+def test_windows_port_selection_uses_temporary_loopback_listener(monkeypatch):
+    calls = []
+
+    def run(command, **options):
+        calls.append((command, options))
+        return SimpleNamespace(
+            returncode=0,
+            stdout=b'{"stage":"selected","port":45678}',
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(wsl_edge, "powershell_executable", lambda: "powershell.exe")
+    monkeypatch.setattr(wsl_edge.subprocess, "run", run)
+
+    assert wsl_edge.choose_port() == 45678
+    script = decode_script(calls[0][0])
+    assert "TcpListener" in script
+    assert "Loopback, 0" in script
+    assert "Start-Process" not in script
+    assert calls[0][1]["shell"] is False
+
+
+def test_windows_occupied_preflight_has_exact_retryable_code(tmp_path, monkeypatch):
+    payload = {
+        "stage": "preflight",
+        "error": "The requested Windows loopback port is occupied",
+    }
+    monkeypatch.setattr(wsl_edge, "powershell_executable", lambda: "powershell.exe")
+    monkeypatch.setattr(
+        wsl_edge.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1, stdout=json.dumps(payload).encode(), stderr=b"private"
+        ),
+    )
+    wsl_edge.WSL_ATTEMPTS.clear()
+
+    with pytest.raises(wsl_edge.WslEdgeLaunchError) as caught:
+        wsl_edge.launch(9446, tmp_path / "profile")
+
+    assert caught.value.code == "port_occupied"
+    assert caught.value.definite is True and caught.value.started is False
+
+
 def test_structured_preflight_failure_is_definite_and_preserves_safe_message(tmp_path, monkeypatch):
     payload = {"stage": "preflight", "error": "Microsoft Edge was not found on Windows"}
     monkeypatch.setattr(wsl_edge, "powershell_executable", lambda: "powershell.exe")

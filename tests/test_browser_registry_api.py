@@ -359,3 +359,23 @@ def test_screenshot_timeout_returns_actionable_504_not_uncaught_500(tmp_path):
     assert response.status_code == 504
     assert "foreground" in response.json()["detail"]
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_known_prelaunch_failure_has_explicit_definite_classification(tmp_path):
+    from swarm.browser_registry import BrowserRegistry
+
+    app, fake = app_with_registry(tmp_path)
+    request_id = str(uuid4())
+
+    def fail(_body):
+        raise BrowserRegistry._definite_failure(
+            {"error": "No available Windows port", "request_id": request_id}
+        )
+
+    fake.launch = fail
+    with TestClient(app) as client:
+        response = client.post("/api/browser/instances/launch", json={"request_id": request_id})
+    assert response.status_code == 409
+    assert response.json()["definite"] is True
+    assert response.json()["uncertain"] is False
+    assert response.json()["request_id"] == request_id

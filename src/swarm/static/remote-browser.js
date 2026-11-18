@@ -900,7 +900,7 @@
         if (this.valid(source, generation, operation)) {
           const status = error?.status;
           const definitive = Number.isInteger(status) && status >= 400 && status < 500 && status !== 408;
-          const reportsUncertain = error?.uncertain === true || /outcome uncertain|Request ID:/i.test(error?.message || '');
+          const reportsUncertain = error?.uncertain === true || (error?.definite !== true && /outcome uncertain|Request ID:/i.test(error?.message || ''));
           const uncertain = posted && (reportsUncertain || !definitive);
           const detail = error?.message || String(error);
           this.error = uncertain ? `${detail}. Outcome uncertain; do not retry. Request ID ${request_id}` : detail;

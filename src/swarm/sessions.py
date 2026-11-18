@@ -178,14 +178,12 @@ def text_blocks(content) -> str:
     return json.dumps(content, ensure_ascii=False)
 
 
-def running_pi_folders() -> list[str | None]:
-    """Pi may replace its process title with 'pi', losing --session arguments.
-
-    Conservatively refuse all sessions in that cwd. If cwd cannot be determined,
-    refuse all adoption while that pi process exists rather than risk dual writers.
-    """
+def running_pi_processes() -> list[tuple[int, str | None]]:
+    """Return POSIX Pi process identities and cwd values without exposing argv."""
     if cygwin():
-        return windows_pi_folders()
+        # Native Windows discovery intentionally has no identity Swarm can safely
+        # compare with Cygwin PIDs. running_pi_folders() remains fail-closed there.
+        return []
     try:
         result = subprocess.run(
             ["ps", "-u", str(os.getuid()), "-o", "pid=,comm=,args="],
@@ -198,33 +196,46 @@ def running_pi_folders() -> list[str | None]:
         raise RuntimeError(
             "Cannot inspect pi processes; adoption is disabled until ps works"
         ) from exc
-    folders: list[str | None] = []
+    processes: list[tuple[int, str | None]] = []
     for line in result.stdout.splitlines():
         parts = line.strip().split(None, 2)
-        if len(parts) < 2:
+        if len(parts) < 2 or not parts[0].isdigit():
             continue
-        pid, command = parts[:2]
+        pid_text, command = parts[:2]
         args = parts[2] if len(parts) > 2 else ""
         if command != "pi" and not (
             command.startswith("node") and ("pi-coding-agent" in args or "/bin/pi" in args)
         ):
             continue
+        folder: str | None
         try:
-            folders.append(str((Path("/proc") / pid / "cwd").resolve(strict=True)))
+            folder = str((Path("/proc") / pid_text / "cwd").resolve(strict=True))
         except OSError:
             # macOS: lsof can identify a cwd even when Pi has rewritten its argv.
             try:
                 cwd = subprocess.run(
-                    ["lsof", "-a", "-p", pid, "-d", "cwd", "-Fn"],
+                    ["lsof", "-a", "-p", pid_text, "-d", "cwd", "-Fn"],
                     text=True,
                     capture_output=True,
                     timeout=3,
                     check=True,
                 )
-                folders.append(next(s[1:] for s in cwd.stdout.splitlines() if s.startswith("n")))
+                folder = next(s[1:] for s in cwd.stdout.splitlines() if s.startswith("n"))
             except (OSError, subprocess.SubprocessError, StopIteration):
-                folders.append(None)
-    return folders
+                folder = None
+        processes.append((int(pid_text), folder))
+    return processes
+
+
+def running_pi_folders() -> list[str | None]:
+    """Pi may replace its process title with 'pi', losing --session arguments.
+
+    Conservatively refuse all sessions in that cwd. If cwd cannot be determined,
+    refuse all adoption while that pi process exists rather than risk dual writers.
+    """
+    if cygwin():
+        return windows_pi_folders()
+    return [folder for _, folder in running_pi_processes()]
 
 
 class Sessions:

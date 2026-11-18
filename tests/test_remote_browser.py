@@ -220,6 +220,107 @@ def test_launch_uses_stable_private_state_and_fixed_profile(harness, tmp_path, m
     assert remote.status()["browser"] == "Chromium/Fake"
 
 
+def test_fresh_launch_relocates_after_definite_preflight_port_collision(
+    tmp_path, monkeypatch
+):
+    ports = iter([41001, 41002])
+    monkeypatch.setattr("swarm.remote_browser._free_port", lambda: next(ports))
+
+    class CollisionLauncher(FakeLauncher):
+        def __init__(self):
+            super().__init__()
+            self.spawns = 0
+
+        def launch(self, port, **options):
+            if port == 41001:
+                self.launches.append((port, options))
+                raise edgemcp_launcher.BrowserPortOccupied("occupied")
+            self.spawns += 1
+            return super().launch(port, **options)
+
+    launcher = CollisionLauncher()
+    remote = RemoteBrowser(
+        tmp_path, {"enabled": True, "headless": False, "cdp_port": 0}, launcher=launcher
+    )
+
+    result = remote.launch("same-launch")
+
+    assert result["running"] is True
+    assert [port for port, _options in launcher.launches] == [41001, 41002]
+    assert launcher.spawns == 1
+    assert json.loads(remote.state_path.read_text()) == {
+        "version": 1,
+        "port": 41002,
+        "browser_id": "11111111-1111-4111-8111-111111111111",
+    }
+    assert remote.launch("same-launch") == result
+    assert launcher.spawns == 1
+
+
+def test_fresh_launch_stops_after_five_occupied_candidates(tmp_path, monkeypatch):
+    ports = iter([42001, 42002, 42003, 42004, 42005])
+    monkeypatch.setattr("swarm.remote_browser._free_port", lambda: next(ports))
+
+    class OccupiedLauncher(FakeLauncher):
+        def launch(self, port, **options):
+            self.launches.append((port, options))
+            raise edgemcp_launcher.BrowserPortOccupied(f"occupied {port}")
+
+    launcher = OccupiedLauncher()
+    remote = RemoteBrowser(tmp_path, {"enabled": True, "cdp_port": 0}, launcher=launcher)
+
+    with pytest.raises(BrowserError, match="occupied 42005") as caught:
+        remote.launch()
+
+    assert [port for port, _options in launcher.launches] == [
+        42001, 42002, 42003, 42004, 42005
+    ]
+    assert caught.value.definite is True
+    assert caught.value.started is False
+    assert caught.value.code == "port_occupied"
+    assert json.loads(remote.state_path.read_text()) == {"version": 1, "port": 42005}
+
+
+def test_uncertain_or_started_launch_failure_never_relocates(tmp_path, monkeypatch):
+    monkeypatch.setattr("swarm.remote_browser._free_port", lambda: 43001)
+
+    class UncertainLauncher(FakeLauncher):
+        def launch(self, port, **options):
+            self.launches.append((port, options))
+            error = RuntimeError("launch timed out")
+            error.definite = False
+            error.started = True
+            error.code = "port_occupied"
+            raise error
+
+    launcher = UncertainLauncher()
+    remote = RemoteBrowser(tmp_path, {"enabled": True, "cdp_port": 0}, launcher=launcher)
+
+    with pytest.raises(BrowserError, match="timed out") as caught:
+        remote.launch()
+
+    assert [port for port, _options in launcher.launches] == [43001]
+    assert caught.value.definite is False and caught.value.started is True
+    assert json.loads(remote.state_path.read_text())["port"] == 43001
+
+
+def test_owned_state_foreign_port_is_refused_without_relocation(harness, monkeypatch):
+    remote, launcher, _ = harness
+    remote.launch()
+    original_state = remote.state_path.read_bytes()
+    launcher.browser_id = "33333333-3333-4333-8333-333333333333"
+    monkeypatch.setattr(
+        "swarm.remote_browser._free_port",
+        lambda: pytest.fail("an owned state must not select a replacement port"),
+    )
+
+    with pytest.raises(BrowserError, match="different browser"):
+        remote.launch("foreign-binding")
+
+    assert remote.state_path.read_bytes() == original_state
+    assert len(launcher.launches) == 2
+
+
 def test_actual_edgemcp_adapter_tabs_selection_screenshot_and_input(harness):
     remote, _, pychrome = harness
     remote.launch()
@@ -641,6 +742,32 @@ def test_probe_identity_validates_websocket_url_and_probe_keeps_string_api():
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_native_launcher_classifies_occupied_preflight_without_spawning(tmp_path, monkeypatch):
+    profile = tmp_path / "profile"
+    spawned = []
+    monkeypatch.setattr(
+        edgemcp_launcher,
+        "probe_identity",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("not CDP")),
+    )
+    monkeypatch.setattr(
+        edgemcp_launcher.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: spawned.append(True),
+    )
+    key = (49154, str(profile.resolve()))
+    edgemcp_launcher._ATTEMPTS.pop(key, None)
+    edgemcp_launcher._READY.discard(key)
+
+    with pytest.raises(edgemcp_launcher.BrowserPortOccupied) as caught:
+        edgemcp_launcher.launch(key[0], executable=None, profile=profile)
+
+    assert caught.value.definite is True
+    assert caught.value.started is False
+    assert caught.value.code == "port_occupied"
+    assert spawned == []
 
 
 def test_launcher_rejects_unrecorded_existing_browser(tmp_path, monkeypatch):

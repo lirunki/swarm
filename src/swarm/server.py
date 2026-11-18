@@ -41,7 +41,7 @@ from .agent_limits import (
     AgentLimitsError,
 )
 from .auth import MAX_LOGIN_BODY, AuthFailure, BrowserAccess, BrowserAuthMiddleware, loopback
-from .browser_registry import BrowserRegistry, BrowserRegistryUncertain
+from .browser_registry import BrowserRegistry, BrowserRegistryConflict, BrowserRegistryUncertain
 from .browser_settings import (
     BrowserSettings,
     BrowserSettingsConflict,
@@ -402,6 +402,13 @@ def create_app(
     @app.exception_handler(BrowserError)
     async def remote_browser_error(_request: Request, exc: BrowserError):
         return JSONResponse({"detail": str(exc)}, status_code=409)
+
+    @app.exception_handler(BrowserRegistryConflict)
+    async def browser_registry_conflict(_request: Request, exc: BrowserRegistryConflict):
+        payload = {"detail": str(exc)}
+        if getattr(exc, "definite", False):
+            payload.update(definite=True, uncertain=False, request_id=exc.request_id)
+        return JSONResponse(payload, status_code=409)
 
     @app.exception_handler(BrowserRegistryUncertain)
     async def browser_registry_uncertain(_request: Request, exc: BrowserRegistryUncertain):

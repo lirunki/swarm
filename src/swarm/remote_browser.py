@@ -145,15 +145,37 @@ class RemoteBrowser:
         if os.name != "nt":
             self.state_path.chmod(0o600)
 
-    def _port(self) -> int:
+    def _new_port(self, executable: str | None, excluded: set[int]) -> int:
+        if executable == "wsl:msedge" and hasattr(self._launcher, "free_port"):
+            port = self._launcher.free_port(executable=executable, excluded=excluded)
+            if type(port) is not int or not 1 <= port <= 65535 or port in excluded:
+                raise RuntimeError("Browser launcher returned an invalid free port")
+            return port
+        for _ in range(20):
+            port = _free_port()
+            if port not in excluded:
+                return port
+        raise RuntimeError("Could not choose a distinct free browser CDP port")
+
+    def _port(self, executable: str | None = None) -> int:
         state = self._read_state()
         if state is not None:
             return state["port"]
         _private_directory(self.root)
         _private_directory(self.profile)
-        port = _free_port()
+        port = self._new_port(executable, set())
         self._write_state(port)
         return port
+
+    @staticmethod
+    def _browser_error(exc: Exception) -> BrowserError:
+        error = BrowserError(str(exc))
+        # Keep the launcher's side-effect classification intact for registry
+        # lifecycle handling; never infer safety from exception text.
+        for attribute in ("definite", "started", "code"):
+            if hasattr(exc, attribute):
+                setattr(error, attribute, getattr(exc, attribute))
+        return error
 
     def discovery(self) -> dict:
         """List local browser choices without creating profiles or launching processes."""
@@ -206,24 +228,46 @@ class RemoteBrowser:
                     return dict(self._launch_results[key])
                 self._launch_results.pop(key, None)
             state = self._read_state()
-            port = state["port"] if state else self._port()
-            expected_browser_id = state["browser_id"] if state else None
-            _private_directory(self.profile)
             try:
-                launched = self._launcher.launch(
-                    port, executable=config["executable"], profile=self.profile,
-                    headless=config["headless"], expected_browser_id=expected_browser_id,
-                )
+                port = state["port"] if state else self._port(config["executable"])
             except (RuntimeError, ValueError, OSError) as exc:
                 self._last_error = str(exc)
-                error = BrowserError(str(exc))
-                # Lifecycle callers must be able to distinguish a launch that is
-                # definitely known not to be running from an ambiguous bridge/I/O
-                # failure.  Preserve only this boolean classification; the wrapped
-                # exception remains the source for internal diagnostics.
-                if hasattr(exc, "definite"):
-                    error.definite = bool(exc.definite)
-                raise error from exc
+                raise self._browser_error(exc) from exc
+            if state is None:
+                state = {"port": port, "browser_id": None}
+            expected_browser_id = state["browser_id"]
+            fresh_unbound_launch = expected_browser_id is None
+            attempted_ports = {port}
+            _private_directory(self.profile)
+            for attempt in range(5):
+                try:
+                    launched = self._launcher.launch(
+                        port, executable=config["executable"], profile=self.profile,
+                        headless=config["headless"], expected_browser_id=expected_browser_id,
+                    )
+                    break
+                except (RuntimeError, ValueError, OSError) as exc:
+                    can_relocate = (
+                        fresh_unbound_launch
+                        and getattr(exc, "code", None) == "port_occupied"
+                        and getattr(exc, "definite", None) is True
+                        and getattr(exc, "started", None) is False
+                        and attempt < 4
+                    )
+                    if can_relocate:
+                        try:
+                            port = self._new_port(config["executable"], attempted_ports)
+                            attempted_ports.add(port)
+                            # Persist the replacement before crossing the launch
+                            # boundary. The profile remains the same and no owned
+                            # browser identity is invented or carried forward.
+                            self._write_state(port, None)
+                            expected_browser_id = None
+                            continue
+                        except (RuntimeError, ValueError, OSError) as selection_error:
+                            exc = selection_error
+                    self._last_error = str(exc)
+                    raise self._browser_error(exc) from exc
             try:
                 returned_browser_id = launched.get("browser_id")
                 browser_id = str(UUID(returned_browser_id))

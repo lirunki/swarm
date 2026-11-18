@@ -145,11 +145,12 @@
       const before = safeNumber(report.context_before_bytes);
       const archived = safeNumber(report.archive_bytes);
       const actual = safeNumber(report.actual_percent);
+      const kept = safeNumber(report.kept_bytes), reference = safeNumber(report.reference_bytes);
       const hasResult = before !== null || archived !== null || actual !== null;
       if (this.result) {
         this.result.hidden = !hasResult;
         this.result.textContent = hasResult
-          ? `Original context ${before ?? 'unknown'} serialized-content bytes; archived ${archived ?? 'unknown'} bytes; actual ${actual === null ? 'unknown' : actual.toFixed(1)}%.`
+          ? `Active context: ${before ?? 'unknown'} → ${kept === null ? 'unknown' : kept + (reference ?? 0)} serialized-content bytes; archived ${archived ?? 'unknown'} bytes (${actual === null ? 'unknown' : actual.toFixed(1)}%). This is not an exact token count. Pi’s cumulative ↑/↓/R/W usage and raw history size do not reset.`
           : '';
       }
       this.setError(safeString(report.error));

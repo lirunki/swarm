@@ -65,14 +65,14 @@ async function browserRequest(path, method = 'GET', body, binary = false) {
     let value; try { value = await response.json(); } catch { throw nonJsonResponseError(response); }
     if (!response.ok) {
       const error = new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value));
-      error.status = response.status; error.uncertain = value.uncertain === true; error.requestId = value.request_id; throw error;
+      error.status = response.status; error.uncertain = value.uncertain === true; error.definite = value.definite === true; error.requestId = value.request_id; throw error;
     }
     return value;
   }
   if (!response.ok) {
     let value; try { value = await response.json(); } catch { throw nonJsonResponseError(response); }
     const error = new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value));
-    error.status = response.status; error.uncertain = value.uncertain === true; error.requestId = value.request_id; throw error;
+    error.status = response.status; error.uncertain = value.uncertain === true; error.definite = value.definite === true; error.requestId = value.request_id; throw error;
   }
   const type = (response.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
   const declared = Number(response.headers.get('content-length'));

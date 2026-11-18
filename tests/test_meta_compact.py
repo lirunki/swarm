@@ -52,6 +52,7 @@ def sample(folder):
 @pytest.fixture
 def app_agent(tmp_path, monkeypatch):
     monkeypatch.setattr("swarm.sessions.running_pi_folders", lambda: [])
+    monkeypatch.setattr("swarm.sessions.running_pi_processes", lambda: [])
     app = create_app(tmp_path / "swarm", recover=False, allowed_hosts=["testserver"])
     ctl = app.state.controller
     monkeypatch.setattr(ctl.processes, "alive", lambda a: False)
@@ -349,6 +350,121 @@ def test_meta_guard_rejects_stop_setup_shared_and_unreadable_ownership(app_agent
     corrupt.write_text("---\n[\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="Unreadable agent records"):
         compactor.eligible(store.get(agent.id))
+
+
+def test_meta_guard_allows_only_live_managed_peers_with_distinct_sessions(
+    app_agent, monkeypatch
+):
+    app, agent, _ = app_agent
+    store = app.state.controller.store
+    compactor = app.state.meta_compactor
+    peers = []
+    for index, pid in enumerate((4101, 4102), 1):
+        peer_path = store.sessions_dir / f"peer-{index}.jsonl"
+        peer_history = sample(Path(agent.folder))
+        peer_path.write_text(peer_history.encode())
+        peers.append(
+            store.create(
+                Agent(
+                    name=f"Peer {index}",
+                    goal="G",
+                    folder=agent.folder,
+                    managed=True,
+                    pid=pid,
+                    session_id=peer_history.entries[0]["id"],
+                    session_file=str(peer_path),
+                    auto_resume=False,
+                )
+            )
+        )
+
+    monkeypatch.setattr(
+        app.state.controller.processes,
+        "alive",
+        lambda candidate: candidate.id in {peer.id for peer in peers},
+    )
+    rows = [(peer.pid, agent.folder) for peer in peers]
+    monkeypatch.setattr("swarm.sessions.running_pi_processes", lambda: rows)
+    monkeypatch.setattr("swarm.sessions.running_pi_folders", lambda: [agent.folder] * len(rows))
+
+    assert compactor.eligible(store.get(agent.id))
+
+    # A safe PID cannot consume the count belonging to another Pi in the cwd.
+    rows.append((4199, agent.folder))
+    with pytest.raises(RuntimeError, match="Stop other Pi processes"):
+        compactor.check_external(store.get(agent.id))
+    rows.pop()
+
+    # A matching record and PID are not enough once the managed peer has exited.
+    monkeypatch.setattr(app.state.controller.processes, "alive", lambda candidate: False)
+    with pytest.raises(RuntimeError, match="Stop other Pi processes"):
+        compactor.check_external(store.get(agent.id))
+
+
+@pytest.mark.parametrize("shared", ["id", "file"])
+def test_meta_guard_does_not_exempt_managed_peer_sharing_session(
+    app_agent, monkeypatch, shared
+):
+    app, agent, path = app_agent
+    store = app.state.controller.store
+    peer_path = path if shared == "file" else path.with_name("peer-shared.jsonl")
+    if shared == "id":
+        peer_path.write_bytes(path.read_bytes())
+    peer = store.create(
+        Agent(
+            name="Peer",
+            goal="G",
+            folder=agent.folder,
+            managed=True,
+            pid=4201,
+            session_id=agent.session_id if shared == "id" else str(uuid4()),
+            session_file=str(peer_path),
+            auto_resume=False,
+        )
+    )
+    monkeypatch.setattr(app.state.controller.processes, "alive", lambda candidate: True)
+    monkeypatch.setattr("swarm.sessions.running_pi_processes", lambda: [(peer.pid, agent.folder)])
+    monkeypatch.setattr("swarm.sessions.running_pi_folders", lambda: [agent.folder])
+
+    with pytest.raises(RuntimeError, match="Stop other Pi processes"):
+        app.state.meta_compactor.check_external(store.get(agent.id))
+
+
+@pytest.mark.parametrize(
+    "pid,folder,blocked",
+    [
+        (4301, None, True),
+        (4302, "target", True),
+        (4303, "other", False),
+    ],
+)
+def test_meta_guard_conservatively_scopes_unknown_processes(
+    app_agent, monkeypatch, tmp_path, pid, folder, blocked
+):
+    app, agent, _ = app_agent
+    process_folder = agent.folder if folder == "target" else folder
+    if folder == "other":
+        process_folder = str(tmp_path / "other-workspace")
+    monkeypatch.setattr("swarm.sessions.running_pi_processes", lambda: [(pid, process_folder)])
+    monkeypatch.setattr("swarm.sessions.running_pi_folders", lambda: [process_folder])
+
+    if blocked:
+        with pytest.raises(RuntimeError, match="Stop other Pi processes"):
+            app.state.meta_compactor.check_external(agent)
+    else:
+        app.state.meta_compactor.check_external(agent)
+
+
+def test_meta_guard_target_process_is_not_a_safe_peer(app_agent, monkeypatch):
+    app, agent, _ = app_agent
+    app.state.controller.store.update(agent.id, {"pid": 4401})
+    target = app.state.controller.store.get(agent.id)
+    monkeypatch.setattr(app.state.controller.processes, "alive", lambda candidate: True)
+    monkeypatch.setattr("swarm.sessions.running_pi_processes", lambda: [(4401, agent.folder)])
+    monkeypatch.setattr("swarm.sessions.running_pi_folders", lambda: [agent.folder])
+
+    with pytest.raises(RuntimeError, match="Stop the agent"):
+        app.state.meta_compactor.eligible(target)
 
 
 def test_busy_job_guards_mutations_and_survives_dialog_close(app_agent):
