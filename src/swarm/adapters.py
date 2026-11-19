@@ -12,6 +12,7 @@ from .paths import agent_path, local_path
 
 SKILL = Path(__file__).parent / "skills" / "swarm.md"
 MAILBOX_EXTENSION = Path(__file__).parent / "extensions" / "mailbox.js"
+DECISION_EXTENSION = Path(__file__).parent / "extensions" / "decision.js"
 THINKING_PRUNER_EXTENSION = Path(__file__).parent / "extensions" / "thinking-context-pruner.js"
 
 

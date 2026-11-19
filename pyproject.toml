@@ -31,7 +31,7 @@ swarm-pr-monitor-one = "swarm.ado_pr_monitor:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-swarm = ["static/*", "static/vendor/*", "skills/*.md", "skills/**/*.md", "extensions/*.js"]
+swarm = ["static/*", "static/vendor/*", "skills/*.md", "skills/**/*.md", "extensions/*.js", "pi-decision/*.json", "pi-decision/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

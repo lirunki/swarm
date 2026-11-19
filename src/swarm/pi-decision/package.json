@@ -1,0 +1,14 @@
+{
+  "name": "swarm-decision",
+  "version": "0.1.0",
+  "description": "A typed decision tool with a selectable Pi chat-model bridge and local input assets",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./index.js"],
+    "skills": ["../skills/decision"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}

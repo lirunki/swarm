@@ -114,6 +114,7 @@ function mailboxExtension(pi) {
   // existing mailbox-capable sessions, without editing the user's global Pi config.
   require('./output-spill.js').default(pi);
   require('./history-reader.js').default(pi);
+  require('./decision.js').default(pi);
   let runtime = null;
 
   function receiptPath(state, id) {

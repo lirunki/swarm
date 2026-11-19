@@ -37,6 +37,9 @@ instructions live beside this file rather than in Pi's global user-skill directo
 skill directory from `dirname "$SWARM_SKILL"`, then use the file reader to load the relevant
 companion **before** acting when a task matches:
 
+- **Decision-model judgments:** read sibling `decision/SKILL.md` before using the
+  `decision` tool for typed choices, scores or yes-probabilities over text, files
+  or effective context. It uses one configured model and cannot grant human approval.
 - **PR monitoring/caretaking:** read sibling `pr-monitor.md` when asked to monitor, watch,
   caretake, or wait on a GitHub Enterprise or Azure DevOps One pull request, its CI, review
   feedback, or clean completion. Use its blocking scripts instead of LLM polling.

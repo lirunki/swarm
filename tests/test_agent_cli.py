@@ -4,8 +4,8 @@ from urllib.error import URLError
 
 import pytest
 
+from swarm.adapters import MAILBOX_EXTENSION, THINKING_PRUNER_EXTENSION, PiAdapter
 from swarm.agent_client import DEFAULT_TIMEOUT, AgentClient, validate_api_url
-from swarm.adapters import PiAdapter, THINKING_PRUNER_EXTENSION
 from swarm.cli import main
 from swarm.models import Agent
 
@@ -59,8 +59,12 @@ def test_pi_adapter_includes_packaged_thinking_pruner(tmp_path, monkeypatch):
     agent = Agent(name="Pi", goal="Test", folder=str(tmp_path), session_file=str(session))
     monkeypatch.setattr(PiAdapter, "available", lambda self: True)
     command = PiAdapter().command(agent, None)
-    extension_args = [command[index + 1] for index, value in enumerate(command[:-1]) if value == "--extension"]
+    extension_args = [
+        command[index + 1] for index, value in enumerate(command[:-1]) if value == "--extension"
+    ]
+    assert str(THINKING_PRUNER_EXTENSION) in extension_args
     assert extension_args[-1] == str(THINKING_PRUNER_EXTENSION)
+    assert extension_args.count(str(MAILBOX_EXTENSION)) == 1
     assert Path(extension_args[-1]).is_file()
 
 

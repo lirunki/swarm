@@ -1784,6 +1784,148 @@ This prevents **new** giant tool text; it does not rewrite existing oversized
 history. Use the separate Edit repair below for the old Copilot error. It is not
 reasoning suppression or whole-conversation compaction.
 
+## Decision model tool for Pi
+
+Swarm packages a **`decision`** tool and `/decision` commands, plus the
+`decision` usage skill. Managed launches load the extension automatically without
+changing their main conversation model. Standalone Pi can install the included
+local package:
+
+```bash
+pi install /path/to/swarm/src/swarm/pi-decision
+```
+
+Existing sessions need `/reload`; new launches load normally. The package wrapper
+avoids registering the tool twice in managed Swarm launches. No paid call is made
+during install, configuration, model listing, or tests.
+
+### Select exactly one decision model
+
+The default profile is **`luna` → generic LLM bridge →
+`github-copilot/gpt-6-luna`**, using normal Pi authentication. This is **not** OpenAI's
+classifier/Decisions API, and it does not demand that API's separate key. Choose any
+available Pi chat model instead:
+
+```text
+/decision                    # selected model, availability and limits
+/decision models             # available chat models
+/decision set                # interactive chat-model picker
+/decision set provider/model
+/decision add review provider/model
+/decision set review
+/decision list               # configured profiles
+/decision show review
+/decision reload
+```
+
+Exactly one configured backend is invoked. There is no ensemble, model-switching
+side effect, automatic provider fallback, or repair/summarization call. The optional
+native `jev` profile uses Pi's TypeSafe classifier adapter when explicitly selected.
+Other native classifiers can be added by exact provider/model ID; no unverified
+MSDecision endpoint is invented or enabled.
+
+### Jev-style request with local input assets
+
+```json
+{
+  "state_asset": {"type":"context", "last_n_turns":5},
+  "questions": {
+    "route": {"type":"choice", "instructions":"Which step is appropriate?", "criteria":{
+      "continue":"Enough evidence and authorization", "investigate":"Missing evidence", "ask_user":"Human approval required"
+    }},
+    "risk": {"type":"score", "instructions":"Rate operational risk.", "criteria":["Reversible local change","Service disruption","Irreversible external change"]},
+    "review": {"type":"noul", "instructions":"Is human review needed?"}
+  }
+}
+```
+
+Supply exactly one of ordinary **`state`** (JSON), or **`state_asset`**:
+
+- `{ "type":"text", "text":"..." }`
+- `{ "type":"file", "path":"/workspace/report.md" }` — UTF-8 on the agent machine.
+- `{ "type":"context", "last_n_turns":5 }` — optional positive turn count;
+  omitted means the effective conversation available to the last provider request.
+
+Context is captured from the actual transformed provider payload, not the raw session
+file. Hidden thinking, signatures, provider metadata, raw archives and the unfinished
+current tool batch are excluded. System instructions require explicit
+`include_system:true`. Unsupported provider payload shapes fail closed with a source
+error; provide focused text/file evidence instead. Last-N selection counts user-started
+turns. File reads are bounded and common credential filenames/directories and their
+symlink targets are denied. This denylist is best effort, **not automatic secret
+redaction**: never submit confidential material without authorization for that provider.
+
+The result preserves question IDs in **`answers`** and adds **`metadata`** with the
+selected provider/model, request ID and probability provenance:
+
+- `choice`: selected label, probabilities and confidence.
+- `score`: fractional position from `0` through `criteria.length-1`, confidence,
+  optional provider-supplied probabilities. No distribution is fabricated.
+- `noul`: a yes-probability in `[0,1]`, not an action or unconditional Boolean.
+
+Requests contain **1–8** questions. Optional image assets are ID-keyed, matching Jev:
+
+```json
+{"state":"Inspect photo-1","assets":{"photo-1":{"type":"image","path":"/workspace/package.jpg"}},"questions":{"damaged":{"type":"noul","instructions":"Is photo-1 damaged?"}}}
+```
+
+Native `{ "type":"image", "format":"jpg", "data_base64":"..." }` assets are also
+accepted. Images are explicit, not silently extracted from whole conversation history.
+The generic bridge requires an image-capable chat model. Native Pi classifiers reject
+image requests where the named-asset association cannot be preserved. Experimental
+`box` requires an explicitly configured box-capable direct HTTP profile; its box payload
+remains provider-native/opaque, not an invented coordinate convention. Ordinary LLM
+and native classifier adapters reject unsupported box requests before dispatch.
+
+LLM bridge probabilities/confidence are **LLM estimates, not calibrated Jev scores**.
+Routing, escalation thresholds, execution and human approvals remain the caller's
+responsibility. The decision model receives no execution tools.
+
+### File configuration and direct adapters
+
+Config is `$PI_DECISION_CONFIG` (absolute override), otherwise
+`${PI_CODING_AGENT_DIR:-~/.pi/agent}/decision.json`. Missing means packaged defaults;
+malformed/unknown configuration fails closed. Commands update it explicitly and
+atomically; no credentials are stored in this file. The default limits are 512 KiB
+resolved input, 64 KiB output and a 60-second timeout. They can be raised in the file
+up to the documented validation caps; oversized input is refused, never silently
+truncated or summarized.
+
+Explicit JSON profiles must be **command-quoted**:
+
+```text
+/decision add custom '{"adapter":"llm","provider":"github-copilot","model":"gpt-6-luna","images":true,"box":false}'
+/decision add native classifier typesafe/jev-latest
+/decision add direct '{"adapter":"typesafe-http","provider":"typesafe","model":"jev-1.14.0","endpoint":"https://api.typesafe.ai/v1/systemone","auth_env":"TYPESAFE_API_KEY","images":true,"box":true}'
+```
+
+Direct HTTP profiles use an explicitly configured HTTPS inference endpoint, with
+redirects refused. Authentication defaults to Bearer via `auth_env`. Foundry API
+keys use `"auth_header":"api-key"`; either `auth_env` or `auth_file` may supply the
+credential, never both. `auth_file` is an absolute path to private owner-only JSON:
+`{"endpoint":"<exact configured endpoint>","key":"<secret>"}`. The file is bounded,
+non-symlink, single-linked and read only at invocation; endpoint binding prevents
+sending its key to a differently configured server. Keep it outside the checkout,
+e.g. `~/.pi/agent/decision-credentials/msdecision.json`. Neither this file nor supplied
+`decision.txt` may be used as a decision state asset. Never paste the key into chat.
+
+Example profile (no secret value):
+
+```text
+/decision add msdecision '{"adapter":"typesafe-http","provider":"microsoft-foundry","model":"Decision-1.1","endpoint":"https://YOUR_RESOURCE.services.ai.azure.com/providers/microsoft/v1/systemone","auth_file":"/home/USER/.pi/agent/decision-credentials/msdecision.json","auth_header":"api-key","images":true,"box":false}'
+/decision set msdecision
+```
+
+The `model` is the actual Foundry deployment name, including its case. Reload Pi
+once after installing the authentication adapter update; credential-file changes
+are read on subsequent calls without changing parent-process environment. A model documentation
+page such as Defapi's catalog URL is not an inference endpoint. Verify the provider's
+schema and experimental capabilities before enabling images/box. No provider request
+or input contents are printed in errors. Errors expose a category and request ID;
+inspect configuration/source/limits for diagnosis. Timeouts/cancellation may leave a
+charged request completed remotely: **no automatic retries**. Native model usage is
+reported to Pi so tool-model costs can count toward session totals.
+
 ## Archive an older percentage of model context
 
 For deterministic context reduction without summarization, stop a managed Pi agent
