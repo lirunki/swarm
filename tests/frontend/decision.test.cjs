@@ -37,6 +37,7 @@ function loadExtension(configPath, runDecision) {
   const context = vm.createContext({process, Buffer, console, setTimeout, clearTimeout, URL, AbortController});
   const localRequire = name => {
     if (name === 'typebox') return typeboxStub();
+    if (name === 'node:module') return {createRequire:()=>localRequire};
     if (name === './decision-core.js') return core;
     if (name === './decision-backends.js') return {runDecision};
     return require(name);
