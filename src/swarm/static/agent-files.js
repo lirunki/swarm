@@ -54,11 +54,15 @@
       Object.assign(this, {query, api, onChange, onInsert, confirm, create, readClipboard});
       this.dialog = query('#files-dialog'); this.list = query('#agent-file-list'); this.input = query('#agent-file-upload-input');
       this.generation = 0; this.loading = false; this.refreshPending = false; this.files = []; this.revision = null; this.agentId = null;
+      this.bulkMode = false; this.bulkSelected = new Set(); this.bulkRemoving = null; this.bulkUncertain=false;
       this.uploading = null; this.inserting = null; this.insertionEnabled = false; this.recovering = false; this.clipboardRead = null;
       query('#refresh-agent-files').addEventListener('click', () => this.refresh());
+      query('#bulk-remove-uploads')?.addEventListener('click',()=>this.beginBulkRemoval());
+      query('#bulk-remove-confirm')?.addEventListener('click',()=>this.removeSelectedUploads());
+      query('#bulk-remove-cancel')?.addEventListener('click',()=>{if(!this.bulkRemoving){this.bulkMode=false;this.bulkSelected.clear();this.render();}});
       this.pickerGeneration = null;
       query('#upload-agent-file').addEventListener('click', () => {
-        if (!this.dialog.open || this.uploading || this.inserting || this.clipboardRead) return;
+        if (!this.dialog.open || this.uploading || this.inserting || this.clipboardRead || this.bulkRemoving) return;
         this.pickerGeneration = this.generation; this.input.click();
       });
       this.input.addEventListener('change', event => {
@@ -72,16 +76,19 @@
       void this.cleanupPending();
       this.dialog.addEventListener('close', () => {
         this.generation += 1; this.clipboardRead = null; this.loading = false; this.refreshPending = false; this.cancelUpload(false);
+        this.bulkMode=false;this.bulkSelected.clear();
       });
     }
 
     async open(agent, basePath, workspace) {
       this.cancelUpload(false); this.uploading = null; this.clipboardRead = null;
+      this.bulkMode=false;this.bulkSelected.clear();this.bulkRemoving=null;this.bulkUncertain=false;
       this.generation += 1; this.agentId = agent.id; this.base = basePath; this.insertionEnabled = canInsert(agent); this.inserting = null;
       this.revision = agent.files_version ?? null; this.loading = false; this.refreshPending = false; this.files = [];
       this.query('#files-title').textContent = `Files · ${agent.name}`;
       this.query('#files-workspace').textContent = workspace;
       this.query('#agent-files-error').textContent = ''; this.query('#agent-files-insert-status').textContent = '';
+      const bulkStatus=this.query('#bulk-remove-status');if(bulkStatus)bulkStatus.textContent='';
       this.setUploadStatus('', null, false); this.updateUploadControls(); this.dialog.showModal();
       void this.cleanupPending();
       await this.refresh();
@@ -102,7 +109,7 @@
         return;
       }
       event.preventDefault(); event.stopPropagation();
-      if (this.uploading || this.inserting || this.clipboardRead) {
+      if (this.uploading || this.inserting || this.clipboardRead || this.bulkRemoving) {
         this.clipboardError('Wait for the current operation before pasting another file.'); return;
       }
       if (files.length !== 1) { this.clipboardError('Paste one image or file at a time.'); return; }
@@ -111,7 +118,7 @@
     }
 
     async pasteClipboard() {
-      if (!this.dialog.open || this.uploading || this.inserting || this.clipboardRead) return;
+      if (!this.dialog.open || this.uploading || this.inserting || this.clipboardRead || this.bulkRemoving) return;
       if (this.files.length >= MAX_FILES) { this.clipboardError(`This library already has the maximum of ${MAX_FILES} files.`); return; }
       const job = {generation: this.generation, base: this.base};
       const current = () => job.generation === this.generation && job.base === this.base && this.dialog.open;
@@ -174,13 +181,15 @@
     }
 
     updateUploadControls() {
-      const busy = !!this.uploading || !!this.inserting || !!this.clipboardRead;
+      const busy = !!this.uploading || !!this.inserting || !!this.clipboardRead || !!this.bulkRemoving;
       const paste = this.query('#paste-agent-file');
       paste.disabled = busy || this.files.length >= MAX_FILES;
       paste.textContent = this.clipboardRead ? 'Reading…' : 'Paste';
       paste.ariaBusy = String(!!this.clipboardRead);
       this.query('#upload-agent-file').disabled = busy || this.files.length >= MAX_FILES;
       this.input.disabled = busy || this.files.length >= MAX_FILES;
+      this.query('#refresh-agent-files').disabled=this.loading || !!this.bulkRemoving;
+      this.updateBulkControls();
       this.query('#cancel-agent-file-upload').disabled = !this.uploading || this.uploading.phase === 'finishing' || this.uploading.cancelled;
     }
 
@@ -192,7 +201,7 @@
     }
 
     async refresh() {
-      if (!this.dialog.open || this.loading) return;
+      if (!this.dialog.open || this.loading || this.bulkRemoving) return;
       void this.cleanupPending();
       const generation = this.generation, base = this.base;
       this.loading = true; this.query('#refresh-agent-files').disabled = true;
@@ -202,7 +211,9 @@
         const value = await this.api(base);
         if (generation !== this.generation || !this.dialog.open) return;
         if (!Array.isArray(value.files) || value.files.length > MAX_FILES || !Number.isInteger(value.revision) || value.revision < 0) throw Error('Invalid file list response');
-        this.files = value.files; this.revision = value.revision; this.render();
+        this.files = value.files; this.revision = value.revision;this.bulkUncertain=false;
+        const uploads=new Set(this.files.filter(file=>file.uploaded===true && uuid.test(file.id)).map(file=>file.id));
+        this.bulkSelected=new Set([...this.bulkSelected].filter(id=>uploads.has(id)));this.render();
       } catch (error) {
         if (generation !== this.generation || !this.dialog.open) return;
         this.query('#agent-files-error').textContent = /Not Found/i.test(error.message)
@@ -218,6 +229,7 @@
 
     sync(agent) {
       if (!this.dialog.open) return;
+      if (this.bulkRemoving) return;
       if (!agent) { this.dialog.close(); return; }
       const enabled = canInsert(agent);
       if (enabled !== this.insertionEnabled) { this.insertionEnabled = enabled; this.render(); }
@@ -249,14 +261,19 @@
           const download = this.create('a', 'file-download', 'Download');
           download.href = `${open.href}?download=true`; download.download = file.filename || 'file';
           const insert = this.create('button', 'small file-insert', 'Insert'); insert.type = 'button';
-          insert.disabled = !this.insertionEnabled || !!this.inserting || !!this.uploading || !!this.clipboardRead;
+          insert.disabled = !this.insertionEnabled || !!this.inserting || !!this.uploading || !!this.clipboardRead || !!this.bulkRemoving || this.bulkMode;
           insert.title = this.insertionEnabled ? 'Insert a reference into the live agent terminal' : 'Insert requires a live managed agent that is not stopping or compacting';
           insert.addEventListener('click', () => this.insert(file, insert));
           actions.append(open, download, insert);
         } else info.append(this.create('span', 'file-unavailable', file.error || 'File is unavailable'));
         if (typeof file.id === 'string' && uuid.test(file.id)) {
           const remove = this.create('button', 'small danger', file.uploaded ? 'Remove upload' : 'Remove reference'); remove.type = 'button';
-          remove.disabled = !!this.inserting || !!this.uploading || !!this.clipboardRead; remove.addEventListener('click', () => this.remove(file, remove)); actions.append(remove);
+          remove.disabled = !!this.inserting || !!this.uploading || !!this.clipboardRead || !!this.bulkRemoving || this.bulkMode; remove.addEventListener('click', () => this.remove(file, remove)); actions.append(remove);
+        }
+        if(this.bulkMode && file.uploaded===true && typeof file.id==='string' && uuid.test(file.id)){
+          const select=this.create('input','upload-remove-checkbox');select.type='checkbox';select.checked=this.bulkSelected.has(file.id);select.disabled=!!this.bulkRemoving;
+          select.setAttribute('aria-label',`Remove upload ${file.label || file.filename || 'File'}`);
+          select.addEventListener('change',()=>{if(this.bulkRemoving)return;select.checked?this.bulkSelected.add(file.id):this.bulkSelected.delete(file.id);this.updateBulkControls();});row.append(select);
         }
         row.append(info, actions); this.list.append(row);
       }
@@ -283,7 +300,7 @@
     }
 
     async upload(file) {
-      if (!this.dialog.open || this.uploading || this.inserting || this.clipboardRead) return;
+      if (!this.dialog.open || this.uploading || this.inserting || this.clipboardRead || this.bulkRemoving) return;
       this.query('#agent-files-error').textContent = '';
       if (!Number.isFinite(file.size) || file.size < 0 || file.size > MAX_FILE_BYTES) {
         this.query('#agent-files-error').textContent = `Choose a file no larger than ${bytes(MAX_FILE_BYTES)}.`; return;
@@ -355,8 +372,58 @@
       try { await this.api(`${job.base}/uploads/${encodeURIComponent(job.id)}`, 'DELETE'); this.rememberUpload(job, true); } catch { /* best-effort cleanup against the captured workspace */ }
     }
 
+    updateBulkControls() {
+      const open=this.query('#bulk-remove-uploads'),bar=this.query('#bulk-remove-selection');
+      const busy=!!this.uploading || !!this.inserting || !!this.clipboardRead || !!this.bulkRemoving || this.loading;
+      if(open){open.hidden=this.bulkMode;open.disabled=busy || !this.files.some(file=>file.uploaded===true && typeof file.id==='string' && uuid.test(file.id));}
+      if(bar)bar.hidden=!this.bulkMode;
+      const count=this.query('#bulk-remove-count');if(count)count.textContent=`${this.bulkSelected.size} upload${this.bulkSelected.size===1?'':'s'} selected`;
+      const remove=this.query('#bulk-remove-confirm');if(remove){remove.disabled=busy || this.bulkUncertain || !this.bulkSelected.size;remove.textContent=this.bulkRemoving?'Removing…':'Remove selected';}
+      const cancel=this.query('#bulk-remove-cancel');if(cancel)cancel.disabled=!!this.bulkRemoving;
+    }
+
+    beginBulkRemoval() {
+      if(!this.dialog.open || this.loading || this.uploading || this.inserting || this.clipboardRead || this.bulkRemoving)return;
+      this.bulkSelected=new Set(this.files.filter(file=>file.uploaded===true && typeof file.id==='string' && uuid.test(file.id)).map(file=>file.id));
+      this.bulkMode=!!this.bulkSelected.size;
+      const status=this.query('#bulk-remove-status');if(status)status.textContent='';
+      this.render();
+    }
+
+    async removeSelectedUploads() {
+      if(!this.dialog.open || !this.bulkMode || this.bulkUncertain || this.loading || this.uploading || this.inserting || this.clipboardRead || this.bulkRemoving)return;
+      const targets=this.files.filter(file=>file.uploaded===true && this.bulkSelected.has(file.id) && typeof file.id==='string' && uuid.test(file.id)).map(file=>({id:file.id,label:file.label||file.filename||'File'}));
+      if(!targets.length)return;
+      const generation=this.generation,base=this.base,agentId=this.agentId;
+      const current=()=>this.dialog.open && this.generation===generation && this.base===base && this.agentId===agentId;
+      if(!this.confirm(`Remove ${targets.length} uploaded file${targets.length===1?'':'s'}? Their temporary copies will be deleted and inserted paths may stop working. Browser originals and ordinary registered files are not deleted.`) || !current())return;
+      const job={generation,base};this.bulkRemoving=job;this.render();let removed=0,error='';
+      try {
+        for(const target of targets){
+          if(!current())break;
+          let timer;
+          try {await Promise.race([this.api(`${base}/${encodeURIComponent(target.id)}`,'DELETE'),new Promise((_,reject)=>{timer=root.setTimeout(()=>reject(Error('Request timed out.')),20000);})]);}
+          catch(failure){if(current())this.bulkUncertain=true;error=`Could not confirm removal of ${target.label}. Refresh before retrying; no further removals were sent. ${failure.message}`;break;}
+          finally {root.clearTimeout(timer);}
+          removed++;
+          if(current()){this.files=this.files.filter(file=>file.id!==target.id);this.bulkSelected.delete(target.id);this.render();}
+        }
+      } finally {
+        if(this.bulkRemoving===job)this.bulkRemoving=null;
+        if(current()){
+          this.bulkMode=this.bulkSelected.size>0;
+          this.render();
+          const status=this.query('#bulk-remove-status');if(status)status.textContent=`Removed ${removed} of ${targets.length} selected uploads.`;
+          if(error)this.query('#agent-files-error').textContent=error;
+          // Refresh independently; never replay a DELETE when its outcome is unknown.
+          if(!error)await this.refresh();
+          if(current() && removed)void Promise.resolve(this.onChange()).catch(()=>{});
+        }
+      }
+    }
+
     async remove(file, button) {
-      if (this.uploading || this.inserting || this.clipboardRead) return;
+      if (this.uploading || this.inserting || this.clipboardRead || this.bulkRemoving) return;
       const question = file.uploaded
         ? `Remove ${file.label || file.filename} and delete its uploaded temporary copy? The file on your browser's computer is NOT deleted. Paths already inserted into the agent will stop working.`
         : `Remove the reference to ${file.label || file.filename}? The original file will NOT be deleted.`;

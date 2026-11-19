@@ -1202,6 +1202,13 @@ and 1 GiB of owned temporary uploads. Safe plain filenames are required. Unregis
 partial uploads expire after ten minutes of inactivity (cleaned when another
 upload starts) and are canceled on controller restart; completed uploads remain.
 Metadata is bounded to 4,096 records and 256 cancellation/expiry tombstones.
+**Remove uploads…** starts checkbox selection for uploaded files only, checked by
+default. Uncheck anything to keep, then **Remove selected** and confirm. Ordinary
+registered references are excluded. Deletion is a batch of existing authenticated
+requests; partial/uncertain failures stop the batch and require a refresh before
+retrying. Closing the dialog stops issuing further requests, but an already-sent
+delete may complete. Browser originals remain untouched.
+
 **Remove upload** reclaims its temporary bytes and reference; forgetting the agent
 also removes owned uploaded copies, not other registered originals or session
 history. This keeps the quota reclaimable through the UI. The copies live under

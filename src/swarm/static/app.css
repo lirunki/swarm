@@ -217,3 +217,5 @@ dialog{width:min(520px,calc(100vw - 32px));max-height:90dvh;overflow:auto;backgr
 .browser-page-tabs>button{min-width:0;max-width:min(180px,100%)}.browser-page-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.browser-page-tabs .tab-close{flex:0 0 auto;margin-left:6px;padding:0 3px;line-height:20px}
 
 .worktree-location-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;min-width:0}.worktree-location-row>label{min-width:0}.worktree-location-row input{min-width:0}@media(max-width:650px){.worktree-location-row{grid-template-columns:1fr;gap:0}}
+
+.bulk-remove-selection{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 0}.bulk-remove-selection>span{margin-right:auto}.agent-file-row>.upload-remove-checkbox{width:17px;height:17px;flex:0 0 17px;margin:6px 0;accent-color:var(--accent)}#bulk-remove-status:empty{display:none}

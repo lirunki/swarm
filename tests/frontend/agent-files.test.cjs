@@ -8,13 +8,14 @@ class Element {
   replaceChildren(...items) { this.children = items; }
   addEventListener(type, fn) { this.events.set(type, fn); }
   click() { this.clicked = (this.clicked || 0) + 1; return this.events.get('click')?.({currentTarget: this}); }
+  setAttribute(name,value) {this[name]=value;}
   showModal() { this.open = true; }
   close() { this.open = false; this.events.get('close')?.(); }
 }
 const flatten = element => [element, ...element.children.filter(item => item instanceof Element).flatMap(flatten)];
 function fixture(api, options = {}) {
   const ids = ['files-dialog', 'agent-file-list', 'refresh-agent-files', 'files-title', 'files-workspace', 'agent-files-error', 'agent-file-count',
-    'agent-file-upload-input', 'upload-agent-file', 'paste-agent-file', 'cancel-agent-file-upload', 'agent-file-upload-status', 'agent-file-upload-progress', 'agent-file-upload-message', 'agent-files-insert-status'];
+    'agent-file-upload-input', 'upload-agent-file', 'paste-agent-file', 'cancel-agent-file-upload', 'agent-file-upload-status', 'agent-file-upload-progress', 'agent-file-upload-message', 'agent-files-insert-status','bulk-remove-uploads','bulk-remove-selection','bulk-remove-count','bulk-remove-confirm','bulk-remove-cancel','bulk-remove-status'];
   const elements = Object.fromEntries(ids.map(id => [`#${id}`, new Element(id.includes('input') ? 'input' : id.includes('progress') ? 'progress' : 'div')]));
   const calls = [], changed = [], inserted = [];
   const controller = new AgentFilesDialog({
@@ -353,4 +354,54 @@ test('multiple clipboard files are rejected explicitly rather than silently drop
   await t.controller.handlePaste(pasteEvent([makeFile('a.pdf', [1]), makeFile('b.pdf', [2])]));
   assert.match(t.elements['#agent-files-error'].textContent, /one image or file at a time/);
   assert.equal(t.calls.filter(c => c[1] === 'POST').length, 0);
+});
+
+
+const UPLOAD_B='22222222-2222-4222-8222-222222222222';
+const UPLOAD_C='33333333-3333-4333-8333-333333333333';
+test('bulk selection defaults to all uploads only and respects unchecked items', async () => {
+  const uploads=[{...file,uploaded:true},{...file,id:UPLOAD_B,uploaded:true},{...file,id:UPLOAD_C,uploaded:false}];
+  const t=fixture(async(path,method)=>{if(method==='DELETE'){uploads.splice(uploads.findIndex(x=>path.endsWith(x.id)),1);return {removed:true};}return{files:uploads.slice(),revision:1};});
+  await t.controller.open(agent,'/api/agents/a/files','Local');
+  t.elements['#bulk-remove-uploads'].click();
+  let checks=flatten(t.elements['#agent-file-list']).filter(x=>x.type==='checkbox');
+  assert.equal(checks.length,2);assert.ok(checks.every(x=>x.checked));
+  checks[1].checked=false;checks[1].events.get('change')();
+  await t.controller.removeSelectedUploads();
+  assert.deepEqual(t.calls.filter(x=>x[1]==='DELETE').map(x=>x[0]),[`/api/agents/a/files/${ID}`]);
+  assert.deepEqual(uploads.map(x=>x.id),[UPLOAD_B,UPLOAD_C]);
+});
+
+test('cancelled bulk confirmation deletes nothing; selection refresh never rechecks or adds uploads', async () => {
+  let files=[{...file,uploaded:true},{...file,id:UPLOAD_B,uploaded:true}];
+  const t=fixture(async()=>({files,revision:1}),{confirm:()=>false});
+  await t.controller.open(agent,'/api/agents/a/files','Local');t.controller.beginBulkRemoval();
+  t.controller.bulkSelected.delete(ID);files.push({...file,id:UPLOAD_C,uploaded:true});await t.controller.refresh();
+  assert.deepEqual([...t.controller.bulkSelected],[UPLOAD_B]);
+  await t.controller.removeSelectedUploads();assert.equal(t.calls.filter(x=>x[1]==='DELETE').length,0);
+  t.elements['#bulk-remove-cancel'].click();assert.equal(t.controller.bulkMode,false);
+});
+
+test('partial failure stops the batch and requires refresh before another removal', async () => {
+  const files=[{...file,uploaded:true},{...file,id:UPLOAD_B,uploaded:true},{...file,id:UPLOAD_C,uploaded:true}];
+  const t=fixture(async(path,method)=>{if(method==='DELETE'){if(path.endsWith(UPLOAD_B))throw Error('Network failed');files.shift();return{};}return{files:files.slice(),revision:1};});
+  await t.controller.open(agent,'/api/agents/a/files','Local');t.controller.beginBulkRemoval();await t.controller.removeSelectedUploads();
+  assert.equal(t.calls.filter(x=>x[1]==='DELETE').length,2);
+  assert.match(t.elements['#bulk-remove-status'].textContent,/Removed 1 of 3/);
+  assert.match(t.elements['#agent-files-error'].textContent,/Refresh before retrying/);
+  assert.equal(t.elements['#bulk-remove-confirm'].disabled,true);
+  await t.controller.removeSelectedUploads();assert.equal(t.calls.filter(x=>x[1]==='DELETE').length,2);
+  await t.controller.refresh();assert.equal(t.elements['#bulk-remove-confirm'].disabled,false);
+});
+
+test('closing or switching agent stops further batch requests and ignores late replies', async () => {
+  let finish;
+  const t=fixture(async(path,method)=>method==='DELETE'?new Promise(resolve=>{finish=resolve;}):{files:[{...file,uploaded:true},{...file,id:UPLOAD_B,uploaded:true}],revision:1});
+  const base='/api/federation/old/proxy/api/agents/a/files';
+  await t.controller.open(agent,base,'Old');t.controller.beginBulkRemoval();
+  const pending=t.controller.removeSelectedUploads();await tick();
+  t.elements['#files-dialog'].close();await t.controller.open({...agent,id:'b'},'/api/agents/b/files','New');
+  finish({removed:true});await pending;
+  assert.deepEqual(t.calls.filter(x=>x[1]==='DELETE').map(x=>x[0]),[`${base}/${ID}`]);
+  assert.equal(t.controller.agentId,'b');assert.equal(t.elements['#bulk-remove-status'].textContent,'');
 });
