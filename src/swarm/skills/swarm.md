@@ -37,15 +37,20 @@ instructions live beside this file rather than in Pi's global user-skill directo
 skill directory from `dirname "$SWARM_SKILL"`, then use the file reader to load the relevant
 companion **before** acting when a task matches:
 
+- **Access-approval monitoring:** read sibling `sawron.md` when asked to monitor
+  access approvals, watch requests from explicitly named users, resume/pause an
+  approval monitor, or handle a specifically confirmed approval. It covers
+  configured browser-service connectivity, bounded five-minute polling, identity
+  verification, request-specific confirmation, and Swarm inbox notifications.
 - **Decision-model judgments:** read sibling `decision/SKILL.md` before using the
   `decision` tool for typed choices, scores or yes-probabilities over text, files
   or effective context. It uses one configured model and cannot grant human approval.
 - **PR monitoring/caretaking:** read sibling `pr-monitor.md` when asked to monitor, watch,
-  caretake, or wait on a GitHub Enterprise or Azure DevOps One pull request, its CI, review
+  caretake, or wait on a hosted Git pull request, its CI, review
   feedback, or clean completion. Use its blocking scripts instead of LLM polling.
-- **Geneva/IcM monitor authoring:** read sibling `geneva-monitor/SKILL.md` when asked to
-  propose, create, update, or verify a Lobster Geneva/MDM metric monitor or IcM routing. Its
-  `references/` paths resolve relative to the `geneva-monitor` directory. Proposal-only work
+- **Metric monitor and incident routing authoring:** read sibling `geneva-monitor/SKILL.md`
+  when asked to propose, create, update, or verify metric monitors or incident routing.
+  Its `references/` paths resolve relative to the companion directory. Proposal-only work
   makes no writes, and enabling paging requires explicit authorization.
 
 These companions are referenced instructions, not separately discovered `/skill:*` commands.
