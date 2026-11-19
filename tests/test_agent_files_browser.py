@@ -189,6 +189,8 @@ def test_browser_upload_download_and_explicit_insert(tmp_path, width):
                     page.get_by_role("button", name="Insert", exact=True)
                 ).to_be_enabled()
                 assert not app.state.controller.processes.pastes
+                playwright.expect(page.locator("#agent-file-upload-progress")).to_be_hidden()
+                playwright.expect(page.locator("#cancel-agent-file-upload")).to_be_hidden()
                 dialog.screenshot(path=str(tmp_path / f"files-upload-insert-{width}.png"))
                 with page.expect_download() as downloading:
                     page.locator(".file-download").click()
@@ -328,6 +330,8 @@ def test_clipboard_button_and_keyboard_paste_upload_images_only(tmp_path, width)
                 page.locator("#paste-agent-file").click()
                 playwright.expect(page.locator(".agent-file-row")).to_have_count(1)
                 playwright.expect(page.locator("#paste-agent-file")).to_be_enabled()
+                playwright.expect(page.locator("#agent-file-upload-progress")).to_be_hidden()
+                playwright.expect(page.locator("#cancel-agent-file-upload")).to_be_hidden()
                 first = ctl.files.read(agent.id).files[0]
                 assert first.filename.startswith("clipboard-") and first.filename.endswith(".png")
                 assert first.uploaded and first.size > 0
@@ -337,6 +341,8 @@ def test_clipboard_button_and_keyboard_paste_upload_images_only(tmp_path, width)
                 page.keyboard.press("Control+V")
                 playwright.expect(page.locator(".agent-file-row")).to_have_count(2)
                 playwright.expect(page.locator("#paste-agent-file")).to_be_enabled()
+                playwright.expect(page.locator("#agent-file-upload-progress")).to_be_hidden()
+                playwright.expect(page.locator("#cancel-agent-file-upload")).to_be_hidden()
                 assert not ctl.processes.pastes
                 with page.expect_download() as pending:
                     page.locator(".file-download").first.click()

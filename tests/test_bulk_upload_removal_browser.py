@@ -60,6 +60,23 @@ def test_select_uploads_by_default_then_remove_only_checked_copies(tmp_path, wid
                 checks = page.locator(".upload-remove-checkbox")
                 playwright.expect(checks).to_have_count(4)
                 assert checks.evaluate_all("nodes=>nodes.every(node=>node.checked)")
+                # Short and long names must start in the same column next to selection.
+                geometry = page.locator(".agent-file-row").evaluate_all("""rows=>rows.map(row=>{
+                    const rect=element=>{const r=element.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom,width:r.width};};
+                    return {row:rect(row),check:rect(row.querySelector('input')),info:rect(row.querySelector('.agent-file-info')),actions:rect(row.querySelector('.agent-file-actions'))};
+                })""")
+                starts = [item["info"]["x"] for item in geometry]
+                assert max(starts) - min(starts) < 1
+                for item in geometry:
+                    assert 0 < item["info"]["x"] - item["check"]["right"] <= 13
+                    assert abs(item["info"]["y"] - item["check"]["y"]) <= 4
+                    assert item["actions"]["right"] <= item["row"]["right"] + 1
+                    if width < 650:
+                        assert abs(item["actions"]["x"] - item["info"]["x"]) < 1
+                        assert item["actions"]["y"] >= item["info"]["bottom"]
+                    else:
+                        assert item["actions"]["x"] >= item["info"]["right"]
+
                 page.get_by_role("checkbox", name="Select file keep.txt", exact=True).uncheck()
                 playwright.expect(page.locator("#bulk-remove-count")).to_have_text(
                     "3 files selected"

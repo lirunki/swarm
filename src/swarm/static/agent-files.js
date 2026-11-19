@@ -248,7 +248,7 @@
         return;
       }
       for (const file of this.files) {
-        const row = this.create('article', 'agent-file-row');
+        const row = this.create('article', this.bulkMode ? 'agent-file-row has-selection' : 'agent-file-row');
         const info = this.create('div', 'agent-file-info');
         const label = this.create('strong', '', file.label || file.filename || 'File');
         info.append(label, this.create('code', '', file.filename || 'Unnamed file'),
@@ -335,7 +335,7 @@
         if (result?.agent_id !== job.agentId || !result.file || !Number.isInteger(result.revision) || result.revision < 0) throw Object.assign(Error('Upload completion returned an invalid response. Refresh the library before trying again.'), {finishUnknown: true});
         job.phase = 'complete'; this.rememberUpload(job, true);
         if (job.generation !== this.generation || !this.dialog.open) return;
-        this.setUploadStatus(`${file.name} uploaded and registered. Use Insert when you want to send it to the agent.`, 100, false);
+        this.setUploadStatus(`${file.name} uploaded and registered. Use Insert when you want to send it to the agent.`, null, false);
         await this.onChange();
         if (job.generation === this.generation && this.dialog.open) await this.refresh();
       } catch (error) {

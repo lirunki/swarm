@@ -83,6 +83,8 @@ test('upload chunks base64 bytes at the server limit, registers only, and never 
   assert.deepEqual(t.inserted, []); // Upload saves/registers; only an explicit Insert invokes this callback.
   assert.equal(t.changed.length, 1); assert.equal(t.controller.files.length, 1);
   assert.match(t.elements['#agent-file-upload-message'].textContent, /Use Insert/);
+  assert.equal(t.elements['#agent-file-upload-progress'].hidden,true,'completed upload must hide progress');
+  assert.equal(t.elements['#cancel-agent-file-upload'].hidden,true);
   assert.equal(t.elements['#upload-agent-file'].disabled, false);
 });
 
