@@ -56,38 +56,35 @@ def test_select_uploads_by_default_then_remove_only_checked_copies(tmp_path, wid
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(f"http://127.0.0.1:{port}")
                 page.locator(f'.agent-card[data-agent-id="{agent.id}"] .card-files').click()
-                page.get_by_role("button", name="Remove uploads…", exact=True).click()
+                page.get_by_role("button", name="Remove files…", exact=True).click()
                 checks = page.locator(".upload-remove-checkbox")
-                playwright.expect(checks).to_have_count(3)
+                playwright.expect(checks).to_have_count(4)
                 assert checks.evaluate_all("nodes=>nodes.every(node=>node.checked)")
-                page.get_by_role("checkbox", name="Remove upload keep.txt", exact=True).uncheck()
+                page.get_by_role("checkbox", name="Select file keep.txt", exact=True).uncheck()
                 playwright.expect(page.locator("#bulk-remove-count")).to_have_text(
-                    "2 uploads selected"
+                    "3 files selected"
                 )
-                assert (
-                    not page.locator(".agent-file-row")
-                    .filter(has_text="Ordinary reference")
-                    .locator("input")
-                    .count()
-                )
+                playwright.expect(
+                    page.get_by_role("checkbox", name="Select file Ordinary reference", exact=True)
+                ).to_be_checked()
                 page.once("dialog", lambda dialog: dialog.dismiss())
                 page.get_by_role("button", name="Remove selected", exact=True).click()
                 assert len(ctl.files.read(agent.id).files) == 4
                 page.once("dialog", lambda dialog: dialog.accept())
                 page.get_by_role("button", name="Remove selected", exact=True).click()
                 playwright.expect(page.locator("#bulk-remove-status")).to_have_text(
-                    "Removed 2 of 2 selected uploads."
+                    "Removed 3 of 3 selected file entries."
                 )
-                playwright.expect(page.locator(".agent-file-row")).to_have_count(2)
+                playwright.expect(page.locator(".agent-file-row")).to_have_count(1)
                 assert original.read_text() == "Keep original"
                 from swarm.paths import local_path
 
                 assert local_path(uploaded["keep.txt"].path).exists()
                 assert not local_path(uploaded["remove.txt"].path).exists()
                 assert not local_path(uploaded["remove-too.txt"].path).exists()
-                page.get_by_role("button", name="Remove uploads…", exact=True).click()
+                page.get_by_role("button", name="Remove files…", exact=True).click()
                 playwright.expect(
-                    page.get_by_role("checkbox", name="Remove upload keep.txt", exact=True)
+                    page.get_by_role("checkbox", name="Select file keep.txt", exact=True)
                 ).to_be_checked()
                 page.get_by_role("button", name="Cancel selection", exact=True).click()
                 playwright.expect(checks).to_have_count(0)

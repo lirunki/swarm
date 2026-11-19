@@ -212,7 +212,7 @@
         if (generation !== this.generation || !this.dialog.open) return;
         if (!Array.isArray(value.files) || value.files.length > MAX_FILES || !Number.isInteger(value.revision) || value.revision < 0) throw Error('Invalid file list response');
         this.files = value.files; this.revision = value.revision;this.bulkUncertain=false;
-        const uploads=new Set(this.files.filter(file=>file.uploaded===true && uuid.test(file.id)).map(file=>file.id));
+        const uploads=new Set(this.files.filter(file=>typeof file.id==='string' && uuid.test(file.id)).map(file=>file.id));
         this.bulkSelected=new Set([...this.bulkSelected].filter(id=>uploads.has(id)));this.render();
       } catch (error) {
         if (generation !== this.generation || !this.dialog.open) return;
@@ -270,9 +270,9 @@
           const remove = this.create('button', 'small danger', file.uploaded ? 'Remove upload' : 'Remove reference'); remove.type = 'button';
           remove.disabled = !!this.inserting || !!this.uploading || !!this.clipboardRead || !!this.bulkRemoving || this.bulkMode; remove.addEventListener('click', () => this.remove(file, remove)); actions.append(remove);
         }
-        if(this.bulkMode && file.uploaded===true && typeof file.id==='string' && uuid.test(file.id)){
+        if(this.bulkMode && typeof file.id==='string' && uuid.test(file.id)){
           const select=this.create('input','upload-remove-checkbox');select.type='checkbox';select.checked=this.bulkSelected.has(file.id);select.disabled=!!this.bulkRemoving;
-          select.setAttribute('aria-label',`Remove upload ${file.label || file.filename || 'File'}`);
+          select.setAttribute('aria-label',`Select file ${file.label || file.filename || 'File'}`);
           select.addEventListener('change',()=>{if(this.bulkRemoving)return;select.checked?this.bulkSelected.add(file.id):this.bulkSelected.delete(file.id);this.updateBulkControls();});row.append(select);
         }
         row.append(info, actions); this.list.append(row);
@@ -375,16 +375,16 @@
     updateBulkControls() {
       const open=this.query('#bulk-remove-uploads'),bar=this.query('#bulk-remove-selection');
       const busy=!!this.uploading || !!this.inserting || !!this.clipboardRead || !!this.bulkRemoving || this.loading;
-      if(open){open.hidden=this.bulkMode;open.disabled=busy || !this.files.some(file=>file.uploaded===true && typeof file.id==='string' && uuid.test(file.id));}
+      if(open){open.hidden=this.bulkMode;open.disabled=busy || !this.files.some(file=>typeof file.id==='string' && uuid.test(file.id));}
       if(bar)bar.hidden=!this.bulkMode;
-      const count=this.query('#bulk-remove-count');if(count)count.textContent=`${this.bulkSelected.size} upload${this.bulkSelected.size===1?'':'s'} selected`;
+      const count=this.query('#bulk-remove-count');if(count)count.textContent=`${this.bulkSelected.size} file${this.bulkSelected.size===1?'':'s'} selected`;
       const remove=this.query('#bulk-remove-confirm');if(remove){remove.disabled=busy || this.bulkUncertain || !this.bulkSelected.size;remove.textContent=this.bulkRemoving?'Removing…':'Remove selected';}
       const cancel=this.query('#bulk-remove-cancel');if(cancel)cancel.disabled=!!this.bulkRemoving;
     }
 
     beginBulkRemoval() {
       if(!this.dialog.open || this.loading || this.uploading || this.inserting || this.clipboardRead || this.bulkRemoving)return;
-      this.bulkSelected=new Set(this.files.filter(file=>file.uploaded===true && typeof file.id==='string' && uuid.test(file.id)).map(file=>file.id));
+      this.bulkSelected=new Set(this.files.filter(file=>typeof file.id==='string' && uuid.test(file.id)).map(file=>file.id));
       this.bulkMode=!!this.bulkSelected.size;
       const status=this.query('#bulk-remove-status');if(status)status.textContent='';
       this.render();
@@ -392,11 +392,11 @@
 
     async removeSelectedUploads() {
       if(!this.dialog.open || !this.bulkMode || this.bulkUncertain || this.loading || this.uploading || this.inserting || this.clipboardRead || this.bulkRemoving)return;
-      const targets=this.files.filter(file=>file.uploaded===true && this.bulkSelected.has(file.id) && typeof file.id==='string' && uuid.test(file.id)).map(file=>({id:file.id,label:file.label||file.filename||'File'}));
+      const targets=this.files.filter(file=>this.bulkSelected.has(file.id) && typeof file.id==='string' && uuid.test(file.id)).map(file=>({id:file.id,label:file.label||file.filename||'File'}));
       if(!targets.length)return;
       const generation=this.generation,base=this.base,agentId=this.agentId;
       const current=()=>this.dialog.open && this.generation===generation && this.base===base && this.agentId===agentId;
-      if(!this.confirm(`Remove ${targets.length} uploaded file${targets.length===1?'':'s'}? Their temporary copies will be deleted and inserted paths may stop working. Browser originals and ordinary registered files are not deleted.`) || !current())return;
+      if(!this.confirm(`Remove ${targets.length} selected file entr${targets.length===1?'y':'ies'}? Uploaded temporary copies will be deleted and inserted paths may stop working. Ordinary references will be unregistered, but their original files and browser originals will NOT be deleted.`) || !current())return;
       const job={generation,base};this.bulkRemoving=job;this.render();let removed=0,error='';
       try {
         for(const target of targets){
@@ -413,7 +413,7 @@
         if(current()){
           this.bulkMode=this.bulkSelected.size>0;
           this.render();
-          const status=this.query('#bulk-remove-status');if(status)status.textContent=`Removed ${removed} of ${targets.length} selected uploads.`;
+          const status=this.query('#bulk-remove-status');if(status)status.textContent=`Removed ${removed} of ${targets.length} selected file entries.`;
           if(error)this.query('#agent-files-error').textContent=error;
           // Refresh independently; never replay a DELETE when its outcome is unknown.
           if(!error)await this.refresh();

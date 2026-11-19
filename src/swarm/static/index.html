@@ -7,31 +7,31 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=bulk-remove-uploads-1">
+  <link rel="stylesheet" href="/static/app.css?v=bulk-remove-files-2">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/org-chart.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/relay-settings.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/terminal-touch.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/terminal-copy.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/terminal-keys.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/agent-files.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/agent-messages.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/agent-broadcast.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/auth.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/fleet-control.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/system-notifications.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/notifications.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/agent-groups.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/grouping-mode.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/agent-search.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/history-archive.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/agent-limits.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/terminal-wheel.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/remote-browser.js?v=bulk-remove-uploads-1"></script>
-  <script defer src="/static/app.js?v=bulk-remove-uploads-1"></script>
+  <script defer src="/static/card-views.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/org-chart.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/relay-settings.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/terminal-touch.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/terminal-copy.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/dashboard-controls.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/terminal-keys.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/agent-files.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/agent-messages.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/agent-broadcast.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/auth.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/fleet-control.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/system-notifications.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/notifications.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/agent-groups.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/grouping-mode.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/agent-search.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/history-archive.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/agent-limits.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/terminal-wheel.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/remote-browser.js?v=bulk-remove-files-2"></script>
+  <script defer src="/static/app.js?v=bulk-remove-files-2"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -191,7 +191,7 @@
   <dialog id="files-dialog" class="wide-dialog" aria-labelledby="files-title">
     <header class="dialog-head"><div><div class="eyebrow" id="files-workspace">Local Swarm</div><h2 id="files-title">Files</h2></div><button type="button" class="icon-button" data-close aria-label="Close files">×</button></header>
     <p class="hint">Upload saves a file in this library; it does not send anything to the agent. Use Insert on a file only when you want its reference typed into the live terminal.</p>
-    <div class="agent-files-toolbar"><span id="agent-file-count" class="hint"></span><span class="agent-files-toolbar-actions"><input id="agent-file-upload-input" type="file" hidden><button id="upload-agent-file" class="small primary" type="button">↑ Upload</button><button id="paste-agent-file" class="small" type="button" title="Upload an image or file from the clipboard" aria-describedby="agent-file-paste-hint">Paste</button><button id="bulk-remove-uploads" class="small danger" type="button">Remove uploads…</button><button id="refresh-agent-files" class="small" type="button">↻ Refresh</button></span></div>
+    <div class="agent-files-toolbar"><span id="agent-file-count" class="hint"></span><span class="agent-files-toolbar-actions"><input id="agent-file-upload-input" type="file" hidden><button id="upload-agent-file" class="small primary" type="button">↑ Upload</button><button id="paste-agent-file" class="small" type="button" title="Upload an image or file from the clipboard" aria-describedby="agent-file-paste-hint">Paste</button><button id="bulk-remove-uploads" class="small danger" type="button">Remove files…</button><button id="refresh-agent-files" class="small" type="button">↻ Refresh</button></span></div>
     <div id="bulk-remove-selection" class="bulk-remove-selection" hidden><span id="bulk-remove-count" class="hint" role="status" aria-live="polite"></span><button id="bulk-remove-cancel" type="button" class="small">Cancel selection</button><button id="bulk-remove-confirm" type="button" class="small danger">Remove selected</button></div>
     <p id="bulk-remove-status" class="hint" role="status" aria-live="polite"></p>
     <p id="agent-file-paste-hint" class="hint clipboard-paste-hint" tabindex="0">Paste one image or file here with Ctrl+V / ⌘V, or use Paste. Text, URLs and copied file paths are not uploaded. If your browser cannot paste a copied file, use Upload.</p>

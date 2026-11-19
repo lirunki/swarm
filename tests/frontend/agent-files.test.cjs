@@ -359,17 +359,17 @@ test('multiple clipboard files are rejected explicitly rather than silently drop
 
 const UPLOAD_B='22222222-2222-4222-8222-222222222222';
 const UPLOAD_C='33333333-3333-4333-8333-333333333333';
-test('bulk selection defaults to all uploads only and respects unchecked items', async () => {
+test('bulk selection defaults to every file and respects unchecked items', async () => {
   const uploads=[{...file,uploaded:true},{...file,id:UPLOAD_B,uploaded:true},{...file,id:UPLOAD_C,uploaded:false}];
   const t=fixture(async(path,method)=>{if(method==='DELETE'){uploads.splice(uploads.findIndex(x=>path.endsWith(x.id)),1);return {removed:true};}return{files:uploads.slice(),revision:1};});
   await t.controller.open(agent,'/api/agents/a/files','Local');
   t.elements['#bulk-remove-uploads'].click();
   let checks=flatten(t.elements['#agent-file-list']).filter(x=>x.type==='checkbox');
-  assert.equal(checks.length,2);assert.ok(checks.every(x=>x.checked));
+  assert.equal(checks.length,3);assert.ok(checks.every(x=>x.checked));
   checks[1].checked=false;checks[1].events.get('change')();
   await t.controller.removeSelectedUploads();
-  assert.deepEqual(t.calls.filter(x=>x[1]==='DELETE').map(x=>x[0]),[`/api/agents/a/files/${ID}`]);
-  assert.deepEqual(uploads.map(x=>x.id),[UPLOAD_B,UPLOAD_C]);
+  assert.deepEqual(t.calls.filter(x=>x[1]==='DELETE').map(x=>x[0]),[`/api/agents/a/files/${ID}`,`/api/agents/a/files/${UPLOAD_C}`]);
+  assert.deepEqual(uploads.map(x=>x.id),[UPLOAD_B]);
 });
 
 test('cancelled bulk confirmation deletes nothing; selection refresh never rechecks or adds uploads', async () => {
