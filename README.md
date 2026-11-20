@@ -708,6 +708,28 @@ Deploy/restart the updated controller for the new default/API, then refresh the
 browser. Changing a limit after deployment is immediate and needs no restart.
 There is no automatic production limit edit or agent start on upgrade.
 
+### Tab order and starred shortcuts
+
+Drag an agent terminal tab left/right to reorder it among the visible tabs in its
+current group. **Alt+Shift+Left/Right** on a focused tab also moves it. Dashboard,
+the active folder dashboard, and the active Browser retain their navigation anchors;
+reordering never changes an agent's group, stops a process or disposes a terminal.
+Order is remembered in this browser independently per Swarm and registry.
+
+Click the leading **›_** on an agent terminal tab to star it; that same icon becomes
+**★** when starred. Folder and Browser tabs use **☆ / ★**. The fixed **★** button
+beside the tab strip opens shortcuts across all groups in the current Swarm, showing
+each tab's group. Selecting a starred live agent switches to its group and activates
+or reopens its terminal attachment. A stopped agent is revealed/highlighted on its
+dashboard without being woken. Folder/Browser shortcuts open their corresponding
+view without starting an agent or browser process.
+
+Stars survive tab closure and page reload, remain separate from server-managed
+groups, and never force unrelated terminal tabs into the active group's strip.
+Unstar from the tab or shortcut list. Missing agents are shown as unavailable so
+you can remove stale shortcuts explicitly. Favorites are client preferences, not
+changes to recovery intent or a guarantee a process remains running.
+
 ### Agent grouping and folder dashboards
 
 Open **bell → Notifications → Settings → Selected Swarm → Agent grouping storage** to

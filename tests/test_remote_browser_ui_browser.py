@@ -445,6 +445,7 @@ def test_png_polling_pause_and_late_owner_result_are_guarded(static_url):
             open_browser(page)
             page.locator("#browser-connect").click()
             playwright.expect(page.locator("#browser-screen")).to_be_visible()
+            page.locator('#browser-options > summary').click()
             page.locator("#browser-interval").fill("0.25")
             page.locator("#browser-interval").dispatch_event("change")
             screenshots = api.count(action_suffix(INSTANCE, "screenshot"))

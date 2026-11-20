@@ -17,7 +17,7 @@ const toolOutputRepairRequests = new Map();
 const terminals = new Map();
 const groupedBranches = new Set();
 let selectedAgentGroup = null, agentGroupsController = null, groupingModeController = null, historyArchiveController = null, agentLimitsController = null;
-let remoteBrowserController = null, browserSettingsController = null;
+let remoteBrowserController = null, browserSettingsController = null, tabPreferences = null;
 let browserGroups = null, browserGroupingProjection = null, browserGroupingError = null, browserGroupingOperation = 0, groupingBranchBusy = false, groupingBranchOperation = 0;
 const openedAgentGroups = new Set(), agentGroupTabs = new Map();
 const cardViews = new SwarmCardViews.CardViews();
@@ -154,6 +154,7 @@ function applyState(data) {
   render();
   if (savedView) {
     uiViewStateRestored = true;
+  syncTabPreferences();
     for (const id of savedView.terminalTabs.ids) if (agentById(id)) openTerminal(id, false);
     const selected = savedView.terminalTabs.active;
     activate(selected === 'dashboard' || selected === 'browser' || terminals.has(selected) || isAgentGroupTab(selected) ? selected : 'dashboard');
@@ -272,6 +273,7 @@ async function loadFederation() {
   } catch (error) { console.warn('Federation discovery failed', error); }
 }
 function switchSwarm(nodeId) {
+  $('#starred-tabs-menu')?.close?.();
   if (nodeId === activeSwarm) return;
   dashboardControls?.closeAddMenus?.();
   notificationsInbox?.clear();
@@ -795,6 +797,25 @@ function syncAgentGroupTabs() {
     if(activeTab==='browser') $('#tabs').insertBefore(browserNode,dashboard.nextSibling);
     else $('#tabs').append(browserNode);
   }
+  syncTabPreferences();
+}
+function syncTabPreferences(){
+  if(typeof tabPreferences==='undefined' || !tabPreferences || !uiViewStateRestored)return;
+  const assignments=SwarmAgentGroups.effectiveAssignments(state.agents,agentGroupProjection());
+  const groupNames=new Map(agentGroupProjection().groups.map(group=>[group.id,group.name]));
+  const items=state.agents.map(agent=>({id:'agent:'+agent.id,agentId:agent.id,kind:'agent',name:agent.name,
+    group:groupNames.get(assignments[agent.id])||'Ungrouped',stopped:!agent.alive,element:terminals.get(agent.id)?.group}));
+  for(const group of agentGroupProjection().groups)items.push({id:agentGroupTabId(group.id),kind:'folder',name:group.name,group:'Folder',element:agentGroupTabs.get(group.id)?.wrapper});
+  items.push({id:'browser',kind:'browser',name:'Browser',group:'Dashboard',element:browserOpen?$('#browser-tab-group'):null});
+  tabPreferences.sync({key:`swarm.tab-preferences.${activeSwarm}.${encodeURIComponent(state.home||'')}`,items});
+}
+function activateStarredTab(id){
+  if(id==='browser'){browserOpen=true;activate('browser');rememberUIViewState();return;}
+  if(isAgentGroupTab(id)){openAgentGroup(id.slice('agent-group:'.length));return;}
+  if(!id.startsWith('agent:'))return;
+  const agent=agentById(id.slice(6));if(!agent){toast('This starred agent is no longer available.',true);return;}
+  if(agent.alive){openTerminal(agent.id);return;}
+  revealNotificationAgent({swarmId:activeSwarm,agentId:agent.id});
 }
 function renderAgentFolders(matching, includeEmpty = true) {
   const container=$('#agent-group-folders');container.replaceChildren();
@@ -924,7 +945,7 @@ function openTerminal(id, focus = true) {
     const surface = node('div', 'terminal-surface'), screen = node('div', 'terminal-screen'), overlay = node('div', 'terminal-overlay');
     surface.append(screen, overlay); pane.append(header, surface); $('#terminals').append(pane);
     const group = node('span', 'tab-group'), tab = button('', 'tab', () => activate(id));
-    const tabLabel = node('span', 'tab-label'); tab.append(node('span', '', '›_'), tabLabel);
+    const tabLabel = node('span', 'tab-label'); tab.append(tabLabel);
     group.append(tab, button('×', 'tab-close', () => closeTerminal(id))); $('.tab-close', group).setAttribute('aria-label', 'Close terminal tab'); $('#tabs').append(group);
     const t = {id, pane, title, info, connected, screen, overlay, group, tab, tabLabel, copyButton, filesButton, messagesButton, productSlot, tmuxControl, reconnectButton, term: null, fit: null, ws: null, timer: null, closed: false};
     terminals.set(id, t); syncTerminal(t);
@@ -1628,6 +1649,9 @@ if (globalThis.SwarmRemoteBrowser) {
     },
   });
 }
+tabPreferences = new SwarmTabPreferences.TabPreferences({
+  onActivate:activateStarredTab,onError:message=>toast(message,true),
+});
 const agentBroadcast = new SwarmAgentBroadcast.BroadcastController({
   api: localApi,
   currentSwarm: () => activeSwarm,

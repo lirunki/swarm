@@ -7,31 +7,32 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=files-alignment-progress-1">
+  <link rel="stylesheet" href="/static/app.css?v=merged-tab-star-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/org-chart.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/relay-settings.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/terminal-touch.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/terminal-copy.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/terminal-keys.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/agent-files.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/agent-messages.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/agent-broadcast.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/auth.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/fleet-control.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/system-notifications.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/notifications.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/agent-groups.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/grouping-mode.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/agent-search.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/history-archive.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/agent-limits.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/terminal-wheel.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/remote-browser.js?v=files-alignment-progress-1"></script>
-  <script defer src="/static/app.js?v=files-alignment-progress-1"></script>
+  <script defer src="/static/card-views.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/org-chart.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/relay-settings.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/terminal-touch.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/terminal-copy.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/terminal-keys.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/agent-files.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/agent-messages.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/agent-broadcast.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/auth.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/fleet-control.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/system-notifications.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/notifications.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/agent-groups.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/grouping-mode.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/agent-search.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/history-archive.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/agent-limits.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/terminal-wheel.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/remote-browser.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/tab-preferences.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/app.js?v=merged-tab-star-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -46,7 +47,7 @@
     </div>
     <div class="top-meta"><span id="health"></span><span id="connection" class="connection">Connecting…</span><button id="help-button" class="header-icon" type="button" aria-label="Help" title="Swarm help" aria-haspopup="dialog" aria-controls="help-dialog">?</button></div>
   </header>
-  <nav id="tabs" class="tabs" aria-label="Workspace tabs"><button id="dashboard-tab" class="tab active" type="button" aria-current="page">◫ &nbsp;Dashboard</button><span id="browser-tab-group" class="tab-group" hidden><button id="browser-tab" class="tab" type="button" aria-current="false">Browser</button><button id="browser-tab-close" class="tab-close" type="button" aria-label="Close browser viewer">×</button></span></nav>
+  <div class="workspace-tab-strip"><nav id="tabs" class="tabs" aria-label="Workspace tabs"><button id="dashboard-tab" class="tab active" type="button" aria-current="page">◫ &nbsp;Dashboard</button><span id="browser-tab-group" class="tab-group" hidden><button id="browser-tab" class="tab" type="button" aria-current="false">Browser</button><button id="browser-tab-close" class="tab-close" type="button" aria-label="Close browser viewer">×</button></span></nav><button id="starred-tabs-button" class="starred-tabs-button" type="button" aria-label="Starred tabs (0)" aria-haspopup="dialog" aria-controls="starred-tabs-menu">★ 0</button></div>
   <main id="dashboard">
     <section class="page-head mission-toolbar" aria-label="Dashboard controls">
       <div class="page-head-title"><div id="agent-group-heading" class="compact-dropdown agent-group-heading"><h1 id="dashboard-title" class="sr-only"><span id="dashboard-root-title">Agent dashboard</span><button id="agent-group-name-button" type="button" class="agent-group-name-button" aria-haspopup="menu" aria-expanded="false" aria-controls="agent-group-name-menu" hidden><span id="agent-group-name"></span><span class="agent-group-menu-caret" aria-hidden="true">▾</span></button></h1><div id="agent-group-name-menu" class="dropdown-panel agent-group-name-menu" role="menu" aria-label="Group actions" hidden><button id="agent-group-rename" type="button" role="menuitem">Rename group</button><button id="agent-group-delete" type="button" class="danger" role="menuitem">Delete group</button></div></div>
@@ -102,6 +103,8 @@
     <button id="grouping-submenu-button" type="button" role="menuitem" aria-haspopup="menu" aria-controls="grouping-submenu" aria-expanded="false">Grouping ▸</button>
     <div id="grouping-submenu" class="grouping-submenu" role="menu" aria-label="Assign group" hidden></div>
   </div>
+
+  <dialog id="starred-tabs-menu" class="starred-tabs-menu" aria-labelledby="starred-tabs-title"><header class="dialog-head"><h2 id="starred-tabs-title">Starred tabs</h2><button id="starred-tabs-close" type="button" class="icon-button" aria-label="Close starred tabs">×</button></header><p class="hint">Shortcuts across all groups in this Swarm. Selecting a stopped agent reveals its card without waking it.</p><div id="starred-tabs-list"></div></dialog>
 
   <dialog id="notifications-dialog" class="wide-dialog notifications-dialog" aria-labelledby="notifications-title">
     <header class="dialog-head"><div><div class="eyebrow">ALL CONNECTED SWARMS</div><h2 id="notifications-title">Notifications</h2></div><button type="button" class="icon-button" data-close aria-label="Close notifications">×</button></header>

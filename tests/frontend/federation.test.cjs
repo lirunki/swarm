@@ -22,7 +22,7 @@ test('switching Swarms preserves each browser-local UI view state independently'
   const calls = [], groupedBranches = new Set(['local-parent']);
   const context = vm.createContext({
     selectedAgentGroup:null,openedAgentGroups:new Set(),agentGroupTabs:new Map(),isAgentGroupTab:()=>false,SwarmAgentGroups:{validProjection:()=>false},
-    SwarmGroupingMode:{validSettings:()=>false},syncGroupingStorage(){},serverManagedBranches:()=>false,groupingBranchOperation:0,browserGroupingOperation:0,groupingBranchBusy:false,browserGroupingProjection:null,browserGroupingError:null,
+    SwarmGroupingMode:{validSettings:()=>false},syncTabPreferences(){},syncGroupingStorage(){},serverManagedBranches:()=>false,groupingBranchOperation:0,browserGroupingOperation:0,groupingBranchBusy:false,browserGroupingProjection:null,browserGroupingError:null,
     activeSwarm: 'local', activeTab: 'local-b', browserOpen: true, terminals: new Map([['local-a', {}], ['local-b', {}]]), groupedBranches,
     localStorage: {getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key)},
     notificationsInbox: {clear: () => calls.push(['clear'])}, document: {querySelectorAll: () => []}, stateSocket: null,
@@ -55,7 +55,7 @@ test('first state restores available tabs, active tab, and grouped branches befo
   const opened = [], activated = [], renderedGroups = [], groupedBranches = new Set();
   const context = vm.createContext({
     selectedAgentGroup:null,openedAgentGroups:new Set(),agentGroupTabs:new Map(),isAgentGroupTab:()=>false,SwarmAgentGroups:{validProjection:()=>false},
-    SwarmGroupingMode:{validSettings:()=>false},syncGroupingStorage(){},serverManagedBranches:()=>false,groupingBranchOperation:0,browserGroupingOperation:0,groupingBranchBusy:false,browserGroupingProjection:null,browserGroupingError:null,
+    SwarmGroupingMode:{validSettings:()=>false},syncTabPreferences(){},syncGroupingStorage(){},serverManagedBranches:()=>false,groupingBranchOperation:0,browserGroupingOperation:0,groupingBranchBusy:false,browserGroupingProjection:null,browserGroupingError:null,
     activeSwarm: 'remote', activeTab: 'dashboard', browserOpen: false, terminals: new Map(), groupedBranches, uiViewStateRestored: false, state: {agents: []},
     localStorage: {getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key)},
     fleetControl: null, agentById: id => context.state.agents.find(agent => agent.id === id), closeTerminal: () => {},
@@ -83,7 +83,7 @@ test('legacy per-Swarm tab storage migrates into UI view state', () => {
   const values = new Map([['swarm.tabs.remote', JSON.stringify({ids: ['available'], active: 'available'})]]);
   const groupedBranches = new Set(), context = vm.createContext({
     selectedAgentGroup:null,openedAgentGroups:new Set(),agentGroupTabs:new Map(),isAgentGroupTab:()=>false,SwarmAgentGroups:{validProjection:()=>false},
-    SwarmGroupingMode:{validSettings:()=>false},syncGroupingStorage(){},serverManagedBranches:()=>false,groupingBranchOperation:0,browserGroupingOperation:0,groupingBranchBusy:false,browserGroupingProjection:null,browserGroupingError:null,
+    SwarmGroupingMode:{validSettings:()=>false},syncTabPreferences(){},syncGroupingStorage(){},serverManagedBranches:()=>false,groupingBranchOperation:0,browserGroupingOperation:0,groupingBranchBusy:false,browserGroupingProjection:null,browserGroupingError:null,
     activeSwarm: 'remote', activeTab: 'dashboard', browserOpen: false, terminals: new Map(), groupedBranches, uiViewStateRestored: false, state: {agents: []},
     localStorage: {getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key)},
     fleetControl: null, agentById: id => context.state.agents.find(agent => agent.id === id), closeTerminal: () => {}, render: () => {},
