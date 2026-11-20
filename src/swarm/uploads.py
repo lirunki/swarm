@@ -18,6 +18,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .files import MAX_AGENT_FILES, FileRequest, FileUnavailable
+from .meta_compact import require_not_busy
 from .models import now
 from .products import MAX_PRODUCT_BYTES, open_regular
 from .store import atomic_write
@@ -124,6 +125,14 @@ class Uploads:
     def registered(self, agent_id, path: Path) -> bool:
         return any(ref.path == str(path) for ref in self.controller.files.read(agent_id).files)
 
+    def pending(self, agent_id: str) -> bool:
+        """Return whether uncommitted upload bytes still belong to this agent."""
+        selected = str(UUID(str(agent_id)))
+        return any(
+            str(owner) == selected and state.status in {"receiving", "finishing"}
+            for owner, state in self.states()
+        )
+
     def cleanup(self, interrupted: bool = False):
         """Only stale, unregistered partial uploads expire. Completed references are retained."""
         from datetime import datetime
@@ -171,7 +180,8 @@ class Uploads:
 
     def begin(self, agent_id: str, request: UploadRequest) -> dict:
         with self.controller.lock:
-            self.store.get(agent_id)
+            with self.store.lock(agent_id):
+                require_not_busy(self.store.get(agent_id))
             self.cleanup()
             state_path = self.state_path(agent_id, request.upload_id)
             if state_path.exists():
@@ -315,7 +325,8 @@ class Uploads:
     def remove_upload(self, agent_id: str, file_id: str) -> dict:
         """An explicit removal deletes only the owned temporary copy, not client originals."""
         with self.controller.lock:
-            self.store.get(agent_id)
+            with self.store.lock(agent_id):
+                require_not_busy(self.store.get(agent_id))
             ref = next(
                 (
                     r

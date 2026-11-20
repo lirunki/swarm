@@ -7,32 +7,33 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=merged-tab-star-1">
+  <link rel="stylesheet" href="/static/app.css?v=agent-zip-archives-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/org-chart.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/relay-settings.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/terminal-touch.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/terminal-copy.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/terminal-keys.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/agent-files.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/agent-messages.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/agent-broadcast.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/auth.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/fleet-control.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/system-notifications.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/notifications.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/agent-groups.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/grouping-mode.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/agent-search.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/history-archive.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/agent-limits.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/terminal-wheel.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/remote-browser.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/tab-preferences.js?v=merged-tab-star-1"></script>
-  <script defer src="/static/app.js?v=merged-tab-star-1"></script>
+  <script defer src="/static/card-views.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/org-chart.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/relay-settings.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/terminal-touch.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/terminal-copy.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/terminal-keys.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/agent-files.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/agent-messages.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/agent-broadcast.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/auth.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/fleet-control.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/system-notifications.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/notifications.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/agent-groups.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/grouping-mode.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/agent-search.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/history-archive.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/agent-limits.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/terminal-wheel.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/remote-browser.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/tab-preferences.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/agent-archives.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/app.js?v=agent-zip-archives-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -65,7 +66,7 @@
         </div>
       </div>
       </div>
-      <div class="actions"><div id="add-menu" class="compact-dropdown"><button id="add-menu-button" type="button" class="primary" aria-label="Add" aria-haspopup="menu" aria-expanded="false" aria-controls="add-menu-options">+</button><div id="add-menu-options" class="dropdown-panel add-menu-options" role="menu" aria-label="Add" hidden><button id="create-button" type="button" role="menuitem">New agent</button><div id="adoption-menu" class="adoption-menu"><button id="adoption-menu-button" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="adoption-options">Adopt session</button><div id="adoption-options" class="adoption-options" role="menu" aria-label="Adopt session" hidden><button id="adopt-button" type="button" role="menuitem">Pi session</button><button id="import-grok-button" type="button" role="menuitem">Grok session</button></div></div><button id="open-browser-button" type="button" role="menuitem">Open browser</button></div></div></div>
+      <div class="actions"><div id="add-menu" class="compact-dropdown"><button id="add-menu-button" type="button" class="primary" aria-label="Add" aria-haspopup="menu" aria-expanded="false" aria-controls="add-menu-options">+</button><div id="add-menu-options" class="dropdown-panel add-menu-options" role="menu" aria-label="Add" hidden><button id="create-button" type="button" role="menuitem">New agent</button><div id="adoption-menu" class="adoption-menu"><button id="adoption-menu-button" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="adoption-options">Adopt session</button><div id="adoption-options" class="adoption-options" role="menu" aria-label="Adopt session" hidden><button id="adopt-button" type="button" role="menuitem">Pi session</button><button id="import-grok-button" type="button" role="menuitem">Grok session</button></div></div><button id="archived-agents-button" type="button" role="menuitem">Archived agents</button><button id="open-browser-button" type="button" role="menuitem">Open browser</button></div></div></div>
     </section>
     <div class="sr-only"><h2>Agent hierarchy <span id="agent-count" class="count">0</span></h2><span>Parent → child · Hover for activity</span></div>
     <p id="hierarchy-summary" class="hint hierarchy-note sr-only" aria-live="polite"></p>
@@ -105,6 +106,10 @@
   </div>
 
   <dialog id="starred-tabs-menu" class="starred-tabs-menu" aria-labelledby="starred-tabs-title"><header class="dialog-head"><h2 id="starred-tabs-title">Starred tabs</h2><button id="starred-tabs-close" type="button" class="icon-button" aria-label="Close starred tabs">×</button></header><p class="hint">Shortcuts across all groups in this Swarm. Selecting a stopped agent reveals its card without waking it.</p><div id="starred-tabs-list"></div></dialog>
+
+  <dialog id="archive-agent-choice-dialog" aria-labelledby="archive-agent-choice-title"><header class="dialog-head"><h2 id="archive-agent-choice-title">Forget or archive</h2></header><p id="archive-agent-name"></p><p class="hint">Archive stores exact session and agent metadata in a private ZIP before forgetting. History/output archive dependencies are included; working directories and Git worktrees are not copied.</p><label class="checkbox"><input id="archive-agent-include-files" type="checkbox">Include registered files and product snapshot</label><p class="hint">Archives may contain sensitive history/files. The archive job runs in the background; failure keeps the agent. Stop a live agent first.</p><footer class="dialog-footer"><button id="archive-agent-cancel" type="button">Cancel</button><button id="archive-agent-forget-only" type="button">Forget only</button><button id="archive-agent-submit" type="button" class="primary">Archive and forget</button></footer></dialog>
+
+  <dialog id="archives-dialog" class="wide-dialog" aria-labelledby="archives-title"><header class="dialog-head"><h2 id="archives-title">Archived agents</h2><button id="archives-close" type="button" class="icon-button" aria-label="Close archived agents">×</button></header><p id="archives-owner" class="hint"></p><div class="archives-toolbar"><label class="checkbox"><input id="archives-select-all" type="checkbox">Select all archives</label><button id="archives-refresh" type="button" class="small">Refresh</button><button id="archives-delete-selected" type="button" class="small danger" disabled>Delete selected ZIPs</button></div><p id="archives-status" class="hint" role="status" aria-live="polite"></p><p id="archives-error" class="form-error" role="alert"></p><div id="archives-jobs"></div><div id="archives-list"></div></dialog>
 
   <dialog id="notifications-dialog" class="wide-dialog notifications-dialog" aria-labelledby="notifications-title">
     <header class="dialog-head"><div><div class="eyebrow">ALL CONNECTED SWARMS</div><h2 id="notifications-title">Notifications</h2></div><button type="button" class="icon-button" data-close aria-label="Close notifications">×</button></header>

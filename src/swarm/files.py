@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .meta_compact import require_not_busy
 from .models import now
 from .paths import local_path
 from .products import MAX_PRODUCT_BYTES, open_regular
@@ -193,6 +194,9 @@ class AgentFiles:
             raise ValueError("file exceeds the 128 MiB limit")
         # Registration only stats the source. It never opens/hashes/copies its bytes.
         with self.store.lock(agent_id):
+            # Re-read the record inside the same sidecar lock used by archive
+            # reservation/removal. A preflight check outside this lock is racy.
+            require_not_busy(self.store.get(agent_id))
             index = self.read(agent_id)
             previous = next((ref for ref in index.files if ref.path == str(source)), None)
             if previous is None and len(index.files) >= MAX_AGENT_FILES:
@@ -223,6 +227,7 @@ class AgentFiles:
         self.store.get(agent_id)
         selected = UUID(str(file_id))
         with self.store.lock(agent_id):
+            require_not_busy(self.store.get(agent_id))
             index = self.read(agent_id)
             values = [ref for ref in index.files if ref.id != selected]
             if len(values) == len(index.files):

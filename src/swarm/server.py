@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .agent_archives import AgentArchives, ArchiveRequest, ResurrectRequest
 from .agent_limits import (
     AgentLimitsConflict,
     AgentLimitsCorrupt,
@@ -186,6 +187,17 @@ def create_app(
     tool_input_compactor = ToolInputCompactor(meta_compactor)
     output_repair = ToolOutputRepair(meta_compactor)
     history_archiver = HistoryArchiver(meta_compactor)
+    agent_archives = AgentArchives(meta_compactor)
+
+    def cleanup_archived_agent(agent_id: str) -> None:
+        # The verified ZIP owns any selected bytes before this callback runs. Cleanup is
+        # deliberately outside archive/controller locks and never changes job success.
+        products.collect()
+        uploads.forget(agent_id)
+        controller.files.forget(agent_id)
+
+    agent_archives.set_cleanup(cleanup_archived_agent)
+    agent_archives.set_pending_upload(uploads.pending)
     browser_settings = BrowserSettings(store.home)
     remote_browser = RemoteBrowser(store.home, browser_settings)
     browser_registry = BrowserRegistry(store.home, browser_settings, legacy_manager=remote_browser)
@@ -232,6 +244,7 @@ def create_app(
             await asyncio.to_thread(output_repair.recover)
             await asyncio.to_thread(meta_compactor.recover)
             await asyncio.to_thread(history_archiver.recover)
+            await asyncio.to_thread(agent_archives.recover)
             if recover:
                 await asyncio.to_thread(controller.recover)
             else:
@@ -247,6 +260,7 @@ def create_app(
                 await asyncio.to_thread(app.state.browser_registry.close)
                 await asyncio.to_thread(app.state.remote_browser.close)
                 await asyncio.to_thread(meta_compactor.close)
+                agent_archives.close()
                 # Stopping the web application deliberately does NOT stop any agent.
 
     app = FastAPI(title="Swarm", lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -258,6 +272,7 @@ def create_app(
     app.state.meta_compactor = meta_compactor
     app.state.tool_input_compactor = tool_input_compactor
     app.state.output_repair = output_repair
+    app.state.agent_archives = agent_archives
     app.state.history_archiver = history_archiver
     app.state.remote_browser = remote_browser
     app.state.browser_registry = browser_registry
@@ -1195,6 +1210,63 @@ def create_app(
         await asyncio.to_thread(controller.refresh)
         await broadcast()
         return result
+
+    @app.post("/api/agents/{agent_id}/archive-and-forget", status_code=202)
+    async def archive_and_forget(agent_id: UUID, options: ArchiveRequest, request: Request):
+        require_browser_operator(request)
+        result = await asyncio.to_thread(agent_archives.start, str(agent_id), options)
+        await broadcast()
+        return result | {
+            "warning": "The private archive contains the exact raw session and may contain secrets."
+        }
+
+    @app.get("/api/archives")
+    async def list_agent_archives(request: Request):
+        require_browser_operator(request)
+        return await asyncio.to_thread(agent_archives.list)
+
+    @app.get("/api/archive-jobs/{request_id}")
+    async def get_agent_archive_job(request_id: UUID, request: Request):
+        require_browser_operator(request)
+        return await asyncio.to_thread(agent_archives.get_job, str(request_id))
+
+    @app.post("/api/archives/{archive_id}/resurrect")
+    async def resurrect_agent_archive(
+        archive_id: UUID, options: ResurrectRequest, request: Request
+    ):
+        require_browser_operator(request)
+        result = await asyncio.to_thread(agent_archives.resurrect, str(archive_id), options)
+        await broadcast()
+        return result
+
+    @app.delete("/api/archives/{archive_id}")
+    async def delete_agent_archive(archive_id: UUID, request: Request):
+        require_browser_operator(request)
+        return await asyncio.to_thread(agent_archives.delete, str(archive_id))
+
+    @app.get("/api/archives/{archive_id}/download")
+    async def download_agent_archive(archive_id: UUID, request: Request):
+        require_browser_operator(request)
+        record, stream = await asyncio.to_thread(agent_archives.download, str(archive_id))
+
+        def content():
+            try:
+                while block := stream.read(65536):
+                    yield block
+            finally:
+                stream.close()
+
+        return StreamingResponse(
+            content(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": "attachment; filename*=UTF-8''"
+                + quote(f"{record['name']}-{record['id']}.zip", safe=""),
+                "Content-Length": str(record["size"]),
+                "Cache-Control": "no-store",
+            },
+            background=BackgroundTask(stream.close),
+        )
 
     @app.post("/api/agents/{agent_id}/wake")
     async def wake(agent_id: UUID, request: WakeRequest):

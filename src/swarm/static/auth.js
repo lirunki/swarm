@@ -193,6 +193,7 @@
     }
 
     isResourcePath(pathname) {
+      if (/^\/api\/archives\/[^/]+\/download$/.test(pathname) || /^\/api\/federation\/[^/]+\/proxy\/api\/archives\/[^/]+\/download$/.test(pathname)) return true;
       const local = /^\/api\/agents\/[^/]+\/(?:files\/[^/]+\/content|products\/[^/]+\/download)$/;
       const remote = /^\/api\/federation\/[^/]+\/proxy\/api\/agents\/[^/]+\/(?:files\/[^/]+\/content|products\/[^/]+\/download)$/;
       return local.test(pathname) || remote.test(pathname);

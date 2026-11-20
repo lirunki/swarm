@@ -6,7 +6,9 @@ import json
 import logging
 import subprocess
 import threading
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
 from .adapters import resume_prompt, session_header
 from .agent_limits import (
@@ -383,10 +385,54 @@ class Controller:
             self.refresh()
             return agent
 
-    def forget(self, agent_id: str) -> Agent:
-        """Stop an inactive owned worker and unregister it, preserving all history."""
+    def forget(
+        self,
+        agent_id: str,
+        *,
+        _archive_owner: Mapping[str, Any] | None = None,
+        _expected_record_sha: str | None = None,
+        _archive_check: Callable[[Agent], None] | None = None,
+    ) -> Agent:
+        """Stop an inactive owned worker and unregister it, preserving all history.
+
+        The private archive arguments are reserved for the archive worker. They compare
+        and unlink one exact, still-owned running lease without clearing the busy marker or
+        invoking ordinary process-stop behavior.
+        """
         with self.lock:
             agent = self.store.get(agent_id)
+            if _archive_owner is not None or _expected_record_sha is not None:
+                if _archive_owner is None or _expected_record_sha is None:
+                    raise RuntimeError("Incomplete archive removal ownership")
+                lease = getattr(agent, "agent_archive", None)
+                if (
+                    not isinstance(lease, dict)
+                    or lease.get("request_id") != _archive_owner.get("request_id")
+                    or lease.get("archive_id") != _archive_owner.get("archive_id")
+                    or lease.get("status") != "running"
+                ):
+                    raise RuntimeError("Agent archive reservation ownership changed")
+                if self.processes.alive(agent):
+                    raise RuntimeError("Agent restarted while archival was in progress")
+                def remove_archive_mailbox(current: Agent) -> None:
+                    try:
+                        self.messages.forget(current.id)
+                    except (OSError, ValueError):
+                        # The exact record is already unlinked under this sidecar. Mailbox
+                        # cleanup is best effort and must not turn a verified archive into
+                        # a failed, record-less job.
+                        log.warning("Could not clear archived agent mailbox %s", current.id)
+
+                removed = self.store.remove_if(
+                    agent.id,
+                    _expected_record_sha,
+                    _archive_owner,
+                    check=_archive_check,
+                    removed=remove_archive_mailbox,
+                )
+                self.refresh()
+                return removed
+
             require_not_busy(agent)
             require_not_restarting(agent)
             alive = self.processes.alive(agent)

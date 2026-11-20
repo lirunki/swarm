@@ -93,7 +93,7 @@ function renderer() {
   const source = fs.readFileSync(path.join(__dirname, '../../src/swarm/static/app.js'), 'utf8');
   const storage = memoryStorage(), calls = [];
   const context = vm.createContext({
-    historyArchiveInFlight:()=>false,historyArchiveController:null,
+    historyArchiveInFlight:()=>false,historyArchiveController:null,agentArchivesController:null,stateGeneration:0,activeSwarm:"local",
     document: {createElement: tag => new Element(tag), createTextNode: value => new Text(value)}, URL, agentGroupsController:null,
     state: {home, agents: []}, cardViews: new CardViews(() => storage), SwarmCardViews: {applyCardView},
     agentById: id => context.state.agents.find(a => a.id === id),
@@ -297,7 +297,7 @@ function toolInputDialog({confirmResult = true, reject = false, allowHistoryLoss
   const form = {querySelector: selector => selector === '.form-error' ? errors : null};
   const dialog = {open: true}, historyLoss = {checked: allowHistoryLoss};
   const context = vm.createContext({
-    historyArchiveInFlight:()=>false,historyArchiveController:null,
+    historyArchiveInFlight:()=>false,historyArchiveController:null,agentArchivesController:null,stateGeneration:0,activeSwarm:"local",
     editId: a.id, metaCompactingId: null, toolInputCompactingId: null, state: {agents: [a]},
     agentById: id => context.state.agents.find(record => record.id === id),
     compactionRunning: record => record?.meta_compaction?.status === 'running' || record?.tool_input_compaction?.status === 'running',
@@ -447,7 +447,7 @@ function forgetDialog({active = false, confirm = true, reject = false} = {}) {
   const controls = {'#forget-agent': forget, '#forget-explanation': explanation, '#edit-form': form, '#edit-dialog': dialog};
   const a = fullAgent(active ? 'running' : 'idle');
   const context = vm.createContext({
-    historyArchiveInFlight:()=>false,historyArchiveController:null,
+    historyArchiveInFlight:()=>false,historyArchiveController:null,agentArchivesController:null,stateGeneration:0,activeSwarm:"local",
     editId: a.id, forgettingAgent: false, state: {home, agents: [a, {...a, id: 'other-agent'}]},
     compactionBlocked: record => record?.meta_compaction?.status === 'running' || record?.tool_input_compaction?.status === 'running',
     $: (selector, root) => root ? root.querySelector(selector) : controls[selector],
@@ -585,7 +585,7 @@ test('terminal toolbar keeps reconnect and exposes a scoped tmux command menu', 
   const a = fullAgent('running', true), calls = [], tmuxCalls = [], panels = new Element('div'), tabs = new Element('div');
   const node = (tag, cls = '', text = '') => { const el = new Element(tag); el.className = cls; if (text) el.textContent = text; return el; };
   const context = vm.createContext({
-    historyArchiveInFlight:()=>false,historyArchiveController:null,
+    historyArchiveInFlight:()=>false,historyArchiveController:null,agentArchivesController:null,stateGeneration:0,activeSwarm:"local",
     node, button: (text, cls, fn) => { const el = node('button', cls, text); el.addEventListener('click', fn); return el; },
     document: {createElement: tag => new Element(tag)}, URL, apiPath: value => `/remote${value}`,
     $: (selector, root) => root ? find(root, selector.slice(1)) : selector === '#terminals' ? panels : tabs,

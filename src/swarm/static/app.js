@@ -17,7 +17,7 @@ const toolOutputRepairRequests = new Map();
 const terminals = new Map();
 const groupedBranches = new Set();
 let selectedAgentGroup = null, agentGroupsController = null, groupingModeController = null, historyArchiveController = null, agentLimitsController = null;
-let remoteBrowserController = null, browserSettingsController = null, tabPreferences = null;
+let remoteBrowserController = null, browserSettingsController = null, tabPreferences = null, agentArchivesController = null;
 let browserGroups = null, browserGroupingProjection = null, browserGroupingError = null, browserGroupingOperation = 0, groupingBranchBusy = false, groupingBranchOperation = 0;
 const openedAgentGroups = new Set(), agentGroupTabs = new Map();
 const cardViews = new SwarmCardViews.CardViews();
@@ -367,7 +367,8 @@ const toolOutputRepairInFlight = a => {
 };
 const historyArchiveRunning = a => a?.context_archive?.status === 'running';
 const historyArchiveInFlight = a => typeof historyArchiveController !== 'undefined' && !!historyArchiveController?.inFlight(a);
-const compactionRunning = a => metaCompactionRunning(a) || toolInputCompactionRunning(a) || toolOutputRepairRunning(a) || historyArchiveRunning(a);
+const agentArchiveRunning = a => ['queued','running'].includes(a?.agent_archive?.status);
+const compactionRunning = a => agentArchiveRunning(a) || metaCompactionRunning(a) || toolInputCompactionRunning(a) || toolOutputRepairRunning(a) || historyArchiveRunning(a);
 const compactionRequestInFlight = a => !!a && (historyArchiveInFlight(a) || metaCompactingId === a.id || toolInputCompactingId === a.id || toolOutputRepairInFlight(a));
 const compactionBlocked = a => compactionRunning(a) || compactionRequestInFlight(a);
 const persistedManagedPi = a => !!a && a.managed === true && a.backend === 'pi' && !!a.session_file;
@@ -834,6 +835,7 @@ function renderAgentFolders(matching, includeEmpty = true) {
   container.hidden=!container.childNodes.length;
 }
 function render() {
+  agentArchivesController?.sync();
   if(typeof remoteBrowserController!=='undefined')remoteBrowserController?.setContext();
   if(typeof browserSettingsController!=='undefined')browserSettingsController?.setContext();
   agentLimitsController?.setState(state.agent_limits,state.federation_offline?'Owning Swarm is offline.':state.agent_limits_error);
@@ -1093,11 +1095,12 @@ function updateEditAvailability() {
   const starting = metaCompactingId === editId, toolStarting = toolInputCompactingId === editId, outputStarting = toolOutputRepairInFlight(a);
   const restarting = restartInProgress(a);
   const historyRunning=historyArchiveRunning(a),historyStarting=historyArchiveInFlight(a);
-  const blocked = running || toolRunning || outputRunning || starting || toolStarting || outputStarting || historyRunning || historyStarting || restarting;
+  const blocked = agentArchiveRunning(a) || running || toolRunning || outputRunning || starting || toolStarting || outputStarting || historyRunning || historyStarting || restarting;
   const eligible = !!a && a.managed === true && a.backend === 'pi' && !!a.session_file && !a.alive && !outputRepairStopping(a) && !incompleteSetup(a);
   let availability = 'Available while this managed Pi agent is stopped.';
   if (!a) availability = 'This agent is no longer registered.';
   else if (restarting) availability = 'Fleet restart is active. Editing and compaction are disabled.';
+  else if(agentArchiveRunning(a))availability='Whole-agent archival is queued or running. Wait for its verified result.';
   else if (historyRunning || historyStarting) availability = 'Archiving older context. It will remain stopped when complete.';
   else if (running) availability = 'Compacting the saved session. It will remain stopped when complete.';
   else if (toolRunning || toolStarting) availability = 'Tool input compaction is running. It will remain stopped when complete.';
@@ -1125,6 +1128,7 @@ function updateEditAvailability() {
   let toolAvailability = 'Available while this managed Pi agent is stopped.';
   if (!a) toolAvailability = 'This agent is no longer registered.';
   else if (restarting) toolAvailability = 'Fleet restart is active. Editing and compaction are disabled.';
+  else if(agentArchiveRunning(a))toolAvailability='Whole-agent archival is queued or running.';
   else if(historyRunning || historyStarting)toolAvailability='Older-context archival is running. Wait for it to finish.';
   else if (running || starting) toolAvailability = 'Meta-compaction is running. Wait for it to finish.';
   else if (outputRunning || outputStarting) toolAvailability = 'Oversized tool-output repair is running. Wait for it to finish.';
@@ -1262,16 +1266,18 @@ async function repairToolOutputs(agentId = editId) {
     if (context.generation === stateGeneration && context.swarm === activeSwarm) render();
   }
 }
-async function forgetAgent() {
-  const id = editId, a = agentById(id);
-  if (!a || forgettingAgent) return;
+async function forgetOnlyAgent(a,context) {
+  const id=a?.id;
+  if (!a || forgettingAgent || (context && (context.source!==activeSwarm || context.generation!==stateGeneration))) return;
   if ((a.alive && a.status === 'running') || compactionBlocked(a) || restartInProgress(a)) { updateForgetAvailability(); return; }
   const history = a.session_file ? `Saved session history will be kept at:\n${a.session_file}` : 'Any saved session history will be kept.';
   if (!confirm(`Forget ${a.name}? This stops any remaining Swarm-owned process and removes the dashboard card.\n\n${history}`)) return;
   const form = $('#edit-form'); $('.form-error', form).textContent = '';
   forgettingAgent = true; updateForgetAvailability(); $('[type=submit]', form).disabled = true;
   try {
+    const generation=stateGeneration,source=activeSwarm;
     await api(`/api/agents/${id}`, 'DELETE');
+    if(generation!==stateGeneration||source!==activeSwarm)return;
     cardViews.forget(state.home, id); closeTerminal(id);
     if (editId === id) $('#edit-dialog').close();
     applyState({...state, agents: state.agents.filter(agent => agent.id !== id)});
@@ -1281,6 +1287,12 @@ async function forgetAgent() {
     else toast(error.message, true);
   }
   finally { forgettingAgent = false; updateForgetAvailability(); $('[type=submit]', form).disabled = compactionBlocked(agentById(editId)); }
+}
+async function forgetAgent(){
+  const agent=agentById(editId);
+  if(!agent || forgettingAgent || compactionBlocked(agent) || restartInProgress(agent))return;
+  if(typeof agentArchivesController!=='undefined' && agentArchivesController && agent.managed && agent.backend==='pi' && agent.session_file){$('#edit-dialog').close();await agentArchivesController.choose(agent,forgetOnlyAgent);}
+  else await forgetOnlyAgent(agent);
 }
 $('#forget-agent').addEventListener('click', forgetAgent);
 $('#repair-tool-outputs').addEventListener('click', () => repairToolOutputs(editId));
@@ -1629,7 +1641,7 @@ agentLimitsController = new SwarmAgentLimits.AgentLimitsController({
 });
 historyArchiveController = new SwarmHistoryArchive.HistoryArchiveController({
   api:localApi,currentSwarm:()=>activeSwarm,currentGeneration:()=>stateGeneration,agent:()=>agentById(editId),toast,
-  additionalReason:agent=>agent && (metaCompactingId===agent.id || toolInputCompactingId===agent.id || toolOutputRepairInFlight(agent)) ? 'Another session maintenance request is in flight. Wait for its persisted outcome.' : '',
+  additionalReason:agent=>agentArchiveRunning(agent)?'Whole-agent archival is queued or running.':agent && (metaCompactingId===agent.id || toolInputCompactingId===agent.id || toolOutputRepairInFlight(agent)) ? 'Another session maintenance request is in flight. Wait for its persisted outcome.' : '',
   onBusyChange:()=>render(),
   onChanged:async(report)=>{const agent=state.agents.find(agent=>agent.session_file===report.source&&(!agent.session_id||agent.session_id===report.session_id));if(agent)agent.context_archive=report;render();await refresh();},
 });
@@ -1652,6 +1664,13 @@ if (globalThis.SwarmRemoteBrowser) {
 tabPreferences = new SwarmTabPreferences.TabPreferences({
   onActivate:activateStarredTab,onError:message=>toast(message,true),
 });
+agentArchivesController = new SwarmAgentArchives.AgentArchivesController({
+  api:localApi,currentSwarm:()=>activeSwarm,currentGeneration:()=>stateGeneration,
+  ownerName:source=>source==='local'?'Local Swarm':federationNodes.get(source)?.name||source,
+  onChanged:async()=>{await refresh();},toast,
+  openAgent:agent=>{if(agent?.id){dashboardControls.status.reset();$('#search').value='';activate('dashboard');render();}},
+});
+$('#archived-agents-button').addEventListener('click',()=>{dashboardControls.closeMenus?.();});
 const agentBroadcast = new SwarmAgentBroadcast.BroadcastController({
   api: localApi,
   currentSwarm: () => activeSwarm,

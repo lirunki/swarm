@@ -708,6 +708,50 @@ Deploy/restart the updated controller for the new default/API, then refresh the
 browser. Changing a limit after deployment is immediate and needs no restart.
 There is no automatic production limit edit or agent start on upgrade.
 
+### Archive and resurrect agents
+
+For a stopped managed Pi agent, **Edit → Forget agent** offers **Forget only** or
+**Archive and forget**, with an optional registered-files/product checkbox.
+Archives are private ZIPs under `$SWARM_HOME/archives` (normally `~/.swarm/archives`).
+They contain the exact agent metadata and Pi session, plus referenced session history,
+output-spill and native tool-repair dependencies. Controller-owned uploads are always
+included so forgetting cannot destroy their only copy; the checkbox adds ordinary
+registered-file and product bytes. It does not copy the Git repository/worktree or
+unregistered workspace files. History may contain secrets: ZIPs are private, not products.
+
+Archival returns a queued job immediately. Up to two workers run in parallel, so you
+can submit several agents without waiting for earlier ZIPs. The agent is reserved
+against launches, maintenance and file changes. Source reads/compression run outside
+the controller lock; forgetting happens only after full ZIP checksum/CRC verification
+and an atomic final ownership check. Failures keep the agent stopped and visible;
+queued/running jobs recover after controller restart without replaying external work.
+
+Open **+ → Archived agents** to see archive name, goal, archive date, size, included
+files, last download/restoration and background-job status. Downloads count as last
+access; listing does not. You can download the ZIP, select/delete archives, or choose
+**Resurrect**. Each connected Swarm owns its own archive list and ZIPs; operator
+credentials are required at both ends of a federated connection.
+
+Resurrection restores the same agent ID only if it is not already registered. It
+never overwrites a changed session or recreates/checks out a Git worktree. If the
+original session is missing or changed, a private restored copy is used and native
+dependency bindings are restored/verified. PID, wake timers, restart jobs, commands,
+child waits and automatic recovery are disabled; the restored agent is idle and
+**not launched**. The working folder must still exist. Explicitly verify its task and
+workspace before Wake. Missing ordinary file references are reported rather than
+restored as dangling entries. Original source files and archive ZIP remain intact.
+
+Delete removes only the archive ZIP/list entry, not a restored agent, session,
+original file, profile or worktree. A ZIP undergoing resurrection cannot be deleted.
+Archives are bounded to 128 MiB per artifact and 512 MiB total uncompressed content;
+verification streams data, and paths, symlinks, duplicate members and oversized ZIPs
+are rejected. Larger datasets need separate backup tooling. Include-files failures
+and conflicting dependency files never silently discard the original agent.
+
+Deploy/restart the updated controller and refresh the frontend to enable the API.
+Creating an archive, resurrecting or deleting requires explicit operator action;
+installation makes no production archive or agent changes.
+
 ### Tab order and starred shortcuts
 
 Drag an agent terminal tab left/right to reorder it among the visible tabs in its

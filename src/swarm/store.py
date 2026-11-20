@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import logging
 import os
@@ -217,6 +218,61 @@ class Store:
                 os.close(directory)
         self.cache.pop(str(agent.id), None)
         self.errors.pop(f"{agent.id}.md", None)
+        return agent
+
+    def remove_if(
+        self,
+        agent_id: str | UUID,
+        expected_record_sha: str,
+        archive_owner: Mapping[str, Any],
+        *,
+        check: Callable[[Agent], None] | None = None,
+        removed: Callable[[Agent], None] | None = None,
+    ) -> Agent:
+        """Atomically compare an archive lease and remove its exact record.
+
+        ``check`` runs while the stable agent sidecar is exclusively locked, immediately
+        before unlink. It must only validate local state. ``removed`` runs after unlink but
+        before releasing that lock, allowing the owning controller to remove its mailbox
+        without exposing a record-less interval to competing agent mutations.
+        """
+        selected = str(UUID(str(agent_id)))
+        request_id = str(archive_owner.get("request_id", ""))
+        archive_id = str(archive_owner.get("archive_id", ""))
+        if not request_id or not archive_id:
+            raise RuntimeError("Archive removal requires an owned reservation")
+        with self.lock(selected):
+            path = self.path(selected)
+            if path.is_symlink():
+                raise ValueError("agent files must not be symbolic links")
+            if path.stat().st_size > MAX_RECORD_BYTES:
+                raise ValueError("agent record exceeds 1 MiB")
+            record = path.read_bytes()
+            if hashlib.sha256(record).hexdigest() != expected_record_sha:
+                raise RuntimeError("Agent record changed while archival was in progress")
+            agent = decode(record.decode("utf-8"))
+            if str(agent.id) != selected:
+                raise ValueError("record id must match its UUID filename")
+            lease = getattr(agent, "agent_archive", None)
+            if (
+                not isinstance(lease, dict)
+                or lease.get("request_id") != request_id
+                or lease.get("archive_id") != archive_id
+                or lease.get("status") != "running"
+            ):
+                raise RuntimeError("Agent archive reservation ownership changed")
+            if check is not None:
+                check(agent)
+            path.unlink()
+            directory = os.open(self.agents_dir, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+            if removed is not None:
+                removed(agent)
+        self.cache.pop(selected, None)
+        self.errors.pop(f"{selected}.md", None)
         return agent
 
     def _scan_unlocked(self) -> list[Agent]:

@@ -47,6 +47,9 @@ class MetaCompactRequest(BaseModel):
 
 
 def busy(agent: Agent) -> bool:
+    archive = getattr(agent, "agent_archive", None)
+    if isinstance(archive, dict) and archive.get("status") in {"queued", "running"}:
+        return True
     return any(
         isinstance(job := getattr(agent, key, None), dict) and job.get("status") == "running"
         for key in (
@@ -503,7 +506,9 @@ class MetaCompactor:
             if pid in safe_pids:
                 continue
             if folder is None or str(Path(folder).resolve()) == target_folder:
-                raise RuntimeError("Stop other Pi processes in this workspace before meta-compaction")
+                raise RuntimeError(
+                    "Stop other Pi processes in this workspace before meta-compaction"
+                )
 
         if any(
             folder is None or str(Path(folder).resolve()) == target_folder for folder in residual

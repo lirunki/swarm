@@ -141,6 +141,7 @@ def _tls(value):
 
 
 SERVICE_PATHS = {
+    "archives",
     "state.json",
     "controller.lock",
     "relay-settings.json",
