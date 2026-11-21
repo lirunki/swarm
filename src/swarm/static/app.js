@@ -17,7 +17,7 @@ const toolOutputRepairRequests = new Map();
 const terminals = new Map();
 const groupedBranches = new Set();
 let selectedAgentGroup = null, agentGroupsController = null, groupingModeController = null, historyArchiveController = null, agentLimitsController = null;
-let remoteBrowserController = null, browserSettingsController = null, tabPreferences = null, agentArchivesController = null;
+let remoteBrowserController = null, browserSettingsController = null, tabPreferences = null, agentArchivesController = null, bulkAgentArchiveController = null;
 let browserGroups = null, browserGroupingProjection = null, browserGroupingError = null, browserGroupingOperation = 0, groupingBranchBusy = false, groupingBranchOperation = 0;
 const openedAgentGroups = new Set(), agentGroupTabs = new Map();
 const cardViews = new SwarmCardViews.CardViews();
@@ -835,7 +835,7 @@ function renderAgentFolders(matching, includeEmpty = true) {
   container.hidden=!container.childNodes.length;
 }
 function render() {
-  agentArchivesController?.sync();
+  agentArchivesController?.sync();bulkAgentArchiveController?.sync();
   if(typeof remoteBrowserController!=='undefined')remoteBrowserController?.setContext();
   if(typeof browserSettingsController!=='undefined')browserSettingsController?.setContext();
   agentLimitsController?.setState(state.agent_limits,state.federation_offline?'Owning Swarm is offline.':state.agent_limits_error);
@@ -1669,6 +1669,11 @@ agentArchivesController = new SwarmAgentArchives.AgentArchivesController({
   ownerName:source=>source==='local'?'Local Swarm':federationNodes.get(source)?.name||source,
   onChanged:async()=>{await refresh();},toast,
   openAgent:agent=>{if(agent?.id){dashboardControls.status.reset();$('#search').value='';activate('dashboard');render();}},
+});
+bulkAgentArchiveController = new SwarmBulkAgentArchive.BulkAgentArchiveController({
+  query:$,api:localApi,currentSwarm:()=>activeSwarm,currentGeneration:()=>stateGeneration,
+  agents:()=>state.agents,selectedIDs:()=>agentGroupsController.selectedIDs,
+  onChanged:async(context)=>{if(context.source===activeSwarm&&context.generation===stateGeneration)await refresh();},confirm:message=>confirm(message),toast,
 });
 $('#archived-agents-button').addEventListener('click',()=>{dashboardControls.closeMenus?.();});
 const agentBroadcast = new SwarmAgentBroadcast.BroadcastController({

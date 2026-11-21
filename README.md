@@ -726,6 +726,17 @@ the controller lock; forgetting happens only after full ZIP checksum/CRC verific
 and an atomic final ownership check. Failures keep the agent stopped and visible;
 queued/running jobs recover after controller restart without replaying external work.
 
+To process multiple family selections, select agent cards and use **Bulk forget…**
+in the selection bar. Its separate confirmation dialog takes a fixed snapshot of the
+selected agents and active Swarm. **Archive and forget** queues eligible managed Pi
+sessions; **Forget only** removes eligible records without creating ZIPs. Requests are
+submitted one at a time without waiting for ZIP completion. Live/busy/ineligible agents
+remain unchanged, and per-agent results stay
+visible. An uncertain request stops remaining submissions and is not blindly retried; a known
+rejection does not roll back earlier successes. Registered files and
+product snapshots remain opt-in and default off for every newly opened bulk dialog.
+Changing the active Swarm stops unsent work rather than retargeting it.
+
 Open **+ → Archived agents** to see archive name, goal, archive date, size, included
 files, last download/restoration and background-job status. Downloads count as last
 access; listing does not. You can download the ZIP, select/delete archives, or choose

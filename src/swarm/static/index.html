@@ -7,33 +7,34 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=agent-zip-archives-1">
+  <link rel="stylesheet" href="/static/app.css?v=bulk-agent-archive-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/org-chart.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/relay-settings.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/terminal-touch.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/terminal-copy.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/terminal-keys.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/agent-files.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/agent-messages.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/agent-broadcast.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/auth.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/fleet-control.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/system-notifications.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/notifications.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/agent-groups.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/grouping-mode.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/agent-search.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/history-archive.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/agent-limits.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/terminal-wheel.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/remote-browser.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/tab-preferences.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/agent-archives.js?v=agent-zip-archives-1"></script>
-  <script defer src="/static/app.js?v=agent-zip-archives-1"></script>
+  <script defer src="/static/card-views.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/org-chart.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/relay-settings.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/terminal-touch.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/terminal-copy.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/terminal-keys.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/agent-files.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/agent-messages.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/agent-broadcast.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/auth.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/fleet-control.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/system-notifications.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/notifications.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/agent-groups.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/grouping-mode.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/agent-search.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/history-archive.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/agent-limits.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/terminal-wheel.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/remote-browser.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/tab-preferences.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/agent-archives.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/bulk-agent-archive.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/app.js?v=bulk-agent-archive-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -71,7 +72,7 @@
     <div class="sr-only"><h2>Agent hierarchy <span id="agent-count" class="count">0</span></h2><span>Parent → child · Hover for activity</span></div>
     <p id="hierarchy-summary" class="hint hierarchy-note sr-only" aria-live="polite"></p>
     <details id="registry-errors" class="registry-errors" hidden><summary>Registry warnings</summary><div id="error-list"></div></details>
-    <div id="group-selection-bar" class="group-selection-bar" hidden><span id="group-selection-count" role="status" aria-live="polite"></span><button id="group-selection-open" type="button" class="small" aria-haspopup="menu" aria-controls="group-context-menu">Grouping ▾</button><button id="group-selection-clear" type="button" class="small">Clear selection</button></div>
+    <div id="group-selection-bar" class="group-selection-bar" hidden><span id="group-selection-count" role="status" aria-live="polite"></span><button id="group-selection-open" type="button" class="small" aria-haspopup="menu" aria-controls="group-context-menu">Grouping ▾</button><button id="group-bulk-forget" type="button" class="small danger" aria-haspopup="dialog" aria-controls="bulk-forget-dialog">Bulk forget…</button><button id="group-selection-clear" type="button" class="small">Clear selection</button></div>
     <p id="agent-groups-error" class="form-error" role="alert" hidden></p>
     <section id="agent-group-folders" class="agent-group-folders" aria-label="Agent groups" hidden></section>
     <section id="agents" class="agent-grid org-chart" aria-label="Agent hierarchy" tabindex="0"></section>
@@ -108,6 +109,8 @@
   <dialog id="starred-tabs-menu" class="starred-tabs-menu" aria-labelledby="starred-tabs-title"><header class="dialog-head"><h2 id="starred-tabs-title">Starred tabs</h2><button id="starred-tabs-close" type="button" class="icon-button" aria-label="Close starred tabs">×</button></header><p class="hint">Shortcuts across all groups in this Swarm. Selecting a stopped agent reveals its card without waking it.</p><div id="starred-tabs-list"></div></dialog>
 
   <dialog id="archive-agent-choice-dialog" aria-labelledby="archive-agent-choice-title"><header class="dialog-head"><h2 id="archive-agent-choice-title">Forget or archive</h2></header><p id="archive-agent-name"></p><p class="hint">Archive stores exact session and agent metadata in a private ZIP before forgetting. History/output archive dependencies are included; working directories and Git worktrees are not copied.</p><label class="checkbox"><input id="archive-agent-include-files" type="checkbox">Include registered files and product snapshot</label><p class="hint">Archives may contain sensitive history/files. The archive job runs in the background; failure keeps the agent. Stop a live agent first.</p><footer class="dialog-footer"><button id="archive-agent-cancel" type="button">Cancel</button><button id="archive-agent-forget-only" type="button">Forget only</button><button id="archive-agent-submit" type="button" class="primary">Archive and forget</button></footer></dialog>
+
+  <dialog id="bulk-forget-dialog" class="wide-dialog" aria-labelledby="bulk-forget-title"><header class="dialog-head"><h2 id="bulk-forget-title">Forget or archive selected agents</h2></header><p id="bulk-forget-summary"></p><ul id="bulk-forget-targets"></ul><p class="hint">Archive creates a private ZIP for each eligible managed Pi session before forgetting it. Working directories and Git worktrees are never copied or removed.</p><label class="checkbox"><input id="bulk-forget-include-files" type="checkbox">Include registered files and product snapshot in each archive</label><p class="hint">The selection is frozen for this dialog. Live, busy or changed agents are skipped, never stopped. Archive jobs queue independently in the background; uncertain requests stop further submissions and are not retried.</p><ul id="bulk-forget-results" aria-live="polite"></ul><p id="bulk-forget-error" class="form-error" role="alert" hidden></p><footer class="dialog-footer"><button id="bulk-forget-cancel" type="button">Cancel</button><button id="bulk-forget-only" type="button" class="danger">Forget only</button><button id="bulk-forget-archive" type="button" class="primary">Archive and forget</button></footer></dialog>
 
   <dialog id="archives-dialog" class="wide-dialog" aria-labelledby="archives-title"><header class="dialog-head"><h2 id="archives-title">Archived agents</h2><button id="archives-close" type="button" class="icon-button" aria-label="Close archived agents">×</button></header><p id="archives-owner" class="hint"></p><div class="archives-toolbar"><label class="checkbox"><input id="archives-select-all" type="checkbox">Select all archives</label><button id="archives-refresh" type="button" class="small">Refresh</button><button id="archives-delete-selected" type="button" class="small danger" disabled>Delete selected ZIPs</button></div><p id="archives-status" class="hint" role="status" aria-live="polite"></p><p id="archives-error" class="form-error" role="alert"></p><div id="archives-jobs"></div><div id="archives-list"></div></dialog>
 

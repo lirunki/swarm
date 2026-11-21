@@ -51,6 +51,7 @@ def test_wheel_includes_mailbox_extension_and_messages_ui(tmp_path):
             "swarm/static/agent-broadcast.js",
             "swarm/static/agent-groups.js",
             "swarm/static/agent-archives.js",
+            "swarm/static/bulk-agent-archive.js",
             "swarm/agent_archives.py",
             "swarm/static/tab-preferences.js",
             "swarm/static/remote-browser.js",
