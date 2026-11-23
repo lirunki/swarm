@@ -73,6 +73,7 @@ from .relay_settings import RelayConnectRequest, RelaySettings
 from .remote_browser import BrowserError, RemoteBrowser
 from .restarts import RestartAction, RestartRequest, require_not_restarting
 from .sessions import AdoptRequest, Sessions
+from .starred_tabs import StarredTabsConflict, StarredTabsCorrupt, StarredTabsError
 from .store import Store
 from .terminal import bridge
 from .tool_inputs import RevertToolInputsRequest, ToolInputCompactor
@@ -380,6 +381,20 @@ def create_app(
             {"detail": "Saved agent limits could not be read safely"}, status_code=409
         )
 
+    @app.exception_handler(StarredTabsError)
+    async def starred_tabs_bad_request(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    @app.exception_handler(StarredTabsConflict)
+    async def starred_tabs_conflict(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
+    @app.exception_handler(StarredTabsCorrupt)
+    async def starred_tabs_corrupt(request, exc):
+        return JSONResponse(
+            {"detail": "Saved starred tabs could not be read safely"}, status_code=409
+        )
+
     @app.exception_handler(GroupingError)
     async def grouping_bad_request(request, exc):
         return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -510,6 +525,29 @@ def create_app(
         except (UnicodeError, json.JSONDecodeError):
             raise AgentLimitsError("Request body must be valid JSON") from None
         result = await asyncio.to_thread(controller.apply_agent_limits, body)
+        await broadcast()
+        return result
+
+    @app.get("/api/starred-tabs")
+    async def starred_tabs():
+        return await asyncio.to_thread(controller.starred_tabs_state)
+
+    @app.post("/api/starred-tabs")
+    async def update_starred_tabs(request: Request):
+        if access.required and not access.authorize(
+            request.headers.get("authorization", ""), service_allowed=False
+        ):
+            raise AuthFailure("Operator browser authentication required", 403)
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > 256 * 1024:
+                raise StarredTabsError("Starred tabs request is too large")
+            raw.extend(chunk)
+        try:
+            body = json.loads(raw)
+        except (UnicodeError, json.JSONDecodeError):
+            raise StarredTabsError("Request body must be valid JSON") from None
+        result = await asyncio.to_thread(controller.apply_starred_tabs, body)
         await broadcast()
         return result
 

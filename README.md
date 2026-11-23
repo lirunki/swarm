@@ -779,11 +779,14 @@ or reopens its terminal attachment. A stopped agent is revealed/highlighted on i
 dashboard without being woken. Folder/Browser shortcuts open their corresponding
 view without starting an agent or browser process.
 
-Stars survive tab closure and page reload, remain separate from server-managed
-groups, and never force unrelated terminal tabs into the active group's strip.
-Unstar from the tab or shortcut list. Missing agents are shown as unavailable so
-you can remove stale shortcuts explicitly. Favorites are client preferences, not
-changes to recovery intent or a guarantee a process remains running.
+Stars are saved on the owning Swarm server in `starred-tabs.json`, so every browser
+viewing that Swarm gets the same list—including through another controller. Tab
+order stays browser-local. Star/unstar from a tab or shortcut list; no agent is
+started or stopped. Existing local stars can be merged with **Import this browser’s
+stars**; nothing is imported automatically. Offline servers show the last known list
+read-only. Missing agents remain unavailable shortcuts until explicitly unstarred.
+Stars survive tab closure/reload and never force unrelated terminal tabs into the
+active group. Deploy the updated controller and refresh the browser for shared stars.
 
 ### Agent grouping and folder dashboards
 

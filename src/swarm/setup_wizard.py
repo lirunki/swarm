@@ -146,6 +146,7 @@ SERVICE_PATHS = {
     "controller.lock",
     "relay-settings.json",
     "groups.json",
+    "starred-tabs.json",
     "browser-settings.json",
     "browser-settings.lock",
     "remote-browser",

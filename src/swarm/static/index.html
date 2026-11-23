@@ -7,34 +7,34 @@
   <title>Swarm · Agent workspace</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23ff9854' d='m20 2 16 9v18L20 38 4 29V11z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/vendor/xterm.css">
-  <link rel="stylesheet" href="/static/app.css?v=bulk-agent-archive-1">
+  <link rel="stylesheet" href="/static/app.css?v=server-starred-tabs-1">
   <script defer src="/static/vendor/xterm.js"></script>
   <script defer src="/static/vendor/addon-fit.js"></script>
-  <script defer src="/static/card-views.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/org-chart.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/relay-settings.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/terminal-touch.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/terminal-copy.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/dashboard-controls.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/terminal-keys.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/agent-files.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/agent-messages.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/agent-broadcast.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/auth.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/fleet-control.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/system-notifications.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/notifications.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/agent-groups.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/grouping-mode.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/agent-search.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/history-archive.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/agent-limits.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/terminal-wheel.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/remote-browser.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/tab-preferences.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/agent-archives.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/bulk-agent-archive.js?v=bulk-agent-archive-1"></script>
-  <script defer src="/static/app.js?v=bulk-agent-archive-1"></script>
+  <script defer src="/static/card-views.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/org-chart.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/relay-settings.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/terminal-touch.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/terminal-copy.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/dashboard-controls.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/terminal-keys.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/agent-files.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/agent-messages.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/agent-broadcast.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/auth.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/fleet-control.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/system-notifications.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/notifications.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/agent-groups.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/grouping-mode.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/agent-search.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/history-archive.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/agent-limits.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/terminal-wheel.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/remote-browser.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/tab-preferences.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/agent-archives.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/bulk-agent-archive.js?v=server-starred-tabs-1"></script>
+  <script defer src="/static/app.js?v=server-starred-tabs-1"></script>
 </head>
 <body>
   <aside id="auth-required" class="auth-required" role="status" hidden>
@@ -106,7 +106,7 @@
     <div id="grouping-submenu" class="grouping-submenu" role="menu" aria-label="Assign group" hidden></div>
   </div>
 
-  <dialog id="starred-tabs-menu" class="starred-tabs-menu" aria-labelledby="starred-tabs-title"><header class="dialog-head"><h2 id="starred-tabs-title">Starred tabs</h2><button id="starred-tabs-close" type="button" class="icon-button" aria-label="Close starred tabs">×</button></header><p class="hint">Shortcuts across all groups in this Swarm. Selecting a stopped agent reveals its card without waking it.</p><div id="starred-tabs-list"></div></dialog>
+  <dialog id="starred-tabs-menu" class="starred-tabs-menu" aria-labelledby="starred-tabs-title"><header class="dialog-head"><h2 id="starred-tabs-title">Starred tabs</h2><button id="starred-tabs-close" type="button" class="icon-button" aria-label="Close starred tabs">×</button></header><p class="hint">Shortcuts across all groups in this Swarm. Selecting a stopped agent reveals its card without waking it.</p><div class="starred-tabs-tools"><button id="starred-tabs-refresh" type="button" class="small">Refresh</button><button id="starred-tabs-import" type="button" class="small" hidden>Import this browser’s stars</button></div><p id="starred-tabs-status" class="hint" role="status" aria-live="polite"></p><div id="starred-tabs-list"></div></dialog>
 
   <dialog id="archive-agent-choice-dialog" aria-labelledby="archive-agent-choice-title"><header class="dialog-head"><h2 id="archive-agent-choice-title">Forget or archive</h2></header><p id="archive-agent-name"></p><p class="hint">Archive stores exact session and agent metadata in a private ZIP before forgetting. History/output archive dependencies are included; working directories and Git worktrees are not copied.</p><label class="checkbox"><input id="archive-agent-include-files" type="checkbox">Include registered files and product snapshot</label><p class="hint">Archives may contain sensitive history/files. The archive job runs in the background; failure keeps the agent. Stop a live agent first.</p><footer class="dialog-footer"><button id="archive-agent-cancel" type="button">Cancel</button><button id="archive-agent-forget-only" type="button">Forget only</button><button id="archive-agent-submit" type="button" class="primary">Archive and forget</button></footer></dialog>
 

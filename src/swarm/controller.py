@@ -28,6 +28,7 @@ from .paths import agent_path, local_path
 from .processes import Processes
 from .restarts import Restarts, require_not_restarting
 from .restarts import active as restarting
+from .starred_tabs import StarredTabs, StarredTabsCorrupt
 from .store import Store
 from .timers import ScheduledWakes, scheduled
 
@@ -61,6 +62,7 @@ class Controller:
         self.lock = threading.RLock()
         self.files = AgentFiles(store)
         self.agent_limits = AgentLimits(store)
+        self.starred_tabs = StarredTabs(store)
         self.groups = Groups(store)
         self.notifications = Notifications(store)
         self.wakes = ScheduledWakes(self)
@@ -516,6 +518,18 @@ class Controller:
             self.refresh()
             return result
 
+    def starred_tabs_state(self) -> dict:
+        """Read user-star metadata independently of registry record health."""
+        with self.lock:
+            return self.starred_tabs.get()
+
+    def apply_starred_tabs(self, body: object) -> dict:
+        """Apply a user-star mutation without requiring the target to be online."""
+        with self.lock:
+            result = self.starred_tabs.apply(body)
+            self.refresh()
+            return result
+
     def apply_groups(self, body: object) -> dict:
         """Apply a grouping mutation against one controller-serialized registry view."""
         with self.lock:
@@ -590,6 +604,13 @@ class Controller:
                     agent_limits_error = "Saved agent limits could not be read"
             if agent_limits_error:
                 errors["agent-limits.json"] = agent_limits_error
+            starred_tabs = None
+            starred_tabs_error = None
+            try:
+                starred_tabs = self.starred_tabs.get()
+            except StarredTabsCorrupt:
+                starred_tabs_error = "Saved starred tabs could not be read"
+                errors["starred-tabs.json"] = starred_tabs_error
             self.state = {
                 "restart_jobs": restart_jobs,
                 "notifications": notifications,
@@ -600,6 +621,8 @@ class Controller:
                 "grouping_settings_error": agent_groups_error,
                 "agent_limits": agent_limits,
                 "agent_limits_error": agent_limits_error,
+                "starred_tabs": starred_tabs,
+                "starred_tabs_error": starred_tabs_error,
                 "errors": errors,
                 "home": str(self.store.home),
                 "health": self.processes.health(),

@@ -1,12 +1,17 @@
 """Tab ordering and stars navigate groups without waking or closing agents."""
 
+import copy
+import json
 import re
+from urllib.parse import urlsplit
+from uuid import UUID
 
 import pytest
 from test_agent_groups_browser import (
     AGENT_IDS,
     GROUP_A,
     GROUP_B,
+    REQUEST_ID,
     GroupServer,
     browser_state,
     card,
@@ -21,6 +26,79 @@ def terminal_tab(page, index):
     return page.locator(f'#tabs [data-agent-tab="{AGENT_IDS[index]}"]')
 
 
+class StatefulStarServer(GroupServer):
+    """Group fixture plus an owner-scoped, shared starred-tabs backend."""
+
+    def __init__(self, state, starred=None):
+        super().__init__(state)
+        self.starred = copy.deepcopy(starred or {"revision": 0, "starred": []})
+        self.star_requests = []
+        self.star_posts = []
+        self.star_fail_next = None
+        self.state["starred_tabs"] = copy.deepcopy(self.starred)
+        self.state["starred_tabs_error"] = None
+
+    def state_value(self):
+        value = super().state_value()
+        value["starred_tabs"] = copy.deepcopy(self.starred)
+        value["starred_tabs_error"] = self.state.get("starred_tabs_error")
+        return value
+
+    def mutate_stars(self, body):
+        before = list(self.starred["starred"])
+        action = body["action"]
+        if action == "star" and body["tab_id"] not in self.starred["starred"]:
+            self.starred["starred"].append(body["tab_id"])
+        elif action == "unstar":
+            self.starred["starred"] = [
+                token for token in self.starred["starred"] if token != body["tab_id"]
+            ]
+        elif action == "import":
+            for token in body["starred"]:
+                if token not in self.starred["starred"]:
+                    self.starred["starred"].append(token)
+        if before != self.starred["starred"]:
+            self.starred["revision"] += 1
+        self.state["starred_tabs"] = copy.deepcopy(self.starred)
+        return copy.deepcopy(self.starred)
+
+    def route(self, route):
+        path = urlsplit(route.request.url).path
+        if path != "/api/starred-tabs":
+            return super().route(route)
+        self.handle_star(route, path)
+
+    def handle_star(self, route, request_path="/api/starred-tabs"):
+        request = route.request
+        method = request.method
+        body = request.post_data_json if method == "POST" else None
+        self.star_requests.append((method, request_path, copy.deepcopy(body)))
+        if method == "GET":
+            value = copy.deepcopy(self.starred)
+            status = 200
+        elif method == "POST":
+            self.star_posts.append(copy.deepcopy(body))
+            failure, self.star_fail_next = self.star_fail_next, None
+            if failure == "abort":
+                route.abort("failed")
+                return
+            if failure is not None:
+                status, value = failure
+            else:
+                try:
+                    assert REQUEST_ID.fullmatch(body.get("request_id", ""))
+                    UUID(body["request_id"])
+                    assert body["revision"] == self.starred["revision"]
+                    assert body["action"] in {"star", "unstar", "import"}
+                except (AssertionError, KeyError, TypeError, ValueError):
+                    status, value = 409, {"detail": "stale starred-tabs revision"}
+                else:
+                    status, value = 200, self.mutate_stars(body)
+        else:
+            status, value = 405, {"detail": "method not allowed"}
+        route.fulfill(status=status, content_type="application/json", body=json.dumps(value))
+
+
 @pytest.mark.parametrize("width", [390, 1280])
 def test_stars_cross_groups_and_order_survives_reload_without_agent_actions(static_url, width):  # noqa: F811
     projection = {
@@ -28,7 +106,7 @@ def test_stars_cross_groups_and_order_survives_reload_without_agent_actions(stat
         "groups": [{"id": GROUP_A, "name": "Group A"}, {"id": GROUP_B, "name": "Group B"}],
         "assignments": {AGENT_IDS[i]: GROUP_A for i in [0, 1, 2]} | {AGENT_IDS[3]: GROUP_B},
     }
-    server = GroupServer(browser_state(projection))
+    server = StatefulStarServer(browser_state(projection))
     with open_page(width, server, touch=width == 390) as (page, errors):
         page.goto(static_url)
         page.get_by_role("button", name="Open group Group A: 3 agents").click()
@@ -83,12 +161,13 @@ def test_stars_cross_groups_and_order_survives_reload_without_agent_actions(stat
         page.locator(".starred-tab-open").filter(has_text="Agent 0").click()
         playwright.expect(page.locator("#dashboard")).to_be_visible()
         playwright.expect(card(page, 0)).to_have_class(re.compile("notification-reveal"))
-        assert not server.posts
+        assert not server.posts and not server.other_mutations
+        assert [body["action"] for body in server.star_posts] == ["star", "star"]
         assert not errors
 
 
 def test_native_drag_reorders_terminal_slots_only(static_url):  # noqa: F811
-    server = GroupServer(browser_state())
+    server = StatefulStarServer(browser_state())
     with open_page(1280, server) as (page, errors):
         page.goto(static_url)
         for index in (3, 4):

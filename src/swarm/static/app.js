@@ -141,6 +141,7 @@ function applyState(data) {
   else if(data.grouping_settings==null && state.grouping_settings && !savedView) data={...data,grouping_settings:state.grouping_settings,grouping_settings_error:'Current grouping mode is unavailable; edits are disabled.'};
   if (!savedView && data.grouping_settings && state.grouping_settings && data.grouping_settings.revision < state.grouping_settings.revision) data={...data,grouping_settings:state.grouping_settings};
   if(!savedView && data.agent_limits && state.agent_limits && data.agent_limits.revision < state.agent_limits.revision) data={...data,agent_limits:state.agent_limits,agent_limits_error:state.agent_limits_error};
+  if(!savedView && state.starred_tabs && (!data.starred_tabs || data.starred_tabs.revision < state.starred_tabs.revision)) data={...data,starred_tabs:state.starred_tabs,starred_tabs_error:data.starred_tabs_error || (data.federation_offline ? 'Owning Swarm is offline.' : data.starred_tabs ? state.starred_tabs_error : 'Current shared stars are unavailable.')};
   state = data;
   syncGroupingStorage(savedView,previousServerMode);
   if (savedView) {
@@ -808,7 +809,8 @@ function syncTabPreferences(){
     group:groupNames.get(assignments[agent.id])||'Ungrouped',stopped:!agent.alive,element:terminals.get(agent.id)?.group}));
   for(const group of agentGroupProjection().groups)items.push({id:agentGroupTabId(group.id),kind:'folder',name:group.name,group:'Folder',element:agentGroupTabs.get(group.id)?.wrapper});
   items.push({id:'browser',kind:'browser',name:'Browser',group:'Dashboard',element:browserOpen?$('#browser-tab-group'):null});
-  tabPreferences.sync({key:`swarm.tab-preferences.${activeSwarm}.${encodeURIComponent(state.home||'')}`,items});
+  tabPreferences.sync({key:`swarm.tab-preferences.${activeSwarm}.${encodeURIComponent(state.home||'')}`,items,
+    starred:state.starred_tabs,error:state.federation_offline?'Owning Swarm is offline.':state.starred_tabs_error});
 }
 function activateStarredTab(id){
   if(id==='browser'){browserOpen=true;activate('browser');rememberUIViewState();return;}
@@ -1662,7 +1664,13 @@ if (globalThis.SwarmRemoteBrowser) {
   });
 }
 tabPreferences = new SwarmTabPreferences.TabPreferences({
+  api:localApi,currentSwarm:()=>activeSwarm,currentGeneration:()=>stateGeneration,
   onActivate:activateStarredTab,onError:message=>toast(message,true),
+  onChanged:async(projection,metadata)=>{
+    if(metadata.source!==activeSwarm||metadata.generation!==stateGeneration)return;
+    if(projection&&(!state.starred_tabs||projection.revision>=state.starred_tabs.revision))state.starred_tabs=projection;
+    render();
+  },
 });
 agentArchivesController = new SwarmAgentArchives.AgentArchivesController({
   api:localApi,currentSwarm:()=>activeSwarm,currentGeneration:()=>stateGeneration,
