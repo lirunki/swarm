@@ -416,6 +416,7 @@ class Controller:
                     raise RuntimeError("Agent archive reservation ownership changed")
                 if self.processes.alive(agent):
                     raise RuntimeError("Agent restarted while archival was in progress")
+
                 def remove_archive_mailbox(current: Agent) -> None:
                     try:
                         self.messages.forget(current.id)
@@ -550,6 +551,15 @@ class Controller:
         with self.lock:
             agents, record_errors = self.store.scan_with_errors()
             entries, errors = [], dict(record_errors)
+            try:
+                window_counts = (
+                    self.processes.window_counts()
+                    if hasattr(self.processes, "window_counts")
+                    else {}
+                )
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                window_counts = {}
+
             for agent in agents:
                 try:
                     files = self.files.summary(agent.id)
@@ -572,7 +582,12 @@ class Controller:
                     errors[f"messages/{agent.id}.json"] = messages["messages_error"]
                 entries.append(
                     agent.model_dump(mode="json")
-                    | {"alive": self.processes.alive(agent)}
+                    | {
+                        "alive": self.processes.alive(agent),
+                        "tmux_extra_windows": max(0, window_counts[f"swarm-{agent.id}"] - 1)
+                        if agent.managed and f"swarm-{agent.id}" in window_counts
+                        else None,
+                    }
                     | files
                     | messages
                 )

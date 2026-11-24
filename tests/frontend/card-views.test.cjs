@@ -608,6 +608,9 @@ test('terminal toolbar keeps reconnect and exposes a scoped tmux command menu', 
   const t = context.terminals.get(a.id), header = t.pane.childNodes[0];
   assert.deepEqual(header.childNodes.filter(el => el.tagName === 'BUTTON' && !el.hidden).map(el => el.textContent), ['Files', '✉ 0', '↻ Reconnect']);
   assert.equal(t.tmuxControl.toggle.textContent, 'tmux');
+  a.tmux_extra_windows=2;context.syncTmuxControls(t.tmuxControl,a);assert.equal(t.tmuxControl.toggle.textContent,'tmux 2');
+  assert.equal(t.tmuxControl.toggle.getAttribute('aria-label'),'Tmux commands (2 extra windows)');
+  a.tmux_extra_windows=0;context.syncTmuxControls(t.tmuxControl,a);assert.equal(t.tmuxControl.toggle.textContent,'tmux');
   assert.equal('wakeButton' in t, false);
   assert.equal(t.filesButton, find(header, 'terminal-files'));
   assert.equal(t.filesButton.getAttribute('aria-label'), `Files for ${a.name}`);

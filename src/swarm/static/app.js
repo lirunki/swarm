@@ -473,6 +473,9 @@ function createTmuxControls(id) {
 }
 function syncTmuxControls(control, agent) {
   const ready = !!agent?.managed && agent.alive === true && !agent.stop_pending && !agent.orchestration_stop && !restartInProgress(agent) && !compactionBlocked(agent);
+  const extras=Number.isInteger(agent?.tmux_extra_windows) && agent.tmux_extra_windows>0 ? agent.tmux_extra_windows : 0;
+  control.toggle.textContent=extras ? `tmux ${extras}` : 'tmux';
+  control.toggle.setAttribute('aria-label', extras ? `Tmux commands (${extras} extra window${extras===1?'':'s'})` : 'Tmux commands');
   control.toggle.disabled = !ready;
   if (!ready) setTmuxMenuOpen(control, false);
   control.toggle.title = ready ? 'Pane and window commands for this agent tmux session' : 'Tmux controls require a live, managed agent that is not stopping or busy';

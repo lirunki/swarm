@@ -45,6 +45,17 @@ class Processes:
     def target(agent: Agent) -> str:
         return f"swarm-{UUID(str(agent.id))}"
 
+    def window_counts(self) -> dict[str, int]:
+        """One read-only tmux query for all managed sessions, excluding extra panes."""
+        result = self.run("list-windows", "-a", "-F", "#{session_name}", check=False)
+        if result.returncode:
+            return {}
+        counts: dict[str, int] = {}
+        for name in result.stdout.splitlines():
+            if name.startswith("swarm-"):
+                counts[name] = counts.get(name, 0) + 1
+        return counts
+
     def alive(self, agent: Agent) -> bool:
         if not agent.managed or not shutil.which("tmux"):
             return False
